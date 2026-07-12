@@ -1,33 +1,37 @@
-# @orkestrel/server
+# @orkestrel/middleware
 
-A typed HTTP server for the `@orkestrel` line — composes the
-`@orkestrel/router` dispatcher behind a managed lifecycle over a pluggable
-node adapter seam. Built to sit beside `@orkestrel/contract` (validation),
-`@orkestrel/emitter` (observable lifecycle), and `@orkestrel/abort`
-(cancellation), reusing all three as it takes shape. Its middleware
-architecture is still under design.
+Batteries for the `@orkestrel/server` middleware seam — the frozen
+`MiddlewareHandler<TState>` / `compose` contract and its substrate ship
+policy-free; this package supplies the policies the server deliberately does
+not: boundary rendering, telemetry, compression, security headers, CORS,
+deadlines, trusted-proxy client facts, ETag, bearer auth, rate limiting, body
+parsing, sessions, CSRF, static files, and multipart uploads — each a typed
+`options => MiddlewareHandler<TState>` factory over the shipped seam.
 
 ## Install
 
 ```sh
-npm install @orkestrel/server
+npm install @orkestrel/middleware @orkestrel/server
 ```
 
 ## Requirements
 
 - Node.js >= 24
-- ESM-only (no CommonJS build)
+- `@orkestrel/server` as a peer dependency (the seam and substrate are
+  imported, never bundled)
+- ESM core (`.`); a CJS node face (`./server`) for the node-bound batteries
+  (`createStatic`, `createMultipart`)
 
 ## Status
 
-The public API is under design and not yet implemented — this package
-currently ships no runtime code. An upcoming `PROPOSAL.md` will define the
-server surface (lifecycle, middleware, node adapter) before implementation
-begins.
+The public API is defined in `PROPOSAL.md` and not yet implemented — this
+package currently ships no runtime code.
 
-## Package
+## Guides
 
-Published as a single entry point per the `exports` field in `package.json`.
+See [`guides/README.md`](./guides/README.md) for the concept and dependency
+index; the full battery-by-battery surface docs land in `guides/src/middleware.md`
+alongside the implementation.
 
 ## License
 

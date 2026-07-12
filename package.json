@@ -1,21 +1,26 @@
 {
-	"name": "@orkestrel/server",
+	"name": "@orkestrel/middleware",
 	"version": "0.0.1",
-	"description": "A typed HTTP server for the @orkestrel line — composes the @orkestrel/router dispatcher behind a managed lifecycle. Part of the @orkestrel line.",
+	"description": "Batteries for the @orkestrel/server middleware seam — boundary, telemetry, compression, security, CORS, rate limiting, sessions, CSRF, static files, and multipart uploads as typed factories. Part of the @orkestrel line.",
 	"keywords": [
-		"fetch",
+		"compression",
+		"cors",
+		"csrf",
 		"http",
 		"middleware",
-		"router",
-		"server",
+		"multipart",
+		"rate-limit",
+		"security",
+		"session",
+		"static",
 		"typescript"
 	],
-	"homepage": "https://github.com/orkestrel/server#readme",
-	"bugs": "https://github.com/orkestrel/server/issues",
+	"homepage": "https://github.com/orkestrel/middleware#readme",
+	"bugs": "https://github.com/orkestrel/middleware/issues",
 	"license": "MIT",
 	"repository": {
 		"type": "git",
-		"url": "git+https://github.com/orkestrel/server.git"
+		"url": "git+https://github.com/orkestrel/middleware.git"
 	},
 	"files": [
 		"dist",
@@ -66,14 +71,14 @@
 	},
 	"dependencies": {
 		"@orkestrel/abort": "^0.0.1",
+		"@orkestrel/budget": "^0.0.1",
 		"@orkestrel/contract": "^0.0.1",
-		"@orkestrel/emitter": "^0.0.1",
-		"@orkestrel/router": "^0.0.1",
 		"@orkestrel/timeout": "^0.0.1"
 	},
 	"devDependencies": {
 		"@orkestrel/guide": "^0.0.1",
-		"@orkestrel/server":  "^0.0.1",
+		"@orkestrel/router": "^0.0.1",
+		"@orkestrel/server": "^0.0.1",
 		"@types/node": "^26.1.1",
 		"@vitest/browser-playwright": "^4.1.10",
 		"oxfmt": "^0.58.0",
@@ -81,6 +86,9 @@
 		"typescript": "^6.0.3",
 		"vite": "^8.1.4",
 		"vitest": "^4.1.10"
+	},
+	"peerDependencies": {
+		"@orkestrel/server": "^0.0.1"
 	},
 	"engines": {
 		"node": ">=24"
