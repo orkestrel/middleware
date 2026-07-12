@@ -250,10 +250,13 @@ The trusted-proxy resolver — the single most load-bearing roster gap. The
 server injects the _socket_ peer as `ConnectionInfo.ip` and never trusts
 `X-Forwarded-For`; deployments behind proxies previously had to hand-roll XFF
 parsing in their `state` function (the enterprise footgun). This battery makes
-trust **explicit configuration**: walk `X-Forwarded-For` (and RFC 7239
-`Forwarded`) right-to-left, skipping exactly `proxies` trusted hops or every
-hop matching the `trusted` CIDR list, and stash the first untrusted address as
-`client.ip` (falling back to the socket peer). Downstream consumers
+trust **explicit configuration**: walk `X-Forwarded-For` right-to-left,
+skipping exactly `proxies` trusted hops (a positive integer — trusting zero
+hops is rejected at construction, since it would return the wholly
+client-supplied rightmost hop) or every hop matching the `trusted` CIDR list,
+and stash the first untrusted address as `client.ip` (falling back to the
+socket peer). RFC 7239 `Forwarded`-header parsing is deferred to a follow-up;
+the header form shipped is `X-Forwarded-For`. Downstream consumers
 (`createLimiter`'s default key, session security, telemetry) prefer
 `ClientState` when present. **Invariant preserved:** without this battery
 mounted, XFF remains completely untrusted — nothing implicit anywhere.

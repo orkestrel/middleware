@@ -1,0 +1,461 @@
+import type {
+	BearerState,
+	ClientInfo,
+	ClientState,
+	MultipartBody,
+	MultipartFile,
+	SessionControlInterface,
+	SessionInterface,
+} from './types.js'
+import type { ConnectionInfo, Encoding } from '@orkestrel/server'
+import { isRecord, isString } from '@orkestrel/contract'
+import { clientRateKey } from '@orkestrel/server'
+
+// ============================================================================
+//  @orkestrel/middleware — core pure leaves (AGENTS §5 helpers.ts).
+//  Every function here is a self-contained, referentially-transparent
+//  computation the battery factories in middlewares.ts compose — key
+//  derivation, wire-field builders, the forwarded-header hop walk,
+//  compression feature detection, buffering-eligibility predicates, the
+//  session data-carry, and the total state-slice guards.
+// ============================================================================
+
+/**
+ * The connection-facts state slice `createLimiter`'s default key derivation
+ * falls back to when neither {@link BearerState} nor {@link ClientState} is
+ * present — the raw socket peer surfaced on `context.state` by the server's
+ * `state` option.
+ */
+export interface ConnectionState {
+	readonly connection?: ConnectionInfo
+}
+
+/**
+ * Derive `createLimiter`'s default rate-limit bucket key from a request's
+ * resolved identity facts.
+ *
+ * @remarks
+ * Prefers a verified bearer token ({@link BearerState.token}) as
+ * `token:<value>`; else a resolved client IP ({@link ClientState.client.ip},
+ * set when `createForwarded` is mounted) or the raw socket peer
+ * ({@link ConnectionState.connection.ip}) collapsed via `clientRateKey`
+ * (IPv6 to its `/64` network) as `ip:<key>`; else the literal `ip:unknown`.
+ * Never reads `X-Forwarded-For` itself — that trust decision belongs solely
+ * to `createForwarded`.
+ *
+ * @param state - The slices `createLimiter`'s default key may read
+ * @returns The bucket key for the request
+ *
+ * @example
+ * ```ts
+ * resolveKey({ token: 'abc' }) // 'token:abc'
+ * resolveKey({ client: { ip: '2001:db8::1' } }) // 'ip:2001:db8::/64'
+ * ```
+ */
+export function resolveKey(state: BearerState & ClientState & ConnectionState): string {
+	if (state.token !== undefined) return `token:${state.token}`
+	const ip = state.client?.ip ?? state.connection?.ip
+	if (ip !== undefined) return `ip:${clientRateKey(ip)}`
+	return 'ip:unknown'
+}
+
+/**
+ * Build the `Retry-After` header value — whole seconds until a window reset,
+ * floored at a minimum of `1` (ruling I).
+ *
+ * @param resetAt - The window reset instant (same clock unit as `now`)
+ * @param now - The current instant
+ * @returns The `Retry-After` value in whole seconds, minimum `1`
+ *
+ * @example
+ * ```ts
+ * buildRetryAfter(1_500, 1_000) // '1'
+ * ```
+ */
+export function buildRetryAfter(resetAt: number, now: number): string {
+	const seconds = Math.ceil((resetAt - now) / 1000)
+	return String(Math.max(1, seconds))
+}
+
+/**
+ * Build the draft `RateLimit` structured header field (ruling I) — emitted
+ * only when `createLimiter`'s `policy` option is `true`.
+ *
+ * @param remaining - The requests still admitted this window
+ * @param resetAt - The window reset instant (same clock unit as `now`)
+ * @param now - The current instant
+ * @returns The `RateLimit` header value
+ *
+ * @example
+ * ```ts
+ * buildRateLimitField(4, 1_500, 1_000) // '"default";r=4;t=1'
+ * ```
+ */
+export function buildRateLimitField(remaining: number, resetAt: number, now: number): string {
+	const seconds = Math.max(1, Math.ceil((resetAt - now) / 1000))
+	return `"default";r=${remaining};t=${seconds}`
+}
+
+/**
+ * Build the draft `RateLimit-Policy` structured header field (ruling I) —
+ * emitted only when `createLimiter`'s `policy` option is `true`.
+ *
+ * @param max - The window's admitted request count
+ * @param window - The window length in milliseconds
+ * @returns The `RateLimit-Policy` header value
+ *
+ * @example
+ * ```ts
+ * buildRateLimitPolicyField(10, 60_000) // '"default";q=10;w=60'
+ * ```
+ */
+export function buildRateLimitPolicyField(max: number, window: number): string {
+	return `"default";q=${max};w=${Math.ceil(window / 1000)}`
+}
+
+/**
+ * Whether a candidate address is a bare (non-CIDR) trusted-hop match — an
+ * exact string match, or a simple prefix-CIDR match for IPv4 (`/8`–`/32`)
+ * and IPv6 (delegating the network computation to `ipv6Network`-shaped
+ * comparison of the leading hextets via string prefix).
+ *
+ * @remarks
+ * Supports exact addresses and dotted-decimal IPv4 CIDR (`10.0.0.0/8`
+ * through `/32`) verbatim. An IPv6 entry is matched by exact string only
+ * (no CIDR expansion) — documented as the supported subset; `createForwarded`
+ * never claims full CIDR generality beyond IPv4.
+ *
+ * @param address - The candidate hop address
+ * @param entry - One `trusted` roster entry — an exact address or an IPv4 CIDR
+ * @returns `true` when `address` is covered by `entry`
+ *
+ * @example
+ * ```ts
+ * matchesTrustedEntry('10.1.2.3', '10.0.0.0/8') // true
+ * matchesTrustedEntry('192.168.1.1', '10.0.0.0/8') // false
+ * ```
+ */
+export function matchesTrustedEntry(address: string, entry: string): boolean {
+	const slash = entry.indexOf('/')
+	if (slash === -1) return address === entry
+	const network = entry.slice(0, slash)
+	const bits = Number(entry.slice(slash + 1))
+	const networkParts = network.split('.')
+	const addressParts = address.split('.')
+	if (networkParts.length !== 4 || addressParts.length !== 4) return false
+	if (!Number.isInteger(bits) || bits < 8 || bits > 32) return false
+	const networkOctets = networkParts.map(Number)
+	const addressOctets = addressParts.map(Number)
+	if (networkOctets.some((value) => !Number.isInteger(value) || value < 0 || value > 255))
+		return false
+	if (addressOctets.some((value) => !Number.isInteger(value) || value < 0 || value > 255))
+		return false
+	const networkInt =
+		((networkOctets[0] ?? 0) << 24) |
+		((networkOctets[1] ?? 0) << 16) |
+		((networkOctets[2] ?? 0) << 8) |
+		(networkOctets[3] ?? 0)
+	const addressInt =
+		((addressOctets[0] ?? 0) << 24) |
+		((addressOctets[1] ?? 0) << 16) |
+		((addressOctets[2] ?? 0) << 8) |
+		(addressOctets[3] ?? 0)
+	const mask = bits === 32 ? -1 : ~((1 << (32 - bits)) - 1)
+	return (networkInt & mask) === (addressInt & mask)
+}
+
+/**
+ * Walk `X-Forwarded-For` right-to-left and resolve the first UNTRUSTED hop
+ * address — `createForwarded`'s core algorithm.
+ *
+ * @remarks
+ * Parses `X-Forwarded-For` only. With `proxies` set, trusts exactly that
+ * many hops counted from the right (the closest to this server) and returns
+ * the next one left of them; with `trusted` set, trusts every CONSECUTIVE
+ * hop from the right that matches one of the roster
+ * ({@link matchesTrustedEntry}) and returns the first hop that does not. If
+ * the rightmost hop (the immediate sender) does not match the roster, the
+ * whole header is untrustworthy and this returns `undefined` rather than
+ * returning any client-supplied hop value. When every hop is trusted, or the
+ * header is absent/empty, returns `undefined` (the caller falls back to the
+ * socket peer).
+ *
+ * @param header - The raw `X-Forwarded-For` header value (comma-separated hops), if present
+ * @param trust - Either a trusted hop COUNT or a `trusted` CIDR/exact roster
+ * @returns The first untrusted hop address, or `undefined` when none qualifies
+ *
+ * @example
+ * ```ts
+ * resolveForwardedFor('203.0.113.7, 10.0.0.1', { proxies: 1 }) // '203.0.113.7'
+ * ```
+ */
+export function resolveForwardedFor(
+	header: string | undefined,
+	trust: { readonly proxies: number } | { readonly trusted: readonly string[] },
+): string | undefined {
+	if (header === undefined) return undefined
+	const hops = header
+		.split(',')
+		.map((hop) => hop.trim())
+		.filter((hop) => hop.length > 0)
+	if (hops.length === 0) return undefined
+	if ('proxies' in trust) {
+		const index = hops.length - trust.proxies - 1
+		return index >= 0 ? hops[index] : undefined
+	}
+	const rightmost = hops[hops.length - 1]
+	if (rightmost === undefined) return undefined
+	const rightmostTrusted = trust.trusted.some((entry) => matchesTrustedEntry(rightmost, entry))
+	if (!rightmostTrusted) return undefined
+	for (let index = hops.length - 2; index >= 0; index -= 1) {
+		const hop = hops[index]
+		if (hop === undefined) return undefined
+		const trusted = trust.trusted.some((entry) => matchesTrustedEntry(hop, entry))
+		if (!trusted) return hop
+	}
+	return undefined
+}
+
+/**
+ * Feature-detect which of `candidates` the runtime's `CompressionStream`
+ * actually supports — `createCompression`'s construction-time intersection
+ * (ruling J).
+ *
+ * @remarks
+ * Probes each candidate with `new CompressionStream(candidate)` inside a
+ * `try`/`catch`; a coding the runtime rejects is dropped silently. `identity`
+ * is never probed (it has no `CompressionStream` coding and is always
+ * implicitly acceptable to negotiation).
+ *
+ * @param candidates - The codings to probe, in preference order
+ * @returns The subset of `candidates` the runtime's `CompressionStream` supports, in order
+ *
+ * @example
+ * ```ts
+ * detectEncodings(['gzip', 'deflate']) // ['gzip', 'deflate'] on a runtime with both
+ * ```
+ */
+export function detectEncodings(candidates: readonly Encoding[]): readonly Encoding[] {
+	const supported: Encoding[] = []
+	for (const candidate of candidates) {
+		if (candidate === 'identity') continue
+		try {
+			new CompressionStream(candidate)
+			supported.push(candidate)
+		} catch {
+			// Unsupported coding on this runtime — drop it, never throw.
+		}
+	}
+	return supported
+}
+
+/**
+ * Whether a response is eligible for the compression/ETag buffering pipeline
+ * (ruling J) — the shared cheap-skip predicate both batteries apply before
+ * ever touching `response.arrayBuffer()`.
+ *
+ * @remarks
+ * Skips a `HEAD` request, a `204`/`304` or otherwise bodyless response, an
+ * `event-stream` response (SSE — buffering would hang the connection), and a
+ * response that already carries the header the caller is about to set
+ * (`skipHeader`, e.g. `Content-Encoding` for compression, `ETag` for the
+ * ETag battery).
+ *
+ * @param method - The request's HTTP method
+ * @param response - The candidate response
+ * @param skipHeader - The response header whose presence means "already handled"
+ * @returns `true` when the response should be left untouched
+ *
+ * @example
+ * ```ts
+ * isBufferingIneligible('GET', new Response(null, { status: 204 }), 'content-encoding') // true
+ * ```
+ */
+export function isBufferingIneligible(
+	method: string,
+	response: Response,
+	skipHeader: string,
+): boolean {
+	if (method === 'HEAD') return true
+	if (response.status === 204 || response.status === 304) return true
+	if (response.body === null) return true
+	const contentType = response.headers.get('content-type')
+	if (contentType !== null && contentType.toLowerCase().startsWith('text/event-stream')) return true
+	if (response.headers.has(skipHeader)) return true
+	return false
+}
+
+/**
+ * Whether a negotiated `Accept-Encoding` outcome is worth acting on —
+ * `createCompression`'s negotiation-eligibility half of ruling J's skip list.
+ *
+ * @param encoding - The negotiated coding, or `undefined` when negotiation failed
+ * @returns `true` when `encoding` names an actionable, non-`identity` coding
+ *
+ * @example
+ * ```ts
+ * isCompressionNegotiated('gzip') // true
+ * isCompressionNegotiated(undefined) // false
+ * ```
+ */
+export function isCompressionNegotiated(
+	encoding: Encoding | undefined,
+): encoding is Exclude<Encoding, 'identity'> {
+	return encoding !== undefined && encoding !== 'identity'
+}
+
+/**
+ * Copy every entry of one session's `data` into another — the regenerate
+ * data-carry `createSession`'s `control.regenerate()` applies (ruling D).
+ *
+ * @param from - The source session whose `data` is copied
+ * @param to - The destination session `data` is copied into
+ *
+ * @example
+ * ```ts
+ * transferSessionData(oldSession, newSession)
+ * ```
+ */
+export function transferSessionData(from: SessionInterface, to: SessionInterface): void {
+	for (const [key, value] of from.data) to.data.set(key, value)
+}
+
+/**
+ * Determine whether a value implements {@link SessionInterface} — a total
+ * structural guard (§14): an `id` string plus a `data` `Map`.
+ *
+ * @param value - The candidate value
+ * @returns `true` when `value` is shaped like a {@link SessionInterface}
+ *
+ * @example
+ * ```ts
+ * isSession({ id: 'a', data: new Map() }) // true
+ * ```
+ */
+export function isSession(value: unknown): value is SessionInterface {
+	if (!isRecord(value)) return false
+	return isString(value.id) && value.data instanceof Map
+}
+
+/**
+ * Determine whether a value implements {@link SessionControlInterface} — a
+ * total structural guard (§14): callable `regenerate` and `destroy`.
+ *
+ * @param value - The candidate value
+ * @returns `true` when `value` is shaped like a {@link SessionControlInterface}
+ *
+ * @example
+ * ```ts
+ * isSessionControl({ regenerate() {}, destroy() {} }) // true
+ * ```
+ */
+export function isSessionControl(value: unknown): value is SessionControlInterface {
+	if (!isRecord(value)) return false
+	return typeof value.regenerate === 'function' && typeof value.destroy === 'function'
+}
+
+/**
+ * Determine whether a value is one staged {@link MultipartFile} record — a
+ * total structural guard (§14) checking every required field's shape.
+ *
+ * @param value - The candidate value
+ * @returns `true` when `value` is shaped like a {@link MultipartFile}
+ */
+export function isMultipartFile(value: unknown): value is MultipartFile {
+	if (!isRecord(value)) return false
+	return (
+		isString(value.field) &&
+		isString(value.name) &&
+		typeof value.size === 'number' &&
+		isString(value.mime) &&
+		typeof value.validated === 'boolean' &&
+		isString(value.status) &&
+		isString(value.path)
+	)
+}
+
+/**
+ * Determine whether a value implements {@link MultipartBody} — a total
+ * structural guard (§14): `files` keyed by field name to arrays of
+ * {@link MultipartFile}, and a `fields` string record.
+ *
+ * @param value - The candidate value
+ * @returns `true` when `value` is shaped like a {@link MultipartBody}
+ *
+ * @example
+ * ```ts
+ * isMultipartBody({ files: {}, fields: { name: 'a' } }) // true
+ * ```
+ */
+export function isMultipartBody(value: unknown): value is MultipartBody {
+	if (!isRecord(value)) return false
+	if (!isRecord(value.files) || !isRecord(value.fields)) return false
+	for (const entries of Object.values(value.files)) {
+		if (!Array.isArray(entries)) return false
+		for (const entry of entries) if (!isMultipartFile(entry)) return false
+	}
+	for (const fieldValue of Object.values(value.fields)) if (!isString(fieldValue)) return false
+	return true
+}
+
+/**
+ * Determine whether a request is a CORS PREFLIGHT — an `OPTIONS` request
+ * carrying an `Access-Control-Request-Method` header.
+ *
+ * @param method - The request's HTTP method
+ * @param headers - The request's `Headers`
+ * @returns `true` when the request is a CORS preflight `createCors` must answer
+ *
+ * @example
+ * ```ts
+ * isPreflight('OPTIONS', new Headers({ 'access-control-request-method': 'POST' })) // true
+ * ```
+ */
+export function isPreflight(method: string, headers: Headers): boolean {
+	return method === 'OPTIONS' && headers.has('access-control-request-method')
+}
+
+/**
+ * A parsed client-info fact for {@link ClientInfo} — a leaf shaping helper
+ * `createForwarded` uses to build its stashed slice.
+ *
+ * @param ip - The resolved client IP, if any
+ * @returns The {@link ClientInfo} slice value
+ *
+ * @example
+ * ```ts
+ * buildClientInfo('203.0.113.7') // { ip: '203.0.113.7' }
+ * ```
+ */
+export function buildClientInfo(ip: string | undefined): ClientInfo {
+	return { ip }
+}
+
+/**
+ * Constant-time string equality — `createCSRF`'s double-submit token
+ * comparison, avoiding a timing oracle on the submitted-vs-cookie match.
+ *
+ * @remarks
+ * Length-guarded XOR-accumulate over char codes: a length mismatch short
+ * circuits (safe — the lengths of two independently-generated tokens are
+ * not a useful timing signal), but once lengths match every character is
+ * compared with no early return, so a per-character mismatch never affects
+ * how long the comparison takes.
+ *
+ * @param a - The first string
+ * @param b - The second string
+ * @returns `true` when `a` and `b` are exactly equal
+ *
+ * @example
+ * ```ts
+ * equalsConstantTime('abc', 'abc') // true
+ * equalsConstantTime('abc', 'abd') // false
+ * ```
+ */
+export function equalsConstantTime(a: string, b: string): boolean {
+	if (a.length !== b.length) return false
+	let diff = 0
+	for (let index = 0; index < a.length; index += 1)
+		diff |= a.charCodeAt(index) ^ b.charCodeAt(index)
+	return diff === 0
+}
