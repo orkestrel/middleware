@@ -13,7 +13,7 @@ describe('createCookieTransport', () => {
 	it('round-trips a written id back through a request carrying its Cookie header', async () => {
 		const transport = createCookieTransport({ secret: SECRET })
 		const response = new Response(null)
-		await transport.write(response, 'session-id-1')
+		await transport.write(response, 'session-id-1', false)
 		const setCookie = response.headers.get('set-cookie')
 		expect(setCookie).not.toBeNull()
 		const cookieValue = (setCookie ?? '').split(';')[0] ?? ''
@@ -24,7 +24,7 @@ describe('createCookieTransport', () => {
 	it('resolves undefined reading a tampered cookie value', async () => {
 		const transport = createCookieTransport({ secret: SECRET })
 		const response = new Response(null)
-		await transport.write(response, 'session-id-1')
+		await transport.write(response, 'session-id-1', false)
 		const setCookie = response.headers.get('set-cookie') ?? ''
 		const cookieValue = setCookie.split(';')[0] ?? ''
 		const [name] = cookieValue.split('=')
@@ -50,7 +50,7 @@ describe('createCookieTransport', () => {
 	it('defaults the cookie to name "session", Path=/, HttpOnly, SameSite=Lax', async () => {
 		const transport = createCookieTransport({ secret: SECRET })
 		const response = new Response(null)
-		await transport.write(response, 'session-id-1')
+		await transport.write(response, 'session-id-1', false)
 		const setCookie = response.headers.get('set-cookie') ?? ''
 		expect(setCookie.startsWith('session=')).toBe(true)
 		expect(setCookie).toContain('Path=/')
@@ -61,9 +61,20 @@ describe('createCookieTransport', () => {
 	it('honors a custom cookie name', async () => {
 		const transport = createCookieTransport({ secret: SECRET, name: 'sid' })
 		const response = new Response(null)
-		await transport.write(response, 'session-id-1')
+		await transport.write(response, 'session-id-1', false)
 		const setCookie = response.headers.get('set-cookie') ?? ''
 		expect(setCookie.startsWith('sid=')).toBe(true)
+	})
+
+	it('auto-Secure: encrypted true carries Secure, encrypted false omits it', async () => {
+		const transport = createCookieTransport({ secret: SECRET })
+		const secureResponse = new Response(null)
+		await transport.write(secureResponse, 'session-id-1', true)
+		expect(secureResponse.headers.get('set-cookie')).toContain('Secure')
+
+		const plainResponse = new Response(null)
+		await transport.write(plainResponse, 'session-id-1', false)
+		expect(plainResponse.headers.get('set-cookie')).not.toContain('Secure')
 	})
 })
 
@@ -71,7 +82,7 @@ describe('createHeaderTransport', () => {
 	it('round-trips a written id back through a request carrying the header', async () => {
 		const transport = createHeaderTransport()
 		const response = new Response(null)
-		transport.write(response, 'session-id-1')
+		transport.write(response, 'session-id-1', false)
 		const headerValue = response.headers.get('session-id')
 		expect(headerValue).toBe('session-id-1')
 		const request = new Request('http://test.local/', {
@@ -89,7 +100,7 @@ describe('createHeaderTransport', () => {
 	it('clear removes the header', () => {
 		const transport = createHeaderTransport()
 		const response = new Response(null)
-		transport.write(response, 'session-id-1')
+		transport.write(response, 'session-id-1', false)
 		expect(response.headers.has('session-id')).toBe(true)
 		transport.clear(response)
 		expect(response.headers.has('session-id')).toBe(false)
@@ -98,7 +109,7 @@ describe('createHeaderTransport', () => {
 	it('honors a custom header name', () => {
 		const transport = createHeaderTransport({ header: 'x-session' })
 		const response = new Response(null)
-		transport.write(response, 'session-id-1')
+		transport.write(response, 'session-id-1', false)
 		expect(response.headers.get('x-session')).toBe('session-id-1')
 	})
 })

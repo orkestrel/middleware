@@ -2,14 +2,15 @@ import type {
 	BearerState,
 	ClientInfo,
 	ClientState,
+	ConnectionState,
 	MultipartBody,
 	MultipartFile,
 	SessionControlInterface,
 	SessionInterface,
 } from './types.js'
-import type { ConnectionInfo, Encoding } from '@orkestrel/server'
+import type { Encoding, MiddlewareContext } from '@orkestrel/server'
 import { isRecord, isString } from '@orkestrel/contract'
-import { clientRateKey } from '@orkestrel/server'
+import { clientRateKey, isCompressibleType, mergeVary, negotiateEncoding } from '@orkestrel/server'
 
 // ============================================================================
 //  @orkestrel/middleware — core pure leaves (AGENTS §5 helpers.ts).
@@ -19,16 +20,6 @@ import { clientRateKey } from '@orkestrel/server'
 //  compression feature detection, buffering-eligibility predicates, the
 //  session data-carry, and the total state-slice guards.
 // ============================================================================
-
-/**
- * The connection-facts state slice `createLimiter`'s default key derivation
- * falls back to when neither {@link BearerState} nor {@link ClientState} is
- * present — the raw socket peer surfaced on `context.state` by the server's
- * `state` option.
- */
-export interface ConnectionState {
-	readonly connection?: ConnectionInfo
-}
 
 /**
  * Derive `createLimiter`'s default rate-limit bucket key from a request's
@@ -124,6 +115,12 @@ export function buildRateLimitPolicyField(max: number, window: number): string {
  * through `/32`) verbatim. An IPv6 entry is matched by exact string only
  * (no CIDR expansion) — documented as the supported subset; `createForwarded`
  * never claims full CIDR generality beyond IPv4.
+ *
+ * @remarks
+ * An IPv6 `trusted` roster entry is compared as an EXACT string — it must be
+ * supplied in canonical form (no zero-compression normalization, no case
+ * folding) by the caller; this function performs no IPv6 normalization of
+ * its own.
  *
  * @param address - The candidate hop address
  * @param entry - One `trusted` roster entry — an exact address or an IPv4 CIDR
@@ -302,6 +299,129 @@ export function isCompressionNegotiated(
 	encoding: Encoding | undefined,
 ): encoding is Exclude<Encoding, 'identity'> {
 	return encoding !== undefined && encoding !== 'identity'
+}
+
+/**
+ * Resolve an opt-in, value-bearing security header — `string | boolean`
+ * (default OFF, `true` uses the secure default), the shape `createSecurity`'s
+ * `coep`/`hsts` options use, distinct from the plain value-or-`false` shape
+ * `resolveSecurityHeader` (the peer substrate) handles.
+ *
+ * @param value - The option value — a `string` override, `true` for the secure default, or `false`/`undefined` to omit
+ * @param fallback - The secure-default value used when `value` is `true`
+ * @returns The header value to set, or `undefined` to omit the header
+ *
+ * @example
+ * ```ts
+ * resolveOptInHeader(true, 'require-corp') // 'require-corp'
+ * resolveOptInHeader(undefined, 'require-corp') // undefined — omitted
+ * ```
+ */
+export function resolveOptInHeader(
+	value: string | boolean | undefined,
+	fallback: string,
+): string | undefined {
+	if (value === true) return fallback
+	if (value === false || value === undefined) return undefined
+	return value
+}
+
+/**
+ * Rebuild a `Response` around a replacement body while preserving its
+ * status/statusText — the buffered-response reconstruction shared by the
+ * compression and ETag batteries after they have consumed
+ * `response.arrayBuffer()`.
+ *
+ * @param body - The replacement body (already-buffered bytes, or `null`)
+ * @param response - The original response whose status/statusText/headers are preserved
+ * @param headers - The headers to apply; defaults to a fresh copy of `response.headers`
+ * @returns A new `Response` carrying `body` with `response`'s status/statusText
+ *
+ * @example
+ * ```ts
+ * rebuildResponse(bytes, response) // same status/statusText, response's headers copied
+ * rebuildResponse(bytes, response, headers) // explicit replacement headers
+ * ```
+ */
+export function rebuildResponse(
+	body: ConstructorParameters<typeof Response>[0],
+	response: Response,
+	headers?: ConstructorParameters<typeof Headers>[0],
+): Response {
+	return new Response(body, {
+		status: response.status,
+		statusText: response.statusText,
+		headers: headers ?? new Headers(response.headers),
+	})
+}
+
+/**
+ * The shared negotiate → skip → threshold → compress → header-set skeleton
+ * both faces' `createCompression` batteries compose — response-body
+ * compression over a caller-supplied set of feature-detected codings.
+ *
+ * @remarks
+ * Decision order: {@link isBufferingIneligible} → `options.filter` →
+ * `negotiateEncoding` over `options.encodings` → {@link isCompressionNegotiated}
+ * → `isCompressibleType` on `Content-Type` → a fast skip when the response
+ * already carries a numeric `Content-Length` BELOW `options.threshold`
+ * (avoids buffering a body known too small to be worth compressing) →
+ * buffer via `response.arrayBuffer()` → a threshold passthrough when the
+ * buffered size is still below `options.threshold` → `options.compress` →
+ * set `Content-Encoding`, merge `Vary: Accept-Encoding`, and a fresh
+ * `Content-Length` via {@link rebuildResponse}. Returns `response` unchanged
+ * on any skip.
+ *
+ * @param request - The inbound `Request` (read for `Accept-Encoding`)
+ * @param context - The `MiddlewareContext` (read for `context.method`)
+ * @param response - The downstream `Response` to consider compressing
+ * @param options - The threshold, optional filter, offered encodings, and the runtime's `compress` primitive
+ * @returns The original `response` when skipped, or a new compressed `Response`
+ *
+ * @example
+ * ```ts
+ * await compressResponse(request, context, response, {
+ * 	threshold: 1024,
+ * 	encodings: ['gzip'],
+ * 	compress: async (bytes, encoding) => gzip(bytes),
+ * })
+ * ```
+ */
+export async function compressResponse(
+	request: Request,
+	context: MiddlewareContext<unknown>,
+	response: Response,
+	options: {
+		readonly threshold: number
+		readonly filter?: (request: Request, response: Response) => boolean
+		readonly encodings: readonly Encoding[]
+		readonly compress: (
+			bytes: Uint8Array<ArrayBuffer>,
+			encoding: Exclude<Encoding, 'identity'>,
+		) => Promise<Uint8Array<ArrayBuffer>>
+	},
+): Promise<Response> {
+	if (isBufferingIneligible(context.method, response, 'content-encoding')) return response
+	if (options.filter !== undefined && !options.filter(request, response)) return response
+	const acceptEncoding = request.headers.get('accept-encoding')
+	if (acceptEncoding === null) return response
+	const negotiated = negotiateEncoding(acceptEncoding, options.encodings)
+	if (!isCompressionNegotiated(negotiated)) return response
+	const contentType = response.headers.get('content-type')
+	if (contentType === null || !isCompressibleType(contentType)) return response
+	const declaredLength = response.headers.get('content-length')
+	if (declaredLength !== null) {
+		const declared = Number(declaredLength)
+		if (Number.isFinite(declared) && declared < options.threshold) return response
+	}
+	const buffer = await response.arrayBuffer()
+	if (buffer.byteLength < options.threshold) return rebuildResponse(buffer, response)
+	const compressed = await options.compress(new Uint8Array(buffer), negotiated)
+	const headers = new Headers(response.headers)
+	headers.set('content-encoding', negotiated)
+	headers.set('vary', mergeVary(headers.get('vary') ?? undefined, 'Accept-Encoding'))
+	headers.set('content-length', String(compressed.byteLength))
+	return rebuildResponse(compressed, response, headers)
 }
 
 /**

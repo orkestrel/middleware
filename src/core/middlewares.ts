@@ -4,6 +4,7 @@ import type {
 	BoundaryOptions,
 	ClientState,
 	CompressionOptions,
+	ConnectionState,
 	CorsOptions,
 	CSRFOptions,
 	CSRFState,
@@ -20,19 +21,18 @@ import type {
 	TelemetryOptions,
 } from './types.js'
 import type { BudgetInterface } from '@orkestrel/budget'
-import type { MiddlewareContext, MiddlewareHandler } from '@orkestrel/server'
+import type { Encoding, MiddlewareContext, MiddlewareHandler } from '@orkestrel/server'
 import { isBoolean, isFiniteNumber, isFunction, isRecord, isString } from '@orkestrel/contract'
 import { linkSignal } from '@orkestrel/abort'
 import { createBudget } from '@orkestrel/budget'
 import {
 	HTTPError,
-	isCompressibleType,
 	isHTTPError,
 	isValidRequestId,
 	mergeVary,
-	negotiateEncoding,
 	readSignedCookie,
 	resolveOrigin,
+	resolveSecure,
 	resolveSecurityHeader,
 	signToken,
 	verifyToken,
@@ -69,16 +69,17 @@ import {
 	buildRateLimitField,
 	buildRateLimitPolicyField,
 	buildRetryAfter,
+	compressResponse,
 	detectEncodings,
 	equalsConstantTime,
 	isBufferingIneligible,
-	isCompressionNegotiated,
 	isPreflight,
+	rebuildResponse,
 	resolveForwardedFor,
 	resolveKey,
+	resolveOptInHeader,
 	transferSessionData,
 } from './helpers.js'
-import type { ConnectionState } from './helpers.js'
 import { MemorySessionStore } from './MemorySessionStore.js'
 import { Session } from './Session.js'
 import { computeBodyETag, matchesETag } from '@orkestrel/server'
@@ -188,71 +189,26 @@ export function createCompression<TState>(options?: CompressionOptions): Middlew
 		throw new TypeError('CompressionOptions.threshold must be a finite number when provided')
 	if (options?.filter !== undefined && !isFunction(options.filter))
 		throw new TypeError('CompressionOptions.filter must be a function when provided')
+	if (options?.encodings !== undefined && !Array.isArray(options.encodings))
+		throw new TypeError('CompressionOptions.encodings must be an array when provided')
 	const threshold = options?.threshold ?? DEFAULT_COMPRESSION_THRESHOLD
 	const encodings = detectEncodings(options?.encodings ?? DEFAULT_COMPRESSION_ENCODINGS)
 	const filter = options?.filter
+	const compress = async (
+		bytes: Uint8Array<ArrayBuffer>,
+		encoding: Exclude<Encoding, 'identity'>,
+	): Promise<Uint8Array<ArrayBuffer>> => {
+		const source = new Response(bytes).body
+		if (source === null) return bytes
+		const compressed = await new Response(
+			source.pipeThrough(new CompressionStream(encoding)),
+		).arrayBuffer()
+		return new Uint8Array(compressed)
+	}
 	return async (request, context, next) => {
 		const response = await next()
-		if (isBufferingIneligible(context.method, response, 'content-encoding')) return response
-		if (filter !== undefined && !filter(request, response)) return response
-		const acceptEncoding = request.headers.get('accept-encoding')
-		if (acceptEncoding === null) return response
-		const negotiated = negotiateEncoding(acceptEncoding, encodings)
-		if (!isCompressionNegotiated(negotiated)) return response
-		const contentType = response.headers.get('content-type')
-		if (contentType === null || !isCompressibleType(contentType)) return response
-		const buffer = await response.arrayBuffer()
-		if (buffer.byteLength < threshold)
-			return new Response(buffer, {
-				status: response.status,
-				statusText: response.statusText,
-				headers: response.headers,
-			})
-		const source = new Response(buffer).body
-		if (source === null)
-			return new Response(buffer, {
-				status: response.status,
-				statusText: response.statusText,
-				headers: response.headers,
-			})
-		const compressed = await new Response(
-			source.pipeThrough(new CompressionStream(negotiated)),
-		).arrayBuffer()
-		const headers = new Headers(response.headers)
-		headers.set('content-encoding', negotiated)
-		headers.set('vary', mergeVary(headers.get('vary') ?? undefined, 'Accept-Encoding'))
-		headers.set('content-length', String(compressed.byteLength))
-		return new Response(compressed, {
-			status: response.status,
-			statusText: response.statusText,
-			headers,
-		})
+		return compressResponse(request, context, response, { threshold, filter, encodings, compress })
 	}
-}
-
-/**
- * Resolve an opt-in, value-bearing security header — `string | boolean`
- * (default OFF, `true` uses the secure default), the shape `createSecurity`'s
- * `coep`/`hsts` options use, distinct from the plain value-or-`false` shape
- * `resolveSecurityHeader` (the peer substrate) handles.
- *
- * @param value - The option value — a `string` override, `true` for the secure default, or `false`/`undefined` to omit
- * @param fallback - The secure-default value used when `value` is `true`
- * @returns The header value to set, or `undefined` to omit the header
- *
- * @example
- * ```ts
- * resolveOptInHeader(true, 'require-corp') // 'require-corp'
- * resolveOptInHeader(undefined, 'require-corp') // undefined — omitted
- * ```
- */
-export function resolveOptInHeader(
-	value: string | boolean | undefined,
-	fallback: string,
-): string | undefined {
-	if (value === true) return fallback
-	if (value === false || value === undefined) return undefined
-	return value
 }
 
 /**
@@ -336,24 +292,19 @@ export function createSecurity<TState extends { identifier?: string }>(
 		}
 		const response = await next()
 		response.headers.set('x-content-type-options', 'nosniff')
-		const frameValue = resolveSecurityHeader(frame, DEFAULT_FRAME_OPTIONS)
-		if (frameValue !== undefined) response.headers.set('x-frame-options', frameValue)
-		const cspValue = resolveSecurityHeader(csp, DEFAULT_CSP)
-		if (cspValue !== undefined) response.headers.set('content-security-policy', cspValue)
-		const referrerValue = resolveSecurityHeader(referrer, DEFAULT_REFERRER_POLICY)
-		if (referrerValue !== undefined) response.headers.set('referrer-policy', referrerValue)
-		const permissionsValue = resolveSecurityHeader(permissions, DEFAULT_PERMISSIONS_POLICY)
-		if (permissionsValue !== undefined) response.headers.set('permissions-policy', permissionsValue)
-		const coopValue = resolveSecurityHeader(coop, DEFAULT_COOP)
-		if (coopValue !== undefined) response.headers.set('cross-origin-opener-policy', coopValue)
-		const corpValue = resolveSecurityHeader(corp, DEFAULT_CORP)
-		if (corpValue !== undefined) response.headers.set('cross-origin-resource-policy', corpValue)
-		const clusterValue = resolveSecurityHeader(cluster, DEFAULT_CLUSTER)
-		if (clusterValue !== undefined) response.headers.set('origin-agent-cluster', clusterValue)
-		const coepValue = resolveOptInHeader(coep, DEFAULT_COEP)
-		if (coepValue !== undefined) response.headers.set('cross-origin-embedder-policy', coepValue)
-		const hstsValue = resolveOptInHeader(hsts, DEFAULT_HSTS)
-		if (hstsValue !== undefined) response.headers.set('strict-transport-security', hstsValue)
+		const headerTable: readonly (readonly [string, string | undefined])[] = [
+			['x-frame-options', resolveSecurityHeader(frame, DEFAULT_FRAME_OPTIONS)],
+			['content-security-policy', resolveSecurityHeader(csp, DEFAULT_CSP)],
+			['referrer-policy', resolveSecurityHeader(referrer, DEFAULT_REFERRER_POLICY)],
+			['permissions-policy', resolveSecurityHeader(permissions, DEFAULT_PERMISSIONS_POLICY)],
+			['cross-origin-opener-policy', resolveSecurityHeader(coop, DEFAULT_COOP)],
+			['cross-origin-resource-policy', resolveSecurityHeader(corp, DEFAULT_CORP)],
+			['origin-agent-cluster', resolveSecurityHeader(cluster, DEFAULT_CLUSTER)],
+			['cross-origin-embedder-policy', resolveOptInHeader(coep, DEFAULT_COEP)],
+			['strict-transport-security', resolveOptInHeader(hsts, DEFAULT_HSTS)],
+		]
+		for (const [name, value] of headerTable)
+			if (value !== undefined) response.headers.set(name, value)
 		if (identifierEnabled && identifier !== undefined)
 			response.headers.set(DEFAULT_IDENTIFIER_HEADER, identifier)
 		return response
@@ -413,6 +364,11 @@ export function createCors<TState>(options?: CorsOptions): MiddlewareHandler<TSt
  * @returns A `MiddlewareHandler<TState>`
  * @throws {TypeError} When `options.ms` or `options.status` is malformed
  *
+ * @remarks
+ * MUST sit OUTSIDE `createBody` in the chain — it reconstructs the inbound
+ * `Request` (to link its `signal` to the deadline `signal`), which throws if
+ * the body was already consumed upstream (e.g. by `createBody`'s cached read).
+ *
  * @example
  * ```ts
  * const deadline = createDeadline({ ms: 5_000 })
@@ -434,13 +390,27 @@ export function createDeadline<TState>(options: DeadlineOptions): MiddlewareHand
 				once: true,
 			})
 		})
+		let deadlineWon = false
 		try {
-			return await Promise.race([downstream, deadline])
+			const winner = await Promise.race([
+				downstream,
+				deadline.then((response) => {
+					deadlineWon = true
+					return response
+				}),
+			])
+			return winner
 		} finally {
 			timeout.clear()
 			// The losing `next()` promise is settled-and-discarded — a late throw
-			// from it can never surface as an unhandled rejection.
-			downstream.catch(() => {})
+			// from it can never surface as an unhandled rejection; when the
+			// deadline won the race, best-effort cancel its late body so the
+			// runtime can reclaim the underlying stream.
+			downstream
+				.then((response) => {
+					if (deadlineWon) response.body?.cancel().catch(() => {})
+				})
+				.catch(() => {})
 		}
 	}
 }
@@ -461,20 +431,20 @@ export function createDeadline<TState>(options: DeadlineOptions): MiddlewareHand
 export function createForwarded<TState extends ClientState & ConnectionState>(
 	options: ForwardedOptions,
 ): MiddlewareHandler<TState> {
-	const proxies = options.proxies
-	const trusted = options.trusted
-	if (proxies === undefined && trusted === undefined)
+	const hasProxies = isRecord(options) && 'proxies' in options
+	const hasTrusted = isRecord(options) && 'trusted' in options
+	if (!isRecord(options) || hasProxies === hasTrusted)
 		throw new TypeError('ForwardedOptions requires exactly one of proxies or trusted')
-	if (proxies !== undefined && trusted !== undefined)
-		throw new TypeError('ForwardedOptions requires exactly one of proxies or trusted')
-	if (
-		proxies !== undefined &&
-		(!isFiniteNumber(proxies) || !Number.isInteger(proxies) || proxies < 1)
-	)
-		throw new TypeError('ForwardedOptions.proxies must be a positive integer')
-	if (trusted !== undefined && !Array.isArray(trusted))
-		throw new TypeError('ForwardedOptions.trusted must be an array when provided')
-	const trust = proxies !== undefined ? { proxies } : { trusted: trusted ?? [] }
+	if (hasProxies) {
+		const proxies = options.proxies
+		if (!isFiniteNumber(proxies) || !Number.isInteger(proxies) || proxies < 1)
+			throw new TypeError('ForwardedOptions.proxies must be a positive integer')
+	} else {
+		const trusted = options.trusted
+		if (!Array.isArray(trusted))
+			throw new TypeError('ForwardedOptions.trusted must be an array when provided')
+	}
+	const trust = hasProxies ? { proxies: options.proxies } : { trusted: options.trusted }
 	return async (request, context, next) => {
 		const header = request.headers.get('x-forwarded-for') ?? undefined
 		const resolved = resolveForwardedFor(header, trust)
@@ -509,15 +479,15 @@ export function createETag<TState>(options?: ETagOptions): MiddlewareHandler<TSt
 		const bytes = new Uint8Array(buffer)
 		const etag = await computeBodyETag(bytes, weak)
 		const ifNoneMatch = request.headers.get('if-none-match')
-		if (ifNoneMatch !== null && matchesETag(ifNoneMatch, etag))
-			return new Response(null, { status: 304, headers: response.headers })
+		if (ifNoneMatch !== null && matchesETag(ifNoneMatch, etag)) {
+			const headers = new Headers(response.headers)
+			headers.set('etag', etag)
+			headers.delete('content-length')
+			return new Response(null, { status: 304, headers })
+		}
 		const headers = new Headers(response.headers)
 		headers.set('etag', etag)
-		return new Response(bytes, {
-			status: response.status,
-			statusText: response.statusText,
-			headers,
-		})
+		return rebuildResponse(bytes, response, headers)
 	}
 }
 
@@ -538,7 +508,10 @@ export function createETag<TState>(options?: ETagOptions): MiddlewareHandler<TSt
 export function createBearer<TState extends BearerState>(
 	options: BearerOptions,
 ): MiddlewareHandler<TState> {
-	if (!isString(options.secret) && !Array.isArray(options.secret))
+	if (
+		!isString(options.secret) &&
+		(!Array.isArray(options.secret) || !options.secret.every(isString))
+	)
 		throw new TypeError('BearerOptions.secret must be a string or string array')
 	if (options.header !== undefined && !isString(options.header))
 		throw new TypeError('BearerOptions.header must be a string when provided')
@@ -672,7 +645,7 @@ export function createBody<TState>(): MiddlewareHandler<TState> {
  * across the request, with a mid-handler `regenerate`/`destroy` control handle.
  *
  * @typeParam S - The session entity type the store persists (must implement {@link SessionInterface})
- * @typeParam TState - The consumer's opaque per-request state type, must carry {@link SessionState}
+ * @typeParam TState - The consumer's opaque per-request state type, must carry {@link SessionState} and {@link ConnectionState}
  * @param options - See {@link SessionOptions}
  * @returns A `MiddlewareHandler<TState>`
  * @throws {TypeError} When any option is malformed
@@ -685,7 +658,7 @@ export function createBody<TState>(): MiddlewareHandler<TState> {
  */
 export function createSession<
 	S extends SessionInterface = SessionInterface,
-	TState extends SessionState = SessionState,
+	TState extends SessionState & ConnectionState = SessionState & ConnectionState,
 >(options: SessionOptions<S, TState>): MiddlewareHandler<TState> {
 	if (
 		!isFunction(options.transport.read) ||
@@ -728,6 +701,7 @@ export function createSession<
 
 	return async (request, context, next) => {
 		const now = clock()
+		const encrypted = context.state.connection?.encrypted ?? false
 		const incomingId = await transport.read(request)
 		let session = incomingId !== undefined ? await store.get(incomingId, now) : undefined
 
@@ -742,7 +716,6 @@ export function createSession<
 			if (shouldMint) {
 				const id = crypto.randomUUID()
 				session = create(id)
-				await store.set(id, session, now)
 				minted = true
 			} else if (requireSession) {
 				throw new HTTPError(404, 'session required')
@@ -779,10 +752,10 @@ export function createSession<
 			} else if (regenerated !== undefined) {
 				await store.set(regenerated.id, regenerated, clock())
 				await store.delete(activeSession.id)
-				await transport.write(response, regenerated.id)
+				await transport.write(response, regenerated.id, encrypted)
 			} else {
 				await store.set(activeSession.id, activeSession, clock())
-				if (minted) await transport.write(response, activeSession.id)
+				if (minted) await transport.write(response, activeSession.id, encrypted)
 			}
 		}
 
@@ -793,7 +766,7 @@ export function createSession<
 /**
  * Session-bound double-submit CSRF protection battery.
  *
- * @typeParam TState - The consumer's opaque per-request state type, must carry {@link CSRFState} and {@link SessionState}
+ * @typeParam TState - The consumer's opaque per-request state type, must carry {@link CSRFState}, {@link SessionState}, and {@link ConnectionState}
  * @param options - See {@link CSRFOptions}
  * @returns A `MiddlewareHandler<TState>`
  * @throws {TypeError} When any option is malformed
@@ -804,10 +777,13 @@ export function createSession<
  * const csrf = createCSRF({ secret: 'shh' })
  * ```
  */
-export function createCSRF<TState extends CSRFState & SessionState>(
+export function createCSRF<TState extends CSRFState & SessionState & ConnectionState>(
 	options: CSRFOptions,
 ): MiddlewareHandler<TState> {
-	if (!isString(options.secret) && !Array.isArray(options.secret))
+	if (
+		!isString(options.secret) &&
+		(!Array.isArray(options.secret) || !options.secret.every(isString))
+	)
 		throw new TypeError('CSRFOptions.secret must be a string or string array')
 	if (options.cookie !== undefined && !isString(options.cookie))
 		throw new TypeError('CSRFOptions.cookie must be a string when provided')
@@ -830,10 +806,12 @@ export function createCSRF<TState extends CSRFState & SessionState>(
 			const token = await signToken(bound, { secret })
 			context.state.csrf = token
 			const response = await next()
+			const secure = resolveSecure(undefined, context.state.connection?.encrypted ?? false)
 			await writeSignedCookie(response.headers, cookieName, token, secret, {
 				sameSite: 'Strict',
 				httpOnly: false,
 				path: '/',
+				secure,
 			})
 			return response
 		}

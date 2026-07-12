@@ -119,3 +119,21 @@ export type UploadStatus = 'staged' | 'moved'
 export interface UploadedFileInterface extends Omit<MultipartFile, 'status'> {
 	readonly status: UploadStatus
 }
+
+/**
+ * Options for the node face's `createCompression` — `node:zlib`-backed
+ * response compression.
+ *
+ * @param options - See fields below
+ * @remarks
+ * - `threshold` — the minimum buffered body size (bytes) worth compressing;
+ *   defaults to {@link DEFAULT_COMPRESSION_THRESHOLD}.
+ * - `filter` — an additional predicate a response must pass before
+ *   compression is attempted; defaults to always-allow. `encodings` is fixed
+ *   to `['gzip', 'deflate']` and is not configurable (see the peer `Encoding`
+ *   type limitation documented on `createCompression`).
+ */
+export interface NodeCompressionOptions {
+	readonly threshold?: number
+	readonly filter?: (request: Request, response: Response) => boolean
+}

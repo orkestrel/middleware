@@ -11,6 +11,7 @@ import { tmpdir } from 'node:os'
 import { extname, join, normalize, resolve, sep } from 'node:path'
 import { randomUUID } from 'node:crypto'
 import { isRecord } from '@orkestrel/contract'
+import { isDangerousKey } from '@orkestrel/server'
 import {
 	DEFAULT_CONTENT_TYPE,
 	DEFAULT_MULTIPART_FIELD,
@@ -269,6 +270,46 @@ export function resolveMultipartLimits(
 }
 
 /**
+ * Parse one multipart part's raw header block into its `name` (from
+ * `Content-Disposition`), optional `filename`, and optional `Content-Type`.
+ *
+ * @param block - The raw header block for one multipart part (before the
+ * terminating blank line)
+ * @returns The parsed `name`, `filename`, and `contentType` (each
+ * `undefined` when absent)
+ *
+ * @example
+ * ```ts
+ * parsePartHeaders('Content-Disposition: form-data; name="title"')
+ * // { name: 'title', filename: undefined, contentType: undefined }
+ * ```
+ */
+export function parsePartHeaders(block: string): {
+	readonly name: string | undefined
+	readonly filename: string | undefined
+	readonly contentType: string | undefined
+} {
+	let name: string | undefined
+	let filename: string | undefined
+	let contentType: string | undefined
+	for (const line of block.split('\r\n')) {
+		const colon = line.indexOf(':')
+		if (colon === -1) continue
+		const key = line.slice(0, colon).trim().toLowerCase()
+		const value = line.slice(colon + 1).trim()
+		if (key === 'content-disposition') {
+			const nameMatch = /;\s*name="([^"]*)"/.exec(value)
+			const filenameMatch = /;\s*filename="([^"]*)"/.exec(value)
+			if (nameMatch !== null) name = nameMatch[1]
+			if (filenameMatch !== null) filename = filenameMatch[1]
+		} else if (key === 'content-type') {
+			contentType = value
+		}
+	}
+	return { name, filename, contentType }
+}
+
+/**
  * Stream-parse a `multipart/form-data` request into its files and fields —
  * the mid-stream state machine `createMultipart` drives (PROPOSAL §4.15).
  *
@@ -278,8 +319,11 @@ export function resolveMultipartLimits(
  * the instant it is exceeded (reading stops, every already-staged temp file
  * is deleted, throws {@link MultipartError} with reason `'limit'`). Each file
  * part streams to `join(directory, randomUUID())` — the client's declared
- * filename is METADATA ONLY, never a path component. A field named
- * `__proto__` / `constructor` / `prototype` is silently skipped. A malformed
+ * filename is METADATA ONLY, never a path component. A field OR file part
+ * named `__proto__` / `constructor` / `prototype` is silently skipped and
+ * never keyed onto the returned {@link MultipartBody} (a skipped file's
+ * staged temp file is unlinked immediately, since it can never be
+ * referenced). A malformed
  * structure (missing/unterminated boundary, nameless part, an oversized
  * header block) throws with reason `'malformed'`. A file whose SNIFFED bytes
  * fail the configured `allowed` MIME list throws with reason `'rejected'`. A
@@ -311,41 +355,12 @@ export async function parseMultipartRequest(
 	const directory = options.directory ?? tmpdir()
 
 	const staged: string[] = []
-	const files: Record<string, MultipartFile[]> = {}
-	const fields: Record<string, string> = {}
+	const files: Record<string, MultipartFile[]> = Object.create(null)
+	const fields: Record<string, string> = Object.create(null)
 	let fileCount = 0
 	let fieldCount = 0
 	let totalBytes = 0
 	let aborted = false
-
-	function isDangerousKey(key: string): boolean {
-		return key === '__proto__' || key === 'constructor' || key === 'prototype'
-	}
-
-	function parsePartHeaders(block: string): {
-		readonly name: string | undefined
-		readonly filename: string | undefined
-		readonly contentType: string | undefined
-	} {
-		let name: string | undefined
-		let filename: string | undefined
-		let contentType: string | undefined
-		for (const line of block.split('\r\n')) {
-			const colon = line.indexOf(':')
-			if (colon === -1) continue
-			const key = line.slice(0, colon).trim().toLowerCase()
-			const value = line.slice(colon + 1).trim()
-			if (key === 'content-disposition') {
-				const nameMatch = /;\s*name="([^"]*)"/.exec(value)
-				const filenameMatch = /;\s*filename="([^"]*)"/.exec(value)
-				if (nameMatch !== null) name = nameMatch[1]
-				if (filenameMatch !== null) filename = filenameMatch[1]
-			} else if (key === 'content-type') {
-				contentType = value
-			}
-		}
-		return { name, filename, contentType }
-	}
 
 	async function cleanup(): Promise<void> {
 		for (const path of staged) {
@@ -416,10 +431,7 @@ export async function parseMultipartRequest(
 
 			if (filename !== undefined) {
 				fileCount += 1
-				if (fileCount > limits.files) {
-					await cleanup()
-					throw new MultipartError('limit', 'too many multipart files')
-				}
+				if (fileCount > limits.files) throw new MultipartError('limit', 'too many multipart files')
 				const path = join(directory, randomUUID())
 				staged.push(path)
 				const handle = await open(path, 'w')
@@ -461,29 +473,30 @@ export async function parseMultipartRequest(
 				const validated = detected !== undefined && detected === declared
 				if (allowed !== undefined) {
 					const acceptable = validated && detected !== undefined && allowed.includes(detected)
-					if (!acceptable) {
-						await cleanup()
+					if (!acceptable)
 						throw new MultipartError('rejected', 'multipart file failed type validation')
-					}
 				}
-				const record = createUploadedFile({
-					field: name,
-					name: filename,
-					size,
-					mime: detected ?? declared,
-					validated,
-					status: 'staged',
-					path,
-				})
-				const existing = files[name]
-				if (existing === undefined) files[name] = [record]
-				else existing.push(record)
+				if (isDangerousKey(name)) {
+					await unlink(path)
+					staged.splice(staged.indexOf(path), 1)
+				} else {
+					const record = createUploadedFile({
+						field: name,
+						name: filename,
+						size,
+						mime: detected ?? declared,
+						validated,
+						status: 'staged',
+						path,
+					})
+					const existing = files[name]
+					if (existing === undefined) files[name] = [record]
+					else existing.push(record)
+				}
 			} else {
 				fieldCount += 1
-				if (fieldCount > limits.fields) {
-					await cleanup()
+				if (fieldCount > limits.fields)
 					throw new MultipartError('limit', 'too many multipart fields')
-				}
 				let value = Buffer.alloc(0)
 				for (;;) {
 					const boundaryIndex = buffer.indexOf(partDelimiter)
@@ -491,10 +504,8 @@ export async function parseMultipartRequest(
 						const safeLength = Math.max(0, buffer.length - (partDelimiter.length - 1))
 						if (safeLength > 0) {
 							value = Buffer.concat([value, buffer.subarray(0, safeLength)])
-							if (value.length > limits.field) {
-								await cleanup()
+							if (value.length > limits.field)
 								throw new MultipartError('limit', 'multipart field exceeds size limit')
-							}
 							buffer = buffer.subarray(safeLength)
 						}
 						if (!(await pull()))
@@ -502,10 +513,8 @@ export async function parseMultipartRequest(
 						continue
 					}
 					value = Buffer.concat([value, buffer.subarray(0, boundaryIndex)])
-					if (value.length > limits.field) {
-						await cleanup()
+					if (value.length > limits.field)
 						throw new MultipartError('limit', 'multipart field exceeds size limit')
-					}
 					buffer = buffer.subarray(boundaryIndex + 2)
 					break
 				}

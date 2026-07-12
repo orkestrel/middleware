@@ -76,7 +76,7 @@ const handle = compose<State>([boundary, security], async (_request, context) =>
 | `SecurityOptions`           | interface | `{ frame?; csp?; referrer?; permissions?; coop?; corp?; cluster?; coep?; hsts?; identifier? }`. |
 | `CorsOptions`               | interface | `{ origin?; methods?; headers? }` — options for `createCors`.                                   |
 | `DeadlineOptions`           | interface | `{ ms; status? }` — options for `createDeadline`.                                               |
-| `ForwardedOptions`          | interface | `{ proxies? } \| { trusted? }` — exactly one, for `createForwarded`.                            |
+| `ForwardedOptions`          | type      | `{ proxies } \| { trusted }` — exactly one, for `createForwarded`.                              |
 | `ETagOptions`               | interface | `{ weak? }` — options for `createETag`.                                                         |
 | `BearerOptions`             | interface | `{ secret; header?; scheme? }` — options for `createBearer`.                                    |
 | `LimiterOptions`            | interface | `{ max; window; capacity?; key?; message?; clock?; policy? }`.                                  |
@@ -102,6 +102,7 @@ const handle = compose<State>([boundary, security], async (_request, context) =>
 | `StaticOptions`             | interface | `{ root; prefix?; index?; dotfiles?; cache?; etag?; fallback? }`.                               |
 | `MultipartLimits`           | interface | `{ file?; files?; field?; fields?; total? }` — per-category mid-stream caps.                    |
 | `MultipartOptions`          | interface | `{ limits?; allowed?; directory? }` — options for `createMultipart`.                            |
+| `NodeCompressionOptions`    | interface | `{ threshold?; filter? }` — options for the node face's `createCompression`.                    |
 | `MultipartReason`           | type      | `'limit' \| 'malformed' \| 'rejected'` — the axis `MultipartError` maps to a status.            |
 | `UploadStatus`              | type      | `'staged' \| 'moved'` — a staged upload's temp-file lifecycle stage.                            |
 | `UploadedFileInterface`     | interface | `{ field; name; size; mime; validated; status: UploadStatus; path }`.                           |
@@ -161,6 +162,8 @@ const handle = compose<State>([boundary, security], async (_request, context) =>
 | `detectEncodings`           | function | Feature-detect which candidate `Encoding`s the runtime's `CompressionStream` supports.    |
 | `isBufferingIneligible`     | function | Whether a response must pass through untouched (HEAD, 204/304, SSE, already-encoded).     |
 | `isCompressionNegotiated`   | function | Narrow a negotiated `Encoding` to one worth actually compressing with.                    |
+| `rebuildResponse`           | function | Reconstruct a `Response` with a new body, copying status/headers (with overrides).        |
+| `compressResponse`          | function | The shared compression decision skeleton — eligibility, negotiation, buffer, compress.    |
 | `transferSessionData`       | function | Copy one session's `data` Map onto another — the `regenerate()` data-carry.               |
 | `isSession`                 | function | Whether a value implements `SessionInterface`.                                            |
 | `isSessionControl`          | function | Whether a value implements `SessionControlInterface`.                                     |
@@ -182,6 +185,7 @@ const handle = compose<State>([boundary, security], async (_request, context) =>
 | `computeFileETag`        | function | Compute a weak file `ETag` from size + mtime (`W/"<size>-<floor(mtimeMs)>"`).                     |
 | `detectMIME`             | function | Sniff a MIME type from a file's leading magic bytes.                                              |
 | `multipartBoundary`      | function | Extract the multipart boundary token from a `Content-Type` header.                                |
+| `parsePartHeaders`       | function | Parse one multipart part's raw header block into its field/filename/mime facts.                   |
 | `resolveMultipartLimits` | function | Resolve `MultipartLimits` defaults into a fully-populated `Required<MultipartLimits>`.            |
 | `parseMultipartRequest`  | function | Stream-parse a multipart request body into a `MultipartBody`, or `undefined`.                     |
 | `createUploadedFile`     | function | Build a frozen `UploadedFileInterface` record.                                                    |
@@ -247,11 +251,11 @@ How a session id travels to and from the client — `read` is total (never
 throws); `write`/`clear` mutate the RETURNED `Response` on the way out (the
 returning onion makes "before send" automatic).
 
-| Method  | Returns                               | Behavior                                                                    |
-| ------- | ------------------------------------- | --------------------------------------------------------------------------- |
-| `read`  | `string \| undefined \| Promise<...>` | Read the incoming session id from the request — `undefined` on any failure. |
-| `write` | `void \| Promise<void>`               | Write a freshly-minted or regenerated session id onto the response.         |
-| `clear` | `void`                                | Clear the transport's credential on `destroy()`.                            |
+| Method  | Returns                               | Behavior                                                                                       |
+| ------- | ------------------------------------- | ---------------------------------------------------------------------------------------------- |
+| `read`  | `string \| undefined \| Promise<...>` | Read the incoming session id from the request — `undefined` on any failure.                    |
+| `write` | `void \| Promise<void>`               | Write a freshly-minted or regenerated session id + encrypted-transport fact onto the response. |
+| `clear` | `void`                                | Clear the transport's credential on `destroy()`.                                               |
 
 ## Contract
 
@@ -512,7 +516,7 @@ const transport = createHeaderTransport()
 const request = new Request('https://x', { headers: { 'session-id': 'abc' } })
 await transport.read(request) // 'abc'
 const response = new Response('ok')
-await transport.write(response, 'abc') // sets the session-id header
+await transport.write(response, 'abc', false) // sets the session-id header
 transport.clear(response) // removes it
 ```
 

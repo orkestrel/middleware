@@ -6,7 +6,13 @@ import type {
 	SessionTransport,
 } from './types.js'
 import { isString } from '@orkestrel/contract'
-import { appendCookie, clearCookie, readSignedCookie, writeSignedCookie } from '@orkestrel/server'
+import {
+	appendCookie,
+	clearCookie,
+	readSignedCookie,
+	resolveSecure,
+	writeSignedCookie,
+} from '@orkestrel/server'
 import { DEFAULT_SESSION_COOKIE, DEFAULT_SESSION_HEADER } from './constants.js'
 import { MemorySessionStore } from './MemorySessionStore.js'
 
@@ -31,7 +37,10 @@ import { MemorySessionStore } from './MemorySessionStore.js'
  * ```
  */
 export function createCookieTransport(options: CookieTransportOptions): SessionTransport {
-	if (!isString(options.secret) && !Array.isArray(options.secret))
+	if (
+		!isString(options.secret) &&
+		(!Array.isArray(options.secret) || !options.secret.every(isString))
+	)
 		throw new TypeError('CookieTransportOptions.secret must be a string or string array')
 	if (options.name !== undefined && !isString(options.name))
 		throw new TypeError('CookieTransportOptions.name must be a string when provided')
@@ -42,8 +51,9 @@ export function createCookieTransport(options: CookieTransportOptions): SessionT
 		read(request) {
 			return readSignedCookie(request, name, secret)
 		},
-		async write(response, id) {
-			await writeSignedCookie(response.headers, name, id, secret, cookie)
+		async write(response, id, encrypted) {
+			const secure = resolveSecure(cookie?.secure, encrypted)
+			await writeSignedCookie(response.headers, name, id, secret, { ...cookie, secure })
 		},
 		clear(response) {
 			clearCookie(response.headers, name, cookie)

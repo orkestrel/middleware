@@ -1,8 +1,10 @@
+import type { MiddlewareContext } from '@orkestrel/server'
 import {
 	buildClientInfo,
 	buildRateLimitField,
 	buildRateLimitPolicyField,
 	buildRetryAfter,
+	compressResponse,
 	detectEncodings,
 	equalsConstantTime,
 	isBufferingIneligible,
@@ -12,11 +14,31 @@ import {
 	isSession,
 	isSessionControl,
 	matchesTrustedEntry,
+	rebuildResponse,
 	resolveForwardedFor,
 	resolveKey,
 	transferSessionData,
 } from '@src/core'
 import { describe, expect, it } from 'vitest'
+
+// Minimal MiddlewareContext<unknown> stub — compressResponse only reads `method`.
+function buildContext(method = 'GET'): MiddlewareContext<unknown> {
+	return {
+		url: new URL('https://example.test/'),
+		method,
+		state: {},
+		body: async () => undefined,
+	}
+}
+
+async function decompress(
+	bytes: Uint8Array<ArrayBuffer>,
+	encoding: 'gzip' | 'deflate',
+): Promise<string> {
+	const stream = new Response(bytes).body?.pipeThrough(new DecompressionStream(encoding))
+	const buffer = await new Response(stream).arrayBuffer()
+	return new TextDecoder().decode(buffer)
+}
 
 // ============================================================================
 //  @orkestrel/middleware — core helpers.ts unit tests (§16 mirror).
@@ -377,5 +399,145 @@ describe('buildClientInfo', () => {
 
 	it('wraps an undefined IP the same way', () => {
 		expect(buildClientInfo(undefined)).toEqual({ ip: undefined })
+	})
+})
+
+describe('rebuildResponse', () => {
+	it('preserves status and statusText and copies the original headers', () => {
+		const original = new Response('old', {
+			status: 201,
+			statusText: 'Created',
+			headers: { 'content-type': 'text/plain', 'x-custom': 'yes' },
+		})
+		const rebuilt = rebuildResponse('new body', original)
+		expect(rebuilt.status).toBe(201)
+		expect(rebuilt.statusText).toBe('Created')
+		expect(rebuilt.headers.get('content-type')).toBe('text/plain')
+		expect(rebuilt.headers.get('x-custom')).toBe('yes')
+	})
+
+	it('overrides the body with the replacement', async () => {
+		const original = new Response('old')
+		const rebuilt = rebuildResponse('new body', original)
+		expect(await rebuilt.text()).toBe('new body')
+	})
+
+	it('applies explicit replacement headers instead of copying the original', () => {
+		const original = new Response('old', { headers: { 'x-original': 'yes' } })
+		const headers = new Headers({ 'x-replacement': 'yes' })
+		const rebuilt = rebuildResponse('new body', original, headers)
+		expect(rebuilt.headers.get('x-replacement')).toBe('yes')
+		expect(rebuilt.headers.has('x-original')).toBe(false)
+	})
+
+	it('accepts a null body', async () => {
+		const original = new Response(null, { status: 304 })
+		const rebuilt = rebuildResponse(null, original)
+		expect(rebuilt.status).toBe(304)
+		expect(rebuilt.body).toBeNull()
+	})
+})
+
+describe('compressResponse', () => {
+	const compress = async (
+		bytes: Uint8Array<ArrayBuffer>,
+		encoding: 'gzip' | 'deflate',
+	): Promise<Uint8Array<ArrayBuffer>> => {
+		const stream = new Response(bytes).body?.pipeThrough(new CompressionStream(encoding))
+		const buffer = await new Response(stream).arrayBuffer()
+		return new Uint8Array(buffer)
+	}
+
+	it('compresses an above-threshold compressible body and sets the coding headers', async () => {
+		const body = 'x'.repeat(2_000)
+		const response = new Response(body, { headers: { 'content-type': 'text/plain' } })
+		const request = new Request('https://example.test/', {
+			headers: { 'accept-encoding': 'gzip' },
+		})
+		const result = await compressResponse(request, buildContext(), response, {
+			threshold: 100,
+			encodings: ['gzip'],
+			compress,
+		})
+		expect(result.headers.get('content-encoding')).toBe('gzip')
+		expect(result.headers.get('vary')).toBe('Accept-Encoding')
+		const buffer = await result.arrayBuffer()
+		expect(result.headers.get('content-length')).toBe(String(buffer.byteLength))
+		expect(await decompress(new Uint8Array(buffer), 'gzip')).toBe(body)
+	})
+
+	it('passes through unchanged when the buffered body is below threshold', async () => {
+		const response = new Response('short', { headers: { 'content-type': 'text/plain' } })
+		const request = new Request('https://example.test/', {
+			headers: { 'accept-encoding': 'gzip' },
+		})
+		const result = await compressResponse(request, buildContext(), response, {
+			threshold: 100_000,
+			encodings: ['gzip'],
+			compress,
+		})
+		expect(result.headers.has('content-encoding')).toBe(false)
+		expect(await result.text()).toBe('short')
+	})
+
+	it('passes through an incompressible content-type unchanged', async () => {
+		const response = new Response('x'.repeat(2_000), {
+			headers: { 'content-type': 'image/png' },
+		})
+		const request = new Request('https://example.test/', {
+			headers: { 'accept-encoding': 'gzip' },
+		})
+		const result = await compressResponse(request, buildContext(), response, {
+			threshold: 100,
+			encodings: ['gzip'],
+			compress,
+		})
+		expect(result.headers.has('content-encoding')).toBe(false)
+	})
+
+	it('passes through an already-encoded response unchanged', async () => {
+		const response = new Response('x'.repeat(2_000), {
+			headers: { 'content-type': 'text/plain', 'content-encoding': 'br' },
+		})
+		const request = new Request('https://example.test/', {
+			headers: { 'accept-encoding': 'gzip' },
+		})
+		const result = await compressResponse(request, buildContext(), response, {
+			threshold: 100,
+			encodings: ['gzip'],
+			compress,
+		})
+		expect(result).toBe(response)
+	})
+
+	it('passes through an SSE response unchanged', async () => {
+		const response = new Response('data: x\n\n', {
+			headers: { 'content-type': 'text/event-stream' },
+		})
+		const request = new Request('https://example.test/', {
+			headers: { 'accept-encoding': 'gzip' },
+		})
+		const result = await compressResponse(request, buildContext(), response, {
+			threshold: 1,
+			encodings: ['gzip'],
+			compress,
+		})
+		expect(result).toBe(response)
+	})
+
+	it('fast-skips without buffering when Content-Length is already below threshold', async () => {
+		const body = 'short'
+		const response = new Response(body, {
+			headers: { 'content-type': 'text/plain', 'content-length': String(body.length) },
+		})
+		const request = new Request('https://example.test/', {
+			headers: { 'accept-encoding': 'gzip' },
+		})
+		const result = await compressResponse(request, buildContext(), response, {
+			threshold: 100_000,
+			encodings: ['gzip'],
+			compress,
+		})
+		expect(result).toBe(response)
 	})
 })

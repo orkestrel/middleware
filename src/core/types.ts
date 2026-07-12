@@ -1,4 +1,10 @@
-import type { CookieOptions, Encoding, MiddlewareContext, TokenSecret } from '@orkestrel/server'
+import type {
+	ConnectionInfo,
+	CookieOptions,
+	Encoding,
+	MiddlewareContext,
+	TokenSecret,
+} from '@orkestrel/server'
 
 // ============================================================================
 //  @orkestrel/middleware — core type surface (AGENTS §5 source of truth).
@@ -169,10 +175,9 @@ export interface DeadlineOptions {
  *   `X-Forwarded-For` / `Forwarded`.
  * - `trusted` — trust every hop matching one of these CIDR entries.
  */
-export interface ForwardedOptions {
-	readonly proxies?: number
-	readonly trusted?: readonly string[]
-}
+export type ForwardedOptions =
+	| { readonly proxies: number }
+	| { readonly trusted: readonly string[] }
 
 /**
  * Options for `createETag` — dynamic response ETag + conditional GET.
@@ -251,6 +256,16 @@ export interface BearerState {
  */
 export interface IdentifierState {
 	identifier?: string
+}
+
+/**
+ * The connection-facts state slice `createLimiter`'s default key derivation
+ * falls back to when neither {@link BearerState} nor {@link ClientState} is
+ * present — the raw socket peer surfaced on `context.state` by the server's
+ * `state` option.
+ */
+export interface ConnectionState {
+	readonly connection?: ConnectionInfo
 }
 
 /**
@@ -337,11 +352,14 @@ export interface SessionStoreInterface<S> {
  * never throws). `write` and `clear` mutate the RETURNED `Response` on the
  * way out — the returning onion makes "before send" automatic. `write` is
  * called only when a session is freshly minted or regenerated; `clear` is
- * called on `destroy()`.
+ * called on `destroy()`. `write`'s `encrypted` flag is the request's resolved
+ * transport security (derived from `context.url.protocol`) so a cookie
+ * transport can resolve its own `Secure` attribute via `resolveSecure`
+ * without re-deriving connection facts itself.
  */
 export interface SessionTransport {
 	read(request: Request): string | undefined | Promise<string | undefined>
-	write(response: Response, id: string): void | Promise<void>
+	write(response: Response, id: string, encrypted: boolean): void | Promise<void>
 	clear(response: Response): void
 }
 

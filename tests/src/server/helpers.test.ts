@@ -309,6 +309,29 @@ describe('parseMultipartRequest', () => {
 		expect(probe.polluted).toBeUndefined()
 	})
 
+	it('skips a dangerous file field-name (__proto__) without crashing, and leaves no orphaned temp file', async () => {
+		const directory = await buildTempDirectory()
+		try {
+			const request = buildMultipartRequest([
+				{
+					kind: 'file',
+					name: '__proto__',
+					filename: 'a.png',
+					contentType: 'image/png',
+					bytes: Buffer.from(PNG_MAGIC),
+				},
+			])
+			const body = await parseMultipartRequest(request, { directory: directory.path })
+			expect(body).toBeDefined()
+			expect(Object.prototype.hasOwnProperty.call(body?.files ?? {}, '__proto__')).toBe(false)
+			const probe: Record<string, unknown> = {}
+			expect(probe.polluted).toBeUndefined()
+			expect(await readdir(directory.path)).toHaveLength(0)
+		} finally {
+			await directory.cleanup()
+		}
+	})
+
 	it('rejects a declared-vs-sniffed mismatch under an allow-list (415)', async () => {
 		const request = buildMultipartRequest([
 			{

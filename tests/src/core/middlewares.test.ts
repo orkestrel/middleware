@@ -552,7 +552,6 @@ describe('createForwarded', () => {
 	})
 
 	it('requires exactly one of proxies/trusted at construction', () => {
-		expect(() => createForwarded({})).toThrow(TypeError)
 		expect(() => createForwarded({ proxies: 1, trusted: ['10.0.0.0/8'] })).toThrow(TypeError)
 	})
 
@@ -661,6 +660,29 @@ describe('createETag', () => {
 		)
 		expect(response.status).toBe(304)
 		expect(await response.text()).toBe('')
+	})
+
+	it('the 304 response carries the ETag and never a stale Content-Length', async () => {
+		const etag = createETag<Record<string, never>>()
+		const first = await runChain(
+			[etag],
+			async () => new Response('body content'),
+			buildRequest('/'),
+			createTestContext(buildRequest('/'), {}),
+		)
+		const known = first.headers.get('etag')
+		expect(known).not.toBeNull()
+		const request = buildRequest('/', { headers: { 'if-none-match': known ?? '' } })
+		const context = createTestContext(request, {})
+		const response = await runChain(
+			[etag],
+			async () => new Response('body content', { headers: { 'content-length': '12' } }),
+			request,
+			context,
+		)
+		expect(response.status).toBe(304)
+		expect(response.headers.get('etag')).toBe(known)
+		expect(response.headers.has('content-length')).toBe(false)
 	})
 
 	it('If-None-Match with a list or * short-circuits with 304', async () => {
@@ -1292,6 +1314,54 @@ describe('createSession', () => {
 		const expired = await store.get('s1', 10_500)
 		expect(expired).toBeUndefined()
 	})
+
+	it('auto-Secure: the cookie transport carries Secure when connection.encrypted is true, omits it when false/absent', async () => {
+		const transport = createCookieTransport({ secret: SECRET })
+		const session = createSession<SessionInterface, SessionState & ConnectionState>({ transport })
+
+		const secureState: SessionState & ConnectionState = {
+			connection: { ip: '203.0.113.1', encrypted: true },
+		}
+		const secureRequest = buildRequest('/')
+		const secureResponse = await runChain(
+			[session],
+			createEchoTerminal(),
+			secureRequest,
+			createTestContext(secureRequest, secureState),
+		)
+		expect(secureResponse.headers.get('set-cookie')).toContain('Secure')
+
+		const plainState: SessionState & ConnectionState = {
+			connection: { ip: '203.0.113.1', encrypted: false },
+		}
+		const plainRequest = buildRequest('/')
+		const plainResponse = await runChain(
+			[session],
+			createEchoTerminal(),
+			plainRequest,
+			createTestContext(plainRequest, plainState),
+		)
+		expect(plainResponse.headers.get('set-cookie')).not.toContain('Secure')
+	})
+
+	it('persists a freshly-minted session exactly once (no redundant mint-time store.set)', async () => {
+		let setCount = 0
+		const transport = createTestTransport()
+		const memory = createMemorySessionStore<SessionInterface>()
+		const store = {
+			get: (id: string, now: number) => memory.get(id, now),
+			set: (id: string, value: SessionInterface, now: number) => {
+				setCount += 1
+				return memory.set(id, value, now)
+			},
+			delete: (id: string) => memory.delete(id),
+		}
+		const session = createSession<SessionInterface, SessionState>({ transport, store })
+		const request = buildRequest('/')
+		const state: SessionState = {}
+		await runChain([session], createEchoTerminal(), request, createTestContext(request, state))
+		expect(setCount).toBe(1)
+	})
 })
 
 // ── createCSRF ────────────────────────────────────────────────────────────
@@ -1463,6 +1533,32 @@ describe('createCSRF', () => {
 		)
 		expect(terminal.count).toBe(1)
 		expect(response.status).toBe(200)
+	})
+
+	it('auto-Secure: the double-submit cookie carries Secure when connection.encrypted is true, omits it when false', async () => {
+		const csrf = createCSRF<CSRFState & SessionState & ConnectionState>({ secret: SECRET })
+
+		const secureState: CSRFState & SessionState & ConnectionState = {
+			connection: { ip: '203.0.113.1', encrypted: true },
+		}
+		const secureResponse = await runChain(
+			[csrf],
+			createEchoTerminal(),
+			buildRequest('/'),
+			createTestContext(buildRequest('/'), secureState),
+		)
+		expect(secureResponse.headers.get('set-cookie')).toContain('Secure')
+
+		const plainState: CSRFState & SessionState & ConnectionState = {
+			connection: { ip: '203.0.113.1', encrypted: false },
+		}
+		const plainResponse = await runChain(
+			[csrf],
+			createEchoTerminal(),
+			buildRequest('/'),
+			createTestContext(buildRequest('/'), plainState),
+		)
+		expect(plainResponse.headers.get('set-cookie')).not.toContain('Secure')
 	})
 })
 
@@ -1639,7 +1735,7 @@ describe('transports', () => {
 		const request = buildRequest('/', { headers: { 'x-session': 'abc' } })
 		expect(await transport.read(request)).toBe('abc')
 		const response = new Response()
-		transport.write(response, 'xyz')
+		transport.write(response, 'xyz', false)
 		expect(response.headers.get('x-session')).toBe('xyz')
 		transport.clear(response)
 		expect(response.headers.has('x-session')).toBe(false)
@@ -1648,7 +1744,7 @@ describe('transports', () => {
 	it('createCookieTransport signs and reads back a session id via a real cookie round-trip', async () => {
 		const transport = createCookieTransport({ secret: SECRET })
 		const response = new Response()
-		await transport.write(response, 'session-id-1')
+		await transport.write(response, 'session-id-1', false)
 		const setCookie = response.headers.get('set-cookie') ?? ''
 		const cookieValue = setCookie.split(';')[0] ?? ''
 		const request = buildRequest('/', { headers: { cookie: cookieValue } })

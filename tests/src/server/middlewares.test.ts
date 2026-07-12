@@ -195,6 +195,24 @@ describe('createStatic', () => {
 		}
 	})
 
+	it('ignored extensionless dotfile falls through to next() rather than being served the SPA shell', async () => {
+		const fixture = await buildStaticFixture()
+		try {
+			const handler = createStatic({ root: fixture.root, dotfiles: 'ignore', fallback: true })
+			const request = new Request('http://test.local/.env', { headers: { accept: 'text/html' } })
+			let nextCalled = false
+			const response = await handler(request, createTestContext(request, {}), async () => {
+				nextCalled = true
+				return new Response('fell through', { status: 404 })
+			})
+			expect(nextCalled).toBe(true)
+			expect(response.status).toBe(404)
+			expect(await response.text()).not.toContain('root index')
+		} finally {
+			await fixture.cleanup()
+		}
+	})
+
 	it('index + SPA fallback matrix, including exclude', async () => {
 		const fixture = await buildStaticFixture()
 		try {
@@ -492,6 +510,36 @@ describe('createMultipart', () => {
 		await expect(
 			handler(request, createTestContext(request, {}), async () => new Response('ok')),
 		).rejects.toSatisfy((error: unknown) => error instanceof HTTPError && error.status === 415)
+	})
+
+	it('__proto__-named file part is skipped, never keyed, and does not crash the handler', async () => {
+		const directory = await buildTempDirectory()
+		try {
+			const handler = createMultipart<MultipartState>({ directory: directory.path })
+			const request = buildMultipartRequest([
+				{
+					kind: 'file',
+					name: '__proto__',
+					filename: 'a.png',
+					contentType: 'image/png',
+					bytes: Buffer.from(PNG_MAGIC),
+				},
+			])
+			const state: MultipartState = {}
+			let nextCalled = false
+			const response = await handler(request, createTestContext(request, state), async () => {
+				nextCalled = true
+				return new Response('ok', { status: 200 })
+			})
+			expect(nextCalled).toBe(true)
+			expect(response.status).toBe(200)
+			expect(Object.prototype.hasOwnProperty.call(state.multipart?.files ?? {}, '__proto__')).toBe(
+				false,
+			)
+			expect(await readdir(directory.path)).toHaveLength(0)
+		} finally {
+			await directory.cleanup()
+		}
 	})
 
 	it('__proto__ field is skipped', async () => {

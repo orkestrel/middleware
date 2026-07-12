@@ -1,20 +1,13 @@
 import type { MultipartState } from '@src/core'
-import type { MultipartOptions, StaticOptions } from './types.js'
-import { isBufferingIneligible, isCompressionNegotiated } from '@src/core'
+import type { MultipartOptions, NodeCompressionOptions, StaticOptions } from './types.js'
+import { DEFAULT_COMPRESSION_THRESHOLD, compressResponse } from '@src/core'
 import { stat } from 'node:fs/promises'
 import { extname, join, relative, resolve } from 'node:path'
 import { deflate as zlibDeflate, gzip as zlibGzip } from 'node:zlib'
 import { promisify } from 'node:util'
-import type { MiddlewareHandler } from '@orkestrel/server'
-import {
-	HTTPError,
-	isCompressibleType,
-	matchesETag,
-	mergeVary,
-	negotiateEncoding,
-	parseRange,
-} from '@orkestrel/server'
-import { isFiniteNumber, isString } from '@orkestrel/contract'
+import type { Encoding, MiddlewareHandler } from '@orkestrel/server'
+import { HTTPError, matchesETag, parseRange } from '@orkestrel/server'
+import { isFiniteNumber, isFunction, isString } from '@orkestrel/contract'
 import { DEFAULT_STATIC_FALLBACK_EXCLUDE, DEFAULT_STATIC_INDEX } from './constants.js'
 import { isMultipartError } from './errors.js'
 import {
@@ -75,7 +68,7 @@ export function createStatic<TState>(options: StaticOptions): MiddlewareHandler<
 		const relativePath = relative(root, target)
 		if (relativePath.length > 0 && isDotfilePath(relativePath)) {
 			if (dotfiles === 'deny') throw new HTTPError(403, 'forbidden')
-			if (dotfiles === 'ignore') return trySpaFallback()
+			if (dotfiles === 'ignore') return next()
 		}
 
 		let resolvedPath = target
@@ -170,6 +163,8 @@ export function createStatic<TState>(options: StaticOptions): MiddlewareHandler<
  * @typeParam TState - The consumer's state type, extending {@link MultipartState}
  * @param options - See {@link MultipartOptions}
  * @returns A `MiddlewareHandler<TState>`
+ * @throws {HTTPError} When the underlying parse throws a {@link MultipartError}
+ * (limit breach → 413, malformed structure → 400, rejected file type → 415)
  *
  * @example
  * ```ts
@@ -213,9 +208,10 @@ export function createMultipart<TState extends MultipartState>(
  * feature-detected — always available) and negotiates only those.
  *
  * @typeParam TState - The consumer's opaque per-request state type
- * @param options - `threshold` (bytes, default `1024`) and `filter` (default
- * always-allow); `encodings` is fixed to `['gzip', 'deflate']`
+ * @param options - See {@link NodeCompressionOptions}
  * @returns A `MiddlewareHandler<TState>`
+ * @throws {TypeError} When `options.threshold` is provided and is not a
+ * finite number, or `options.filter` is provided and is not a function
  *
  * @example
  * ```ts
@@ -224,48 +220,27 @@ export function createMultipart<TState extends MultipartState>(
  * const compress = createCompression({ threshold: 512 })
  * ```
  */
-export function createCompression<TState>(options?: {
-	readonly threshold?: number
-	readonly filter?: (request: Request, response: Response) => boolean
-}): MiddlewareHandler<TState> {
+export function createCompression<TState>(
+	options?: NodeCompressionOptions,
+): MiddlewareHandler<TState> {
 	if (options?.threshold !== undefined && !isFiniteNumber(options.threshold))
-		throw new TypeError('createCompression requires options.threshold to be a finite number')
-	const threshold = options?.threshold ?? 1024
-	const filter = options?.filter ?? ((): boolean => true)
-	const encodings: readonly ('gzip' | 'deflate')[] = ['gzip', 'deflate']
+		throw new TypeError('NodeCompressionOptions.threshold must be a finite number when provided')
+	if (options?.filter !== undefined && !isFunction(options.filter))
+		throw new TypeError('NodeCompressionOptions.filter must be a function when provided')
+	const threshold = options?.threshold ?? DEFAULT_COMPRESSION_THRESHOLD
+	const filter = options?.filter
+	const encodings: readonly Encoding[] = ['gzip', 'deflate']
 	const gzipAsync = promisify(zlibGzip)
 	const deflateAsync = promisify(zlibDeflate)
 
 	return async (request, context, next) => {
 		const response = await next()
-		if (isBufferingIneligible(context.method, response, 'content-encoding')) return response
-		if (!filter(request, response)) return response
-
-		const acceptEncoding = request.headers.get('accept-encoding')
-		const encoding =
-			acceptEncoding === null ? undefined : negotiateEncoding(acceptEncoding, encodings)
-		if (!isCompressionNegotiated(encoding)) return response
-
-		const contentType = response.headers.get('content-type') ?? ''
-		if (!isCompressibleType(contentType)) return response
-
-		const buffer = new Uint8Array(await response.arrayBuffer())
-		if (buffer.byteLength < threshold)
-			return new Response(buffer, {
-				status: response.status,
-				statusText: response.statusText,
-				headers: response.headers,
-			})
-
-		const compressed = encoding === 'gzip' ? await gzipAsync(buffer) : await deflateAsync(buffer)
-		const headers = new Headers(response.headers)
-		headers.set('content-encoding', encoding)
-		headers.set('vary', mergeVary(headers.get('vary') ?? undefined, 'Accept-Encoding'))
-		headers.set('content-length', String(compressed.byteLength))
-		return new Response(new Uint8Array(compressed), {
-			status: response.status,
-			statusText: response.statusText,
-			headers,
+		return compressResponse(request, context, response, {
+			threshold,
+			filter,
+			encodings,
+			compress: async (bytes, encoding) =>
+				encoding === 'gzip' ? gzipAsync(bytes) : deflateAsync(bytes),
 		})
 	}
 }
