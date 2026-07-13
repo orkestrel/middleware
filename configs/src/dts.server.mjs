@@ -45,12 +45,20 @@ rmSync(source)
 // face) and, since core is under the shared `rootDir`, re-emits their
 // per-module `.d.ts` alongside core's own already-bundled `index.d.ts` /
 // `index.d.cts` — a harmless but stray side effect that gets pruned here.
+function pruneStrayDeclarations(dir) {
+	for (const entry of readdirSync(dir)) {
+		const full = `${dir}/${entry}`
+		const info = statSync(full)
+		if (info.isDirectory()) {
+			pruneStrayDeclarations(full)
+			continue
+		}
+		if (entry === 'index.d.ts' || entry === 'index.d.cts') continue
+		if (entry.endsWith('.d.ts')) rmSync(full)
+	}
+}
+
 const coreDir = fileURLToPath(new URL('../../dist/src/core', import.meta.url))
 for (const dir of [outDir, coreDir]) {
-	for (const entry of readdirSync(dir)) {
-		if (entry === 'index.d.ts' || entry === 'index.d.cts') continue
-		if (entry.endsWith('.d.ts') && statSync(`${dir}/${entry}`).isFile()) {
-			rmSync(`${dir}/${entry}`)
-		}
-	}
+	pruneStrayDeclarations(dir)
 }

@@ -6,13 +6,7 @@ import type {
 	SessionTransport,
 } from './types.js'
 import { isString } from '@orkestrel/contract'
-import {
-	appendCookie,
-	clearCookie,
-	readSignedCookie,
-	resolveSecure,
-	writeSignedCookie,
-} from '@orkestrel/server'
+import { clearCookie, readSignedCookie, resolveSecure, writeSignedCookie } from '@orkestrel/server'
 import { DEFAULT_SESSION_COOKIE, DEFAULT_SESSION_HEADER } from './constants.js'
 import { MemorySessionStore } from './MemorySessionStore.js'
 

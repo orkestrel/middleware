@@ -91,12 +91,16 @@ export const guides = (config?: UserConfig): UserConfig =>
 		),
 	)
 
-// Extends srcCore: server-only library (`src/server`, e.g. the SQLite wrapper +
-// driver over node:sqlite). Builds a CJS lib for Node and runs its tests in the
-// node environment. Externalizes `node:*` (so node:sqlite is never bundled) AND
-// `@src/core` → the sibling `dist/src/core` (CJS) build, exactly as srcBrowser
-// does (core and server ship as two subpaths of one package). Build-only — the
-// test project resolves `@src/core` from source through the shared `resolve` alias.
+// Extends srcCore: server-only library (`src/server`, the node-only middleware
+// batteries — createStatic, createMultipart, and the node-backed compression
+// fallback — over the shipped @orkestrel/server seam). Builds dual ESM+CJS libs
+// for Node and runs its tests in the node environment. Externalizes `node:*`
+// (so node:fs/node:zlib are never bundled), `@orkestrel/*` (so the peer
+// @orkestrel/server seam and substrate are never bundled — the dual-package
+// hazard this package must not create), AND `@src/core` → the sibling
+// `dist/src/core` build, exactly as core ships dual-format (core and server
+// ship as two subpaths of one package). Build-only — the test project resolves
+// `@src/core` from source through the shared `resolve` alias.
 export const srcServer = (config?: UserConfig): UserConfig =>
 	srcCore(
 		mergeConfig(
@@ -108,9 +112,10 @@ export const srcServer = (config?: UserConfig): UserConfig =>
 						fileName: (format: string) => (format === 'es' ? 'index.js' : 'index.cjs'),
 					},
 					outDir: 'dist/src/server',
-					target: 'node22',
+					target: 'node24',
 					rolldownOptions: {
-						external: (id: string) => id === '@src/core' || id.startsWith('node:'),
+						external: (id: string) =>
+							id === '@src/core' || id.startsWith('node:') || id.startsWith('@orkestrel/'),
 						output: [
 							{
 								format: 'es',

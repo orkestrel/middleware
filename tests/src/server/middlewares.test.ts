@@ -1,6 +1,5 @@
 import type { ConnectionState } from '@src/core'
 import type { MultipartState } from '@src/core'
-import { join } from 'node:path'
 import { readdir } from 'node:fs/promises'
 import { describe, expect, it } from 'vitest'
 import {
@@ -25,7 +24,6 @@ import {
 	buildMultipartRequest,
 	buildStaticFixture,
 	buildTempDirectory,
-	JPEG_MAGIC,
 	PNG_MAGIC,
 	startServer,
 } from '../../setupServer.js'
