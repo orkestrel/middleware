@@ -104,14 +104,25 @@ export const srcServer = (config?: UserConfig): UserConfig =>
 				build: {
 					lib: {
 						entry: resolveWorkspacePath('src/server/index.ts'),
-						formats: ['cjs'],
-						fileName: () => 'index.cjs',
+						formats: ['es', 'cjs'],
+						fileName: (format: string) => (format === 'es' ? 'index.js' : 'index.cjs'),
 					},
 					outDir: 'dist/src/server',
 					target: 'node22',
 					rolldownOptions: {
 						external: (id: string) => id === '@src/core' || id.startsWith('node:'),
-						output: { paths: { '@src/core': '../core/index.cjs' } },
+						output: [
+							{
+								format: 'es',
+								entryFileNames: 'index.js',
+								paths: { '@src/core': '../core/index.js' },
+							},
+							{
+								format: 'cjs',
+								entryFileNames: 'index.cjs',
+								paths: { '@src/core': '../core/index.cjs' },
+							},
+						],
 					},
 				},
 				test: {
