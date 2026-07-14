@@ -39,22 +39,21 @@ const handle = compose<State>([boundary, security], async (_request, context) =>
 
 ### Middlewares — core
 
-| API                  | Kind     | Summary                                                                          |
-| -------------------- | -------- | -------------------------------------------------------------------------------- |
-| `createBoundary`     | function | The outermost error-rendering battery — maps a downstream throw to a `Response`. |
-| `createTelemetry`    | function | The access-log/timing seam — records one `TelemetryEntry` per settled request.   |
-| `createCompression`  | function | Response-body compression over feature-detected `CompressionStream` codings.     |
-| `resolveOptInHeader` | function | Resolve `createSecurity`'s `coep`/`hsts` opt-in header value.                    |
-| `createSecurity`     | function | Security headers + request-identifier minting/echo battery.                      |
-| `createCors`         | function | Cross-Origin Resource Sharing — preflight answering + reflect/wildcard.          |
-| `createDeadline`     | function | The application-level per-request deadline, linked to `request.signal`.          |
-| `createForwarded`    | function | The trusted-proxy `X-Forwarded-For` resolver — explicit proxy trust config.      |
-| `createETag`         | function | Dynamic response `ETag` + conditional `GET` (RFC 7232).                          |
-| `createBearer`       | function | Bearer-token authentication via `verifyToken`.                                   |
-| `createLimiter`      | function | Fixed-window rate limiting with check-before-consume exactness.                  |
-| `createBody`         | function | Eagerly drives the cached `context.body()` so its throws surface early.          |
-| `createSession`      | function | The generic session battery — resolve/mint/persist + regenerate/destroy.         |
-| `createCSRF`         | function | Session-bound double-submit CSRF protection.                                     |
+| API                 | Kind     | Summary                                                                          |
+| ------------------- | -------- | -------------------------------------------------------------------------------- |
+| `createBoundary`    | function | The outermost error-rendering battery — maps a downstream throw to a `Response`. |
+| `createTelemetry`   | function | The access-log/timing seam — records one `TelemetryEntry` per settled request.   |
+| `createCompression` | function | Response-body compression over feature-detected `CompressionStream` codings.     |
+| `createSecurity`    | function | Security headers + request-identifier minting/echo battery.                      |
+| `createCors`        | function | Cross-Origin Resource Sharing — preflight answering + reflect/wildcard.          |
+| `createDeadline`    | function | The application-level per-request deadline, linked to `request.signal`.          |
+| `createForwarded`   | function | The trusted-proxy `X-Forwarded-For` resolver — explicit proxy trust config.      |
+| `createETag`        | function | Dynamic response `ETag` + conditional `GET` (RFC 7232).                          |
+| `createBearer`      | function | Bearer-token authentication via `verifyToken`.                                   |
+| `createLimiter`     | function | Fixed-window rate limiting with check-before-consume exactness.                  |
+| `createBody`        | function | Eagerly drives the cached `context.body()` so its throws surface early.          |
+| `createSession`     | function | The generic session battery — resolve/mint/persist + regenerate/destroy.         |
+| `createCSRF`        | function | Session-bound double-submit CSRF protection.                                     |
 
 ### Middlewares — node
 
@@ -66,94 +65,99 @@ const handle = compose<State>([boundary, security], async (_request, context) =>
 
 ### Types
 
-| Type                        | Kind      | Shape                                                                                           |
-| --------------------------- | --------- | ----------------------------------------------------------------------------------------------- |
-| `BoundaryOptions`           | interface | `{ expose?; report? }` — options for `createBoundary`.                                          |
-| `TelemetryEntry`            | interface | `{ method; pathname; status; duration }` — one settled-request record.                          |
-| `TelemetryOptions`          | interface | `{ record }` — options for `createTelemetry`.                                                   |
-| `CompressionOptions`        | interface | `{ threshold?; encodings?; filter? }` — options for `createCompression`.                        |
-| `SecurityIdentifierOptions` | type      | `{ trust?: boolean } \| false` — `createSecurity`'s `identifier` sub-option.                    |
-| `SecurityOptions`           | interface | `{ frame?; csp?; referrer?; permissions?; coop?; corp?; cluster?; coep?; hsts?; identifier? }`. |
-| `CorsOptions`               | interface | `{ origin?; methods?; headers? }` — options for `createCors`.                                   |
-| `DeadlineOptions`           | interface | `{ ms; status? }` — options for `createDeadline`.                                               |
-| `ForwardedOptions`          | type      | `{ proxies } \| { trusted }` — exactly one, for `createForwarded`.                              |
-| `ETagOptions`               | interface | `{ weak? }` — options for `createETag`.                                                         |
-| `BearerOptions`             | interface | `{ secret; header?; scheme? }` — options for `createBearer`.                                    |
-| `LimiterOptions`            | interface | `{ max; window; capacity?; key?; message?; clock?; policy? }`.                                  |
-| `BearerState`               | interface | `{ token?: string }` — the state slice `createBearer` stashes.                                  |
-| `IdentifierState`           | interface | `{ identifier?: string }` — the state slice `createSecurity` stashes.                           |
-| `ClientInfo`                | interface | `{ readonly ip?: string }` — the resolved client connection facts.                              |
-| `ClientState`               | interface | `{ client?: ClientInfo }` — the state slice `createForwarded` stashes.                          |
-| `ConnectionState`           | interface | `{ connection?: ConnectionInfo }` — the socket-fact state slice `resolveKey` reads.             |
-| `SessionInterface`          | interface | `{ id; data }` — a server-managed session's public surface.                                     |
-| `SessionControlInterface`   | interface | `regenerate()` / `destroy()` — the mid-handler session control handle.                          |
-| `SessionState`              | interface | `{ session?; control? }` — the state slice `createSession` stashes.                             |
-| `SessionStoreInterface`     | interface | `get` / `set` / `delete` — the pluggable session persistence seam.                              |
-| `SessionTransport`          | interface | `read` / `write` / `clear` — how a session id travels to/from the client.                       |
-| `SessionOptions`            | interface | `{ transport; store?; ttl?; lifetime?; create?; mint?; require?; ends?; clock? }`.              |
-| `CookieTransportOptions`    | interface | `{ name?; secret; cookie? }` — options for `createCookieTransport`.                             |
-| `HeaderTransportOptions`    | interface | `{ header? }` — options for `createHeaderTransport`.                                            |
-| `MemorySessionStoreOptions` | interface | `{ ttl?; lifetime? }` — options for `createMemorySessionStore`.                                 |
-| `CSRFState`                 | interface | `{ csrf?: string }` — the state slice `createCSRF` stashes.                                     |
-| `CSRFOptions`               | interface | `{ secret; cookie?; header?; field?; safe? }` — options for `createCSRF`.                       |
-| `MultipartFile`             | interface | `{ field; name; size; mime; validated; status; path }` — one staged upload.                     |
-| `MultipartBody`             | interface | `{ files; fields }` — the parsed multipart request body.                                        |
-| `MultipartState`            | interface | `{ multipart?: MultipartBody }` — the state slice `createMultipart` stashes.                    |
-| `StaticOptions`             | interface | `{ root; prefix?; index?; dotfiles?; cache?; etag?; fallback? }`.                               |
-| `MultipartLimits`           | interface | `{ file?; files?; field?; fields?; total? }` — per-category mid-stream caps.                    |
-| `MultipartOptions`          | interface | `{ limits?; allowed?; directory? }` — options for `createMultipart`.                            |
-| `NodeCompressionOptions`    | interface | `{ threshold?; filter? }` — options for the node face's `createCompression`.                    |
-| `MultipartReason`           | type      | `'limit' \| 'malformed' \| 'rejected'` — the axis `MultipartError` maps to a status.            |
-| `UploadStatus`              | type      | `'staged' \| 'moved'` — a staged upload's temp-file lifecycle stage.                            |
-| `UploadedFileInterface`     | interface | `{ field; name; size; mime; validated; status: UploadStatus; path }`.                           |
+| Type                        | Kind      | Shape                                                                                                 |
+| --------------------------- | --------- | ----------------------------------------------------------------------------------------------------- |
+| `BoundaryOptions`           | interface | `{ expose?; report? }` — options for `createBoundary`.                                                |
+| `TelemetryEntry`            | interface | `{ method; pathname; status; duration }` — one settled-request record.                                |
+| `TelemetryOptions`          | interface | `{ record }` — options for `createTelemetry`.                                                         |
+| `CompressionOptions`        | interface | `{ threshold?; encodings?; filter? }` — options for `createCompression`.                              |
+| `SecurityIdentifierOptions` | type      | `{ trust?: boolean } \| false` — `createSecurity`'s `identifier` sub-option.                          |
+| `SecurityOptions`           | interface | `{ frame?; csp?; referrer?; permissions?; coop?; corp?; cluster?; coep?; hsts?; identifier? }`.       |
+| `CorsOptions`               | interface | `{ origin?; methods?; headers? }` — options for `createCors`.                                         |
+| `DeadlineOptions`           | interface | `{ ms; status? }` — options for `createDeadline`.                                                     |
+| `ForwardedOptions`          | type      | `{ proxies } \| { trusted }` — exactly one, for `createForwarded`.                                    |
+| `ETagOptions`               | interface | `{ weak? }` — options for `createETag`.                                                               |
+| `BearerOptions`             | interface | `{ secret; header?; scheme? }` — options for `createBearer`.                                          |
+| `LimiterOptions`            | interface | `{ max; window; capacity?; key?; message?; clock?; policy?; evict? }`.                                |
+| `BearerState`               | interface | `{ token?: string }` — the state slice `createBearer` stashes.                                        |
+| `IdentifierState`           | interface | `{ identifier?: string }` — the state slice `createSecurity` stashes.                                 |
+| `ClientInfo`                | interface | `{ readonly ip?: string }` — the resolved client connection facts.                                    |
+| `ClientState`               | interface | `{ client?: ClientInfo }` — the state slice `createForwarded` stashes.                                |
+| `ConnectionState`           | interface | `{ connection?: ConnectionInfo }` — the socket-fact state slice `resolveKey` reads.                   |
+| `SessionInterface`          | interface | `{ id; data }` — a server-managed session's public surface.                                           |
+| `SessionControlInterface`   | interface | `regenerate()` / `destroy()` — the mid-handler session control handle.                                |
+| `SessionState`              | interface | `{ session?; control? }` — the state slice `createSession` stashes.                                   |
+| `SessionStoreInterface`     | interface | `get` / `set` / `delete` — the pluggable session persistence seam.                                    |
+| `SessionTransport`          | interface | `read` / `write` / `clear` — how a session id travels to/from the client.                             |
+| `SessionOptions`            | interface | `{ transport; store?; ttl?; lifetime?; capacity?; evict?; create?; mint?; require?; ends?; clock? }`. |
+| `CookieTransportOptions`    | interface | `{ name?; secret; cookie? }` — options for `createCookieTransport`.                                   |
+| `HeaderTransportOptions`    | interface | `{ header? }` — options for `createHeaderTransport`.                                                  |
+| `MemorySessionStoreOptions` | interface | `{ ttl?; lifetime?; capacity?; evict? }` — options for `createMemorySessionStore`.                    |
+| `CSRFState`                 | interface | `{ csrf?: string }` — the state slice `createCSRF` stashes.                                           |
+| `CSRFOptions`               | interface | `{ secret; cookie?; header?; field?; safe? }` — options for `createCSRF`.                             |
+| `MultipartFile`             | interface | `{ field; name; size; mime; validated; status; path }` — one staged upload.                           |
+| `MultipartBody`             | interface | `{ files; fields }` — the parsed multipart request body.                                              |
+| `MultipartState`            | interface | `{ multipart?: MultipartBody }` — the state slice `createMultipart` stashes.                          |
+| `StaticOptions`             | interface | `{ root; prefix?; index?; dotfiles?; cache?; etag?; fallback? }`.                                     |
+| `MultipartLimits`           | interface | `{ file?; files?; field?; fields?; total? }` — per-category mid-stream caps.                          |
+| `MultipartOptions`          | interface | `{ limits?; allowed?; directory? }` — options for `createMultipart`.                                  |
+| `NodeCompressionOptions`    | interface | `{ threshold?; filter? }` — options for the node face's `createCompression`.                          |
+| `MultipartReason`           | type      | `'limit' \| 'malformed' \| 'rejected'` — the axis `MultipartError` maps to a status.                  |
+| `UploadStatus`              | type      | `'staged' \| 'moved'` — a staged upload's temp-file lifecycle stage.                                  |
+| `UploadedFileInterface`     | interface | `{ field; name; size; mime; validated; status: UploadStatus; path }`.                                 |
+| `PartHeaders`               | interface | `{ name; filename; contentType }` — one multipart part's parsed header block.                         |
+| `UploadedFileInput`         | interface | `{ field; name; size; mime; validated; status; path }` — input for `createUploadedFile`.              |
 
 ### Constants
 
-| API                               | Kind  | Summary                                                                             |
-| --------------------------------- | ----- | ----------------------------------------------------------------------------------- |
-| `DEFAULT_COMPRESSION_THRESHOLD`   | const | Default minimum buffered body size (bytes) worth compressing (`1024`).              |
-| `DEFAULT_COMPRESSION_ENCODINGS`   | const | Default codings offered, in preference order (`['gzip', 'deflate']`).               |
-| `DEFAULT_FRAME_OPTIONS`           | const | Default `X-Frame-Options` value (`'DENY'`).                                         |
-| `DEFAULT_CSP`                     | const | Default `Content-Security-Policy` value.                                            |
-| `DEFAULT_REFERRER_POLICY`         | const | Default `Referrer-Policy` value (`'strict-origin-when-cross-origin'`).              |
-| `DEFAULT_PERMISSIONS_POLICY`      | const | Default `Permissions-Policy` value.                                                 |
-| `DEFAULT_COOP`                    | const | Default `Cross-Origin-Opener-Policy` value (`'same-origin'`).                       |
-| `DEFAULT_CORP`                    | const | Default `Cross-Origin-Resource-Policy` value (`'same-origin'`).                     |
-| `DEFAULT_CLUSTER`                 | const | Default `Origin-Agent-Cluster` value (`'?1'`).                                      |
-| `DEFAULT_COEP`                    | const | The `coep: true` opt-in value (`'require-corp'`).                                   |
-| `DEFAULT_HSTS`                    | const | The `hsts: true` opt-in value (`'max-age=31536000; includeSubDomains'`).            |
-| `DEFAULT_IDENTIFIER_HEADER`       | const | The request-identifier header name (`'x-request-id'`).                              |
-| `DEFAULT_CORS_METHODS`            | const | Default preflight-advertised methods.                                               |
-| `DEFAULT_CORS_HEADERS`            | const | Default preflight-advertised headers.                                               |
-| `DEFAULT_DEADLINE_STATUS`         | const | Default status returned when a deadline fires first (`503`).                        |
-| `DEFAULT_BEARER_HEADER`           | const | Default bearer-token header (`'authorization'`).                                    |
-| `DEFAULT_BEARER_SCHEME`           | const | Default bearer scheme prefix (`'Bearer'`).                                          |
-| `DEFAULT_LIMITER_CAPACITY`        | const | Default max distinct rate-limit keys tracked (`10_000`).                            |
-| `DEFAULT_LIMITER_MESSAGE`         | const | Default 429 body message.                                                           |
-| `DEFAULT_SESSION_COOKIE`          | const | Default session cookie name (`'session'`).                                          |
-| `DEFAULT_SESSION_HEADER`          | const | Default session header name (`'session-id'`).                                       |
-| `DEFAULT_CSRF_COOKIE`             | const | Default CSRF cookie name (`'csrf'`).                                                |
-| `DEFAULT_CSRF_HEADER`             | const | Default CSRF submission header (`'x-csrf-token'`).                                  |
-| `DEFAULT_CSRF_FIELD`              | const | Default CSRF submission body field (`'_csrf'`).                                     |
-| `DEFAULT_CSRF_SAFE_METHODS`       | const | Methods that mint instead of verify (`['GET', 'HEAD', 'OPTIONS']`).                 |
-| `MULTIPART_REASON_STATUS`         | const | `MultipartReason` → HTTP status map (`limit`→413, `malformed`→400, `rejected`→415). |
-| `DEFAULT_STATIC_INDEX`            | const | Default directory-index filename (`'index.html'`).                                  |
-| `DEFAULT_STATIC_FALLBACK_EXCLUDE` | const | Default SPA-fallback excluded prefix (`'/api'`).                                    |
-| `DEFAULT_CONTENT_TYPE`            | const | Fallback `Content-Type` for an unmapped extension.                                  |
-| `DEFAULT_MULTIPART_FILE`          | const | Default max size (bytes) of one uploaded file (`10_485_760`).                       |
-| `DEFAULT_MULTIPART_FILES`         | const | Default max number of file parts (`10`).                                            |
-| `DEFAULT_MULTIPART_FIELD`         | const | Default max size (bytes) of one text field (`65_536`).                              |
-| `DEFAULT_MULTIPART_FIELDS`        | const | Default max number of text field parts (`100`).                                     |
-| `DEFAULT_MULTIPART_TOTAL`         | const | Default max combined request body size (bytes) (`52_428_800`).                      |
-| `MULTIPART_MAX_HEADER_BLOCK`      | const | Max bytes a single multipart part header block may occupy (`16_384`).               |
-| `RESERVED_DEVICE_NAMES`           | const | The Windows reserved-device-name set the static traversal guard refuses.            |
-| `EXTENSION_TYPES`                 | const | The file-extension → `Content-Type` lookup table `lookupContentType` uses.          |
+| API                               | Kind  | Summary                                                                               |
+| --------------------------------- | ----- | ------------------------------------------------------------------------------------- |
+| `DEFAULT_COMPRESSION_THRESHOLD`   | const | Default minimum buffered body size (bytes) worth compressing (`1024`).                |
+| `DEFAULT_COMPRESSION_ENCODINGS`   | const | Default codings offered, in preference order (`['gzip', 'deflate']`).                 |
+| `DEFAULT_FRAME_OPTIONS`           | const | Default `X-Frame-Options` value (`'DENY'`).                                           |
+| `DEFAULT_CSP`                     | const | Default `Content-Security-Policy` value.                                              |
+| `DEFAULT_REFERRER_POLICY`         | const | Default `Referrer-Policy` value (`'strict-origin-when-cross-origin'`).                |
+| `DEFAULT_PERMISSIONS_POLICY`      | const | Default `Permissions-Policy` value.                                                   |
+| `DEFAULT_COOP`                    | const | Default `Cross-Origin-Opener-Policy` value (`'same-origin'`).                         |
+| `DEFAULT_CORP`                    | const | Default `Cross-Origin-Resource-Policy` value (`'same-origin'`).                       |
+| `DEFAULT_CLUSTER`                 | const | Default `Origin-Agent-Cluster` value (`'?1'`).                                        |
+| `DEFAULT_COEP`                    | const | The `coep: true` opt-in value (`'require-corp'`).                                     |
+| `DEFAULT_HSTS`                    | const | The `hsts: true` opt-in value (`'max-age=31536000; includeSubDomains'`).              |
+| `DEFAULT_IDENTIFIER_HEADER`       | const | The request-identifier header name (`'x-request-id'`).                                |
+| `DEFAULT_CORS_METHODS`            | const | Default preflight-advertised methods.                                                 |
+| `DEFAULT_CORS_HEADERS`            | const | Default preflight-advertised headers.                                                 |
+| `DEFAULT_DEADLINE_STATUS`         | const | Default status returned when a deadline fires first (`503`).                          |
+| `DEFAULT_BEARER_HEADER`           | const | Default bearer-token header (`'authorization'`).                                      |
+| `DEFAULT_BEARER_SCHEME`           | const | Default bearer scheme prefix (`'Bearer'`).                                            |
+| `DEFAULT_LIMITER_CAPACITY`        | const | Default max distinct rate-limit keys tracked (`10_000`).                              |
+| `DEFAULT_LIMITER_MESSAGE`         | const | Default 429 body message.                                                             |
+| `DEFAULT_SESSION_CAPACITY`        | const | Default max distinct session ids `createMemorySessionStore` tracks (`10_000`).        |
+| `DEFAULT_SESSION_COOKIE`          | const | Default session cookie name (`'session'`).                                            |
+| `DEFAULT_SESSION_HEADER`          | const | Default session header name (`'session-id'`).                                         |
+| `DEFAULT_CSRF_COOKIE`             | const | Default CSRF cookie name (`'csrf'`).                                                  |
+| `DEFAULT_CSRF_HEADER`             | const | Default CSRF submission header (`'x-csrf-token'`).                                    |
+| `DEFAULT_CSRF_FIELD`              | const | Default CSRF submission body field (`'_csrf'`).                                       |
+| `DEFAULT_CSRF_SAFE_METHODS`       | const | Methods that mint instead of verify (`['GET', 'HEAD', 'OPTIONS']`).                   |
+| `MULTIPART_REASON_STATUS`         | const | `MultipartReason` → HTTP status map (`limit`→413, `malformed`→400, `rejected`→415).   |
+| `DEFAULT_STATIC_INDEX`            | const | Default directory-index filename (`'index.html'`).                                    |
+| `DEFAULT_STATIC_FALLBACK_EXCLUDE` | const | Default SPA-fallback excluded prefix (`'/api'`).                                      |
+| `DEFAULT_CONTENT_TYPE`            | const | Fallback `Content-Type` for an unmapped extension.                                    |
+| `DEFAULT_MULTIPART_FILE`          | const | Default max size (bytes) of one uploaded file (`10_485_760`).                         |
+| `DEFAULT_MULTIPART_FILES`         | const | Default max number of file parts (`10`).                                              |
+| `DEFAULT_MULTIPART_FIELD`         | const | Default max size (bytes) of one text field (`65_536`).                                |
+| `DEFAULT_MULTIPART_FIELDS`        | const | Default max number of text field parts (`100`).                                       |
+| `DEFAULT_MULTIPART_TOTAL`         | const | Default max combined request body size (bytes) (`52_428_800`).                        |
+| `MULTIPART_MAX_HEADER_BLOCK`      | const | Max bytes a single multipart part header block may occupy (`16_384`).                 |
+| `MULTIPART_MAX_PREAMBLE`          | const | Max bytes scanned before the first boundary before rejecting as malformed (`65_536`). |
+| `RESERVED_DEVICE_NAMES`           | const | The Windows reserved-device-name set the static traversal guard refuses.              |
+| `EXTENSION_TYPES`                 | const | The file-extension → `Content-Type` lookup table `lookupContentType` uses.            |
 
 ### Helpers — core
 
 | API                         | Kind     | Summary                                                                                   |
 | --------------------------- | -------- | ----------------------------------------------------------------------------------------- |
 | `resolveKey`                | function | Derive a rate-limit bucket key: bearer token, then client IP, then connection IP.         |
+| `resolveOptInHeader`        | function | Resolve `createSecurity`'s `coep`/`hsts` opt-in header value.                             |
 | `buildRetryAfter`           | function | Build the `Retry-After` header value (whole seconds to reset, min 1).                     |
 | `buildRateLimitField`       | function | Build the draft `RateLimit` structured header field.                                      |
 | `buildRateLimitPolicyField` | function | Build the draft `RateLimit-Policy` structured header field.                               |
@@ -175,24 +179,26 @@ const handle = compose<State>([boundary, security], async (_request, context) =>
 
 ### Helpers — node
 
-| API                      | Kind     | Summary                                                                                           |
-| ------------------------ | -------- | ------------------------------------------------------------------------------------------------- |
-| `resolveStaticPath`      | function | The traversal-safe request-path-to-filesystem-path resolver (exact algorithm order load-bearing). |
-| `isUnderPath`            | function | Segment-boundary under-path test shared by the traversal strip and the SPA `exclude`.             |
-| `isReservedDeviceName`   | function | Whether a path segment is a Windows reserved device name (CVE-2025-27210).                        |
-| `isDotfilePath`          | function | Whether a relative path has a dotfile segment.                                                    |
-| `lookupContentType`      | function | Resolve a `Content-Type` from a file's extension.                                                 |
-| `computeFileETag`        | function | Compute a weak file `ETag` from size + mtime (`W/"<size>-<floor(mtimeMs)>"`).                     |
-| `detectMIME`             | function | Sniff a MIME type from a file's leading magic bytes.                                              |
-| `multipartBoundary`      | function | Extract the multipart boundary token from a `Content-Type` header.                                |
-| `parsePartHeaders`       | function | Parse one multipart part's raw header block into its field/filename/mime facts.                   |
-| `resolveMultipartLimits` | function | Resolve `MultipartLimits` defaults into a fully-populated `Required<MultipartLimits>`.            |
-| `parseMultipartRequest`  | function | Stream-parse a multipart request body into a `MultipartBody`, or `undefined`.                     |
-| `createUploadedFile`     | function | Build a frozen `UploadedFileInterface` record.                                                    |
-| `streamFile`             | function | Open a DOM `ReadableStream` over a file's bytes (optional byte range), for a `Response` body.     |
-| `streamUploadedFile`     | function | Open a `ReadableStream` over a staged upload's on-disk bytes.                                     |
-| `readUploadedFile`       | function | Read a staged upload's on-disk bytes into one `Uint8Array`.                                       |
-| `moveUploadedFile`       | function | Relocate a staged upload's temp file (rename, with EXDEV copy+unlink fallback).                   |
+| API                       | Kind     | Summary                                                                                            |
+| ------------------------- | -------- | -------------------------------------------------------------------------------------------------- |
+| `resolveStaticPath`       | function | The traversal-safe request-path-to-filesystem-path resolver (exact algorithm order load-bearing).  |
+| `isUnderPath`             | function | Segment-boundary under-path test shared by the traversal strip and the SPA `exclude`.              |
+| `isReservedDeviceName`    | function | Whether a path segment is a Windows reserved device name (CVE-2025-27210).                         |
+| `isDotfilePath`           | function | Whether a relative path has a dotfile segment.                                                     |
+| `lookupContentType`       | function | Resolve a `Content-Type` from a file's extension.                                                  |
+| `computeFileETag`         | function | Compute a weak file `ETag` from size + mtime (`W/"<size>-<floor(mtimeMs)>"`).                      |
+| `detectMIME`              | function | Sniff a MIME type from a file's leading magic bytes.                                               |
+| `multipartBoundary`       | function | Extract the multipart boundary token from a `Content-Type` header.                                 |
+| `parsePartHeaders`        | function | Parse one multipart part's raw header block into its field/filename/mime facts.                    |
+| `resolveMultipartLimits`  | function | Resolve `MultipartLimits` defaults into a fully-populated `Required<MultipartLimits>`.             |
+| `parseMultipartRequest`   | function | Stream-parse a multipart request body into a `MultipartBody`, or `undefined`.                      |
+| `resolveDefaultDirectory` | function | Lazily create + memoize the default `0o700` `mkdtemp` staging directory under `os.tmpdir()`.       |
+| `createUploadedFile`      | function | Build a frozen `UploadedFileInterface` record.                                                     |
+| `streamFile`              | function | Open a DOM `ReadableStream` over a file's bytes (optional byte range), for a `Response` body.      |
+| `streamUploadedFile`      | function | Open a `ReadableStream` over a staged upload's on-disk bytes.                                      |
+| `readUploadedFile`        | function | Read a staged upload's on-disk bytes into one `Uint8Array`.                                        |
+| `moveUploadedFile`        | function | Relocate a staged upload's temp file (rename, with EXDEV copy+unlink fallback).                    |
+| `unlinkStagedFiles`       | function | Best-effort unlink of every still-`'staged'` file in a `MultipartBody` (downstream-throw cleanup). |
 
 ### Entities
 
@@ -333,10 +339,11 @@ prevents:
     so an unmounted `createForwarded` leaves XFF completely untrusted;
     same-socket requests with different XFF values still share one bucket
     without it; IPv6 addresses collapse to their `/64` network via
-    `ipv6Network`/`clientRateKey`; the exhausted check runs BEFORE `consume`,
-    admitting exactly `max` requests per window; capacity eviction is
-    oldest-inserted (FIFO), never resettable by an attacker re-requesting
-    a hot key.
+    `clientRateKey`; the exhausted check runs BEFORE `consume`, admitting
+    exactly `max` requests per window; capacity eviction is true LRU — every
+    access (not just insertion) refreshes a key's recency, so an attacker
+    re-requesting a hot key can never keep it evicted-and-reset; a bucket
+    evicted for capacity invokes the optional `evict` sink (throw-isolated).
 18. **Body.** `createBody` maps a malformed-JSON `undefined` resolution to a
     `400`; the size/decompression caps and the `__proto__`/`constructor`/
     `prototype` scrub are the substrate's own `readBody` behavior
@@ -346,7 +353,11 @@ prevents:
     timeout (`ttl`, lazy eviction on `get`) AND an absolute lifetime
     (`lifetime`, evicting even a continuously-touched session — `createdAt`
     is stamped once at first `set` and preserved across every later
-    re-persist); `control.regenerate()` rotates the id while carrying the
+    re-persist); it is ALSO capacity-capped (`capacity`, default
+    `DEFAULT_SESSION_CAPACITY`) and evicts the least-recently-WRITTEN id —
+    every `set` (not `get`) refreshes recency — invoking the optional
+    `evict` sink (throw-isolated) on a capacity eviction or an expired-entry
+    prune, but never for an explicit `delete`; `control.regenerate()` rotates the id while carrying the
     session's `data` over and invalidating the old id; a signed cookie
     transport inherits the full substrate injection-hardening matrix
     (`__Host-` spoof rejection, `Domain`/`Path` injection throws,
@@ -375,7 +386,14 @@ prevents:
     derived from the client-declared filename (traversal-by-filename is
     impossible by construction); every limit trips MID-STREAM with already-
     staged files cleaned up; a mid-upload client disconnect triggers the
-    same fail-closed cleanup.
+    same fail-closed cleanup; a preamble longer than
+    `MULTIPART_MAX_PREAMBLE` before the first boundary is rejected
+    `'malformed'` rather than scanned unbounded; an empty-filename part
+    (a file input submitted with no file chosen) is a no-op — staged then
+    discarded, never surfaced as an upload; staged files default to a
+    process-owned `mkdtemp` directory under `os.tmpdir()` locked to mode
+    `0o700`, with each staged file opened at mode `0o600` (both overridable
+    via `options.directory`).
 23. **Boundary.** `expose: false` leaks nothing (a non-`HTTPError` throw's
     message never reaches the body); an `HTTPError`'s own `message` ALWAYS
     surfaces (it is the handler's deliberate signal); a `report` sink's own

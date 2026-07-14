@@ -121,6 +121,44 @@ export interface UploadedFileInterface extends Omit<MultipartFile, 'status'> {
 }
 
 /**
+ * One multipart part's parsed header block — `parsePartHeaders`'s return
+ * shape.
+ *
+ * @remarks
+ * - `name` — the `Content-Disposition` `name` parameter, or `undefined` when absent.
+ * - `filename` — the `Content-Disposition` `filename` parameter, or `undefined` when absent.
+ * - `contentType` — the part's declared `Content-Type` header value, or `undefined` when absent.
+ */
+export interface PartHeaders {
+	readonly name: string | undefined
+	readonly filename: string | undefined
+	readonly contentType: string | undefined
+}
+
+/**
+ * The full field set `createUploadedFile` needs to build an
+ * {@link UploadedFileInterface} record.
+ *
+ * @remarks
+ * - `field` — the multipart field name the file was submitted under.
+ * - `name` — the client-declared filename (metadata only).
+ * - `size` — the file's byte size.
+ * - `mime` — the sniffed MIME type.
+ * - `validated` — `true` when the sniffed type matches the declared `Content-Type`.
+ * - `status` — see {@link UploadStatus}.
+ * - `path` — the file's current on-disk path.
+ */
+export interface UploadedFileInput {
+	readonly field: string
+	readonly name: string
+	readonly size: number
+	readonly mime: string
+	readonly validated: boolean
+	readonly status: UploadStatus
+	readonly path: string
+}
+
+/**
  * Options for the node face's `createCompression` — `node:zlib`-backed
  * response compression.
  *

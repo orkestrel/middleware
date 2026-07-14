@@ -1,4 +1,4 @@
-import { MemorySessionStore } from '@src/core'
+import { DEFAULT_SESSION_CAPACITY, MemorySessionStore } from '@src/core'
 import { describe, expect, it } from 'vitest'
 
 // ============================================================================
@@ -104,6 +104,66 @@ describe('MemorySessionStore createdAt stamping', () => {
 		await store.set('a', 'second', 500)
 		expect(await store.get('a', 999)).toBe('second')
 		expect(await store.get('a', 1_000)).toBeUndefined()
+	})
+})
+
+describe('MemorySessionStore capacity', () => {
+	it('defaults to DEFAULT_SESSION_CAPACITY and evicts the oldest-written entry once exceeded', async () => {
+		const store = new MemorySessionStore<string>()
+		for (let index = 0; index < DEFAULT_SESSION_CAPACITY; index += 1)
+			await store.set(`id-${index}`, 'payload', 0)
+		expect(await store.get('id-0', 0)).toBe('payload')
+		await store.set('overflow', 'payload', 0)
+		expect(await store.get('id-0', 0)).toBeUndefined()
+		expect(await store.get('overflow', 0)).toBe('payload')
+	})
+
+	it('keeps size at or below an explicit capacity when inserting capacity+1 distinct never-read ids', async () => {
+		const store = new MemorySessionStore<string>({ capacity: 5 })
+		for (let index = 0; index < 6; index += 1) await store.set(`id-${index}`, 'payload', 0)
+		let alive = 0
+		for (let index = 0; index < 6; index += 1)
+			if ((await store.get(`id-${index}`, 0)) !== undefined) alive += 1
+		expect(alive).toBeLessThanOrEqual(5)
+	})
+
+	it('evicts the least-recently-WRITTEN id, not the least-recently-inserted', async () => {
+		const store = new MemorySessionStore<string>({ capacity: 2 })
+		await store.set('a', '1', 0)
+		await store.set('b', '2', 0)
+		// Touch 'a' again — refreshes its write recency, making 'b' the oldest.
+		await store.set('a', '1-touched', 0)
+		// Inserting a brand-new id exceeds capacity — evicts the least-recently-written, 'b'.
+		await store.set('c', '3', 0)
+		expect(await store.get('b', 0)).toBeUndefined()
+		expect(await store.get('a', 0)).toBe('1-touched')
+		expect(await store.get('c', 0)).toBe('3')
+	})
+
+	it('invokes evict with the evicted id on a capacity eviction', async () => {
+		const evicted: string[] = []
+		const store = new MemorySessionStore<string>({ capacity: 1, evict: (id) => evicted.push(id) })
+		await store.set('a', '1', 0)
+		await store.set('b', '2', 0)
+		expect(evicted).toEqual(['a'])
+	})
+
+	it('swallows a throwing evict callback without affecting the store', async () => {
+		const store = new MemorySessionStore<string>({
+			capacity: 1,
+			evict: () => {
+				throw new Error('evict callback is broken')
+			},
+		})
+		await store.set('a', '1', 0)
+		await expect(store.set('b', '2', 0)).resolves.toBeUndefined()
+		expect(await store.get('b', 0)).toBe('2')
+	})
+
+	it('throws a TypeError for capacity 0, negative, or non-integer', () => {
+		expect(() => new MemorySessionStore({ capacity: 0 })).toThrow(TypeError)
+		expect(() => new MemorySessionStore({ capacity: -1 })).toThrow(TypeError)
+		expect(() => new MemorySessionStore({ capacity: 1.5 })).toThrow(TypeError)
 	})
 })
 

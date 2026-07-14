@@ -42,6 +42,9 @@ export const DEFAULT_MULTIPART_TOTAL = 52_428_800
 /** The maximum bytes a single multipart part's header block may occupy before it is malformed. */
 export const MULTIPART_MAX_HEADER_BLOCK = 16_384
 
+/** The maximum bytes scanned before the first multipart boundary is found before it is malformed. */
+export const MULTIPART_MAX_PREAMBLE = 65_536
+
 /**
  * Windows reserved device-name stems (CVE-2025-27210) — matched
  * case-insensitively against the segment's stem (before its first `.`).

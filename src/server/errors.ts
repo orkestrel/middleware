@@ -42,11 +42,20 @@ export class MultipartError extends Error {
 		this.status = MULTIPART_REASON_STATUS[reason]
 		this.reason = reason
 		this.context = context
+		Object.defineProperty(this, Symbol.for('@orkestrel/middleware.MultipartError'), {
+			value: true,
+		})
 	}
 }
 
 /**
  * Narrow an unknown caught value to a {@link MultipartError}.
+ *
+ * @remarks
+ * Structural, not `instanceof` — tests that `value` is a non-null object
+ * carrying the module-scope brand, a numeric `status`, and a `reason` in the
+ * parser's set of reason strings (`'limit' | 'malformed' | 'rejected'`).
+ * Total: never throws, returns `false` for any off-shape input.
  *
  * @param value - The value to test (typically a `catch` binding)
  * @returns `true` when `value` is a {@link MultipartError}
@@ -63,5 +72,11 @@ export class MultipartError extends Error {
  * ```
  */
 export function isMultipartError(value: unknown): value is MultipartError {
-	return value instanceof MultipartError
+	if (typeof value !== 'object' || value === null) return false
+	if (!(Symbol.for('@orkestrel/middleware.MultipartError') in value)) return false
+	if (!('status' in value) || !('reason' in value)) return false
+	if (typeof value.status !== 'number') return false
+	if (value.reason !== 'limit' && value.reason !== 'malformed' && value.reason !== 'rejected')
+		return false
+	return true
 }

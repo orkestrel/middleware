@@ -1,7 +1,8 @@
 import { join, resolve as resolvePath } from 'node:path'
-import { readFile, readdir, rename, writeFile } from 'node:fs/promises'
+import { readFile, readdir, stat, writeFile } from 'node:fs/promises'
 import { randomUUID } from 'node:crypto'
 import { describe, expect, it } from 'vitest'
+import { isMultipartFile } from '@src/core'
 import {
 	computeFileETag,
 	createUploadedFile,
@@ -10,14 +11,20 @@ import {
 	isMultipartError,
 	isReservedDeviceName,
 	isUnderPath,
+	lookupContentType,
 	moveUploadedFile,
 	multipartBoundary,
 	parseMultipartRequest,
+	parsePartHeaders,
+	readUploadedFile,
+	resolveDefaultDirectory,
 	resolveStaticPath,
 	streamFile,
+	streamUploadedFile,
 } from '@src/server'
 import {
 	PNG_MAGIC,
+	buildCancelTrackingMultipartRequest,
 	buildMultipartBody,
 	buildMultipartRequest,
 	buildTempDirectory,
@@ -406,6 +413,143 @@ describe('parseMultipartRequest', () => {
 		expect(file?.mime).toBe('image/png')
 	})
 
+	it('sniff-authoritative: a declared/sniffed MISMATCH is accepted when the SNIFFED type is on the allow-list, with validated:false', async () => {
+		const request = buildMultipartRequest([
+			{
+				kind: 'file',
+				name: 'avatar',
+				filename: 'a.jpg',
+				contentType: 'image/jpeg',
+				bytes: Buffer.concat([Buffer.from(PNG_MAGIC), Buffer.from('rest of a real png')]),
+			},
+		])
+		const body = await parseMultipartRequest(request, { allowed: ['image/png'] })
+		expect(body).toBeDefined()
+		const file = body?.files.avatar?.[0]
+		expect(file).toBeDefined()
+		expect(file?.mime).toBe('image/png')
+		expect(file?.validated).toBe(false)
+	})
+
+	it('empty-filename part (unselected optional file input) is a silent no-op — not staged, not keyed, not counted', async () => {
+		const directory = await buildTempDirectory()
+		try {
+			const request = buildMultipartRequest([
+				{ kind: 'field', name: 'title', value: 'hello' },
+				{ kind: 'file', name: 'avatar', filename: '', bytes: new Uint8Array(0) },
+				{
+					kind: 'file',
+					name: 'other',
+					filename: 'b.png',
+					contentType: 'image/png',
+					bytes: Buffer.from(PNG_MAGIC),
+				},
+			])
+			const body = await parseMultipartRequest(request, { directory: directory.path })
+			expect(body).toBeDefined()
+			expect(body?.files.avatar).toBeUndefined()
+			expect(body?.fields.title).toBe('hello')
+			expect(body?.files.other?.[0]?.name).toBe('b.png')
+			// Only the non-empty file part is staged on disk.
+			expect(await readdir(directory.path)).toHaveLength(1)
+		} finally {
+			await directory.cleanup()
+		}
+	})
+
+	it('empty-filename part does not count against the files limit', async () => {
+		const request = buildMultipartRequest([
+			{ kind: 'file', name: 'a', filename: '', bytes: new Uint8Array(0) },
+			{
+				kind: 'file',
+				name: 'b',
+				filename: 'b.png',
+				contentType: 'image/png',
+				bytes: Buffer.from(PNG_MAGIC),
+			},
+		])
+		const body = await parseMultipartRequest(request, { limits: { files: 1 } })
+		expect(body?.files.b?.[0]?.name).toBe('b.png')
+	})
+
+	it('multiple files under one field name append into an array', async () => {
+		const directory = await buildTempDirectory()
+		try {
+			const request = buildMultipartRequest([
+				{
+					kind: 'file',
+					name: 'photos',
+					filename: 'a.png',
+					contentType: 'image/png',
+					bytes: Buffer.from(PNG_MAGIC),
+				},
+				{
+					kind: 'file',
+					name: 'photos',
+					filename: 'b.jpg',
+					contentType: 'image/jpeg',
+					bytes: Buffer.from([0xff, 0xd8, 0xff, 0xe0]),
+				},
+			])
+			const body = await parseMultipartRequest(request, { directory: directory.path })
+			const files = body?.files.photos
+			expect(files).toHaveLength(2)
+			expect(files?.[0]?.name).toBe('a.png')
+			expect(files?.[1]?.name).toBe('b.jpg')
+			expect(await readdir(directory.path)).toHaveLength(2)
+		} finally {
+			await directory.cleanup()
+		}
+	})
+
+	it('preamble bound: a preamble larger than MULTIPART_MAX_PREAMBLE is rejected as malformed without buffering the whole payload', async () => {
+		const boundary = 'preamble-bnd'
+		const chunkSize = 4096
+		// Deliberately far larger than what the cap should ever let through, so
+		// a passing "rejected before the source was exhausted" assertion is
+		// robust rather than tightly coupled to the exact chunk arithmetic.
+		const totalChunks = 100_000
+		let sent = 0
+		let rejectedDuringFeed = false
+		const stream = new ReadableStream<Uint8Array>({
+			async pull(controller) {
+				if (sent >= totalChunks) {
+					controller.close()
+					return
+				}
+				sent += 1
+				controller.enqueue(new TextEncoder().encode('x'.repeat(chunkSize)))
+			},
+		})
+		const init: RequestInit & { readonly duplex: 'half' } = {
+			method: 'POST',
+			headers: { 'content-type': `multipart/form-data; boundary=${boundary}` },
+			body: stream,
+			duplex: 'half',
+		}
+		const request = new Request('http://test.local/x', init)
+		const promise = parseMultipartRequest(request)
+		await expect(promise).rejects.toSatisfy(
+			(error: unknown) => isMultipartError(error) && error.reason === 'malformed',
+		)
+		rejectedDuringFeed = sent < totalChunks
+		// The cap is checked incrementally, per chunk — rejection happens well
+		// before the source would have produced its full chunk count, proving
+		// the scan is bounded rather than buffering the whole (never-arriving)
+		// preamble.
+		expect(rejectedDuringFeed).toBe(true)
+	})
+
+	it('reader cancellation: a mid-stream limit breach cancels the underlying reader', async () => {
+		const { request, cancelled } = buildCancelTrackingMultipartRequest([
+			{ kind: 'file', name: 'avatar', filename: 'big.bin', bytes: new Uint8Array(1000) },
+		])
+		await expect(parseMultipartRequest(request, { limits: { file: 10 } })).rejects.toSatisfy(
+			(error: unknown) => isMultipartError(error) && error.reason === 'limit',
+		)
+		expect(cancelled.value).toBe(true)
+	})
+
 	it('a request abort mid-upload throws MultipartError and leaves the staging directory empty', async () => {
 		const directory = await buildTempDirectory()
 		try {
@@ -473,6 +617,22 @@ describe('parseMultipartRequest', () => {
 		}
 	})
 
+	it('accepts a file exactly AT the file-size limit', async () => {
+		const directory = await buildTempDirectory()
+		try {
+			const request = buildMultipartRequest([
+				{ kind: 'file', name: 'avatar', filename: 'big.bin', bytes: new Uint8Array(10) },
+			])
+			const body = await parseMultipartRequest(request, {
+				limits: { file: 10 },
+				directory: directory.path,
+			})
+			expect(body?.files.avatar?.[0]?.size).toBe(10)
+		} finally {
+			await directory.cleanup()
+		}
+	})
+
 	it('trips the field-count limit', async () => {
 		const request = buildMultipartRequest([
 			{ kind: 'field', name: 'a', value: '1' },
@@ -481,6 +641,16 @@ describe('parseMultipartRequest', () => {
 		await expect(parseMultipartRequest(request, { limits: { fields: 1 } })).rejects.toSatisfy(
 			(error: unknown) => isMultipartError(error) && error.reason === 'limit',
 		)
+	})
+
+	it('accepts exactly the field-count limit worth of fields', async () => {
+		const request = buildMultipartRequest([
+			{ kind: 'field', name: 'a', value: '1' },
+			{ kind: 'field', name: 'b', value: '2' },
+		])
+		const body = await parseMultipartRequest(request, { limits: { fields: 2 } })
+		expect(body?.fields.a).toBe('1')
+		expect(body?.fields.b).toBe('2')
 	})
 
 	it('trips the file-count limit', async () => {
@@ -493,6 +663,22 @@ describe('parseMultipartRequest', () => {
 		)
 	})
 
+	it('accepts exactly the file-count limit worth of files', async () => {
+		const directory = await buildTempDirectory()
+		try {
+			const request = buildMultipartRequest([
+				{ kind: 'file', name: 'a', filename: 'a.txt', bytes: new TextEncoder().encode('x') },
+			])
+			const body = await parseMultipartRequest(request, {
+				limits: { files: 1 },
+				directory: directory.path,
+			})
+			expect(body?.files.a?.[0]?.name).toBe('a.txt')
+		} finally {
+			await directory.cleanup()
+		}
+	})
+
 	it('trips the field-size limit', async () => {
 		const request = buildMultipartRequest([{ kind: 'field', name: 'a', value: 'x'.repeat(100) }])
 		await expect(parseMultipartRequest(request, { limits: { field: 10 } })).rejects.toSatisfy(
@@ -500,11 +686,30 @@ describe('parseMultipartRequest', () => {
 		)
 	})
 
+	it('accepts a field exactly AT the field-size limit', async () => {
+		const request = buildMultipartRequest([{ kind: 'field', name: 'a', value: 'x'.repeat(10) }])
+		const body = await parseMultipartRequest(request, { limits: { field: 10 } })
+		expect(body?.fields.a).toBe('x'.repeat(10))
+	})
+
 	it('trips the total-size limit', async () => {
 		const request = buildMultipartRequest([{ kind: 'field', name: 'a', value: 'x'.repeat(1000) }])
 		await expect(parseMultipartRequest(request, { limits: { total: 50 } })).rejects.toSatisfy(
 			(error: unknown) => isMultipartError(error) && error.reason === 'limit',
 		)
+	})
+
+	it('accepts a body exactly AT the total-size limit (the full wire byte count, including boundary framing)', async () => {
+		const parts = [{ kind: 'field' as const, name: 'a', value: 'x'.repeat(10) }]
+		const boundary = 'total-limit-bnd'
+		const { body, contentType } = buildMultipartBody(parts, boundary)
+		const request = new Request('http://test.local/upload', {
+			method: 'POST',
+			headers: { 'content-type': contentType },
+			body: new Blob([Buffer.from(body)]),
+		})
+		const parsed = await parseMultipartRequest(request, { limits: { total: body.byteLength } })
+		expect(parsed?.fields.a).toBe('x'.repeat(10))
 	})
 
 	it('malformed matrix: missing boundary marker', async () => {
@@ -680,13 +885,260 @@ describe('moveUploadedFile', () => {
 		}
 	})
 
-	it('documents the EXDEV-fallback coverage gap — only the same-device rename path is exercised here', () => {
-		// A real cross-device (EXDEV) rename failure requires two distinct
-		// filesystems/mount points, unavailable in this sandbox — the
-		// `copyFile` + `unlink` fallback branch in `moveUploadedFile` is
-		// exercised only by code review here, not by this suite. The test
-		// above pins the same-device `rename` path, which is the only branch
-		// honestly reachable in this environment.
-		expect(rename).toBeTypeOf('function')
+	it('rethrows a non-EXDEV rename error (e.g. a missing destination directory)', async () => {
+		const directory = await buildTempDirectory()
+		try {
+			const stagedPath = join(directory.path, randomUUID())
+			await writeFile(stagedPath, Buffer.from(PNG_MAGIC))
+			const staged = createUploadedFile({
+				field: 'avatar',
+				name: 'a.png',
+				size: PNG_MAGIC.byteLength,
+				mime: 'image/png',
+				validated: true,
+				status: 'staged',
+				path: stagedPath,
+			})
+			const destination = join(directory.path, 'no', 'such', 'dir', 'final.png')
+			await expect(moveUploadedFile(staged, destination)).rejects.toBeDefined()
+		} finally {
+			await directory.cleanup()
+		}
 	})
+
+	it.todo(
+		'EXDEV fallback (copyFile + unlink) — requires two distinct filesystems/mount points, unavailable in this sandbox',
+	)
+})
+
+// ── readUploadedFile / streamUploadedFile ───────────────────────────────────
+
+describe('readUploadedFile / streamUploadedFile', () => {
+	it('readUploadedFile round-trips the staged bytes', async () => {
+		const directory = await buildTempDirectory()
+		try {
+			const path = join(directory.path, randomUUID())
+			const expected = Buffer.from('hello uploaded file contents')
+			await writeFile(path, expected)
+			const record = createUploadedFile({
+				field: 'avatar',
+				name: 'a.txt',
+				size: expected.byteLength,
+				mime: 'text/plain',
+				validated: true,
+				status: 'staged',
+				path,
+			})
+			await expect(readUploadedFile(record)).resolves.toEqual(expected)
+		} finally {
+			await directory.cleanup()
+		}
+	})
+
+	it('streamUploadedFile streams the same bytes as the on-disk file', async () => {
+		const directory = await buildTempDirectory()
+		try {
+			const path = join(directory.path, randomUUID())
+			const expected = Buffer.from('streamed uploaded file contents')
+			await writeFile(path, expected)
+			const record = createUploadedFile({
+				field: 'avatar',
+				name: 'a.txt',
+				size: expected.byteLength,
+				mime: 'text/plain',
+				validated: true,
+				status: 'staged',
+				path,
+			})
+			const reader = streamUploadedFile(record).getReader()
+			const chunks: Uint8Array[] = []
+			for (;;) {
+				const { done, value } = await reader.read()
+				if (done) break
+				chunks.push(value)
+			}
+			expect(Buffer.concat(chunks)).toEqual(expected)
+		} finally {
+			await directory.cleanup()
+		}
+	})
+})
+
+// ── parsePartHeaders — direct unit coverage ─────────────────────────────────
+
+describe('parsePartHeaders', () => {
+	it('parses name only', () => {
+		expect(parsePartHeaders('Content-Disposition: form-data; name="title"')).toEqual({
+			name: 'title',
+			filename: undefined,
+			contentType: undefined,
+		})
+	})
+
+	it('parses name + filename + content-type across header lines', () => {
+		const block = [
+			'Content-Disposition: form-data; name="avatar"; filename="a.png"',
+			'Content-Type: image/png',
+		].join('\r\n')
+		expect(parsePartHeaders(block)).toEqual({
+			name: 'avatar',
+			filename: 'a.png',
+			contentType: 'image/png',
+		})
+	})
+
+	it('parses a quoted filename containing spaces', () => {
+		const block = 'Content-Disposition: form-data; name="avatar"; filename="my file.png"'
+		expect(parsePartHeaders(block).filename).toBe('my file.png')
+	})
+
+	it('stops a filename capture at the first quote, even an escaped one (no backslash-unescaping)', () => {
+		// The current grammar is `filename="([^"]*)"` — a literal backslash
+		// before a quote does not escape it, so the match ends at that quote.
+		const block = String.raw`Content-Disposition: form-data; name="avatar"; filename="fi\"le.png"`
+		expect(parsePartHeaders(block).filename).toBe('fi\\')
+	})
+
+	it('a folded (whitespace-led) continuation line is ignored, not appended to the prior value', () => {
+		// Lines are split on \r\n and matched independently; a continuation
+		// line with no `:` has no key and is skipped entirely (no folding
+		// support), so the header value is exactly what its own line carried.
+		const block = ['Content-Disposition: form-data; name="title"', ' continued-fold-text'].join(
+			'\r\n',
+		)
+		expect(parsePartHeaders(block).name).toBe('title')
+	})
+
+	it('is total on a block with no recognized headers', () => {
+		expect(parsePartHeaders('X-Custom: whatever')).toEqual({
+			name: undefined,
+			filename: undefined,
+			contentType: undefined,
+		})
+	})
+})
+
+// ── lookupContentType — direct unit coverage ────────────────────────────────
+
+describe('lookupContentType', () => {
+	it('maps a known extension', () => {
+		expect(lookupContentType('/a/b.css')).toBe('text/css; charset=utf-8')
+		expect(lookupContentType('/a/b.png')).toBe('image/png')
+	})
+
+	it('is case-insensitive on the extension', () => {
+		expect(lookupContentType('/a/B.CSS')).toBe('text/css; charset=utf-8')
+	})
+
+	it('falls back to the default content type for an unknown/missing extension', () => {
+		expect(lookupContentType('/a/b.unknownext')).toBe('application/octet-stream')
+		expect(lookupContentType('/a/b')).toBe('application/octet-stream')
+	})
+})
+
+// ── isMultipartFile (@src/core) — direct unit coverage ──────────────────────
+
+describe('isMultipartFile', () => {
+	it('accepts a well-shaped record', () => {
+		expect(
+			isMultipartFile({
+				field: 'avatar',
+				name: 'a.png',
+				size: 10,
+				mime: 'image/png',
+				validated: true,
+				status: 'staged',
+				path: '/tmp/x',
+			}),
+		).toBe(true)
+	})
+
+	it('rejects a record missing/mistyping a required field', () => {
+		expect(isMultipartFile({ field: 'avatar', name: 'a.png' })).toBe(false)
+		expect(
+			isMultipartFile({
+				field: 'avatar',
+				name: 'a.png',
+				size: 'not-a-number',
+				mime: 'image/png',
+				validated: true,
+				status: 'staged',
+				path: '/tmp/x',
+			}),
+		).toBe(false)
+	})
+
+	it('is total on non-record input', () => {
+		expect(isMultipartFile(null)).toBe(false)
+		expect(isMultipartFile('nope')).toBe(false)
+		expect(isMultipartFile(undefined)).toBe(false)
+	})
+})
+
+// ── isMultipartError — brand narrowing ───────────────────────────────────────
+
+describe('isMultipartError', () => {
+	it('accepts a structurally-branded plain object built WITHOUT the class', () => {
+		// Simulates the "other module face" case: a value carrying the SAME
+		// well-known Symbol.for brand plus reason/status, but never
+		// constructed via `new MultipartError(...)` — the guard is structural,
+		// not `instanceof`.
+		const brand = Symbol.for('@orkestrel/middleware.MultipartError')
+		const value = { [brand]: true, status: 413, reason: 'limit' }
+		expect(isMultipartError(value)).toBe(true)
+	})
+
+	it('rejects a plain Error (no brand)', () => {
+		expect(isMultipartError(new Error('boom'))).toBe(false)
+	})
+
+	it('rejects a branded object with an invalid reason', () => {
+		const brand = Symbol.for('@orkestrel/middleware.MultipartError')
+		expect(isMultipartError({ [brand]: true, status: 400, reason: 'nope' })).toBe(false)
+	})
+
+	it('is total on non-object input', () => {
+		expect(isMultipartError(null)).toBe(false)
+		expect(isMultipartError('nope')).toBe(false)
+		expect(isMultipartError(42)).toBe(false)
+	})
+})
+
+// ── Staging security — default directory + staged file permission bits ─────
+
+describe('staging security', () => {
+	it.runIf(process.platform !== 'win32')(
+		'the default staging directory is created with mode 0o700',
+		async () => {
+			const directory = await resolveDefaultDirectory()
+			const info = await stat(directory)
+			expect(info.mode & 0o777).toBe(0o700)
+		},
+	)
+
+	it.runIf(process.platform !== 'win32')(
+		'a staged upload file is written with mode 0o600',
+		async () => {
+			const directory = await buildTempDirectory()
+			try {
+				const request = buildMultipartRequest([
+					{
+						kind: 'file',
+						name: 'avatar',
+						filename: 'a.png',
+						contentType: 'image/png',
+						bytes: Buffer.from(PNG_MAGIC),
+					},
+				])
+				const body = await parseMultipartRequest(request, { directory: directory.path })
+				const path = body?.files.avatar?.[0]?.path
+				expect(path).toBeDefined()
+				if (path === undefined) return
+				const info = await stat(path)
+				expect(info.mode & 0o777).toBe(0o600)
+			} finally {
+				await directory.cleanup()
+			}
+		},
+	)
 })

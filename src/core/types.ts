@@ -219,13 +219,16 @@ export interface BearerOptions {
  * - `max` — the number of requests admitted per key per `window`.
  * - `window` — the window length in milliseconds.
  * - `capacity` — the maximum number of distinct keys tracked before the
- *   oldest-inserted is evicted (LRU); defaults to {@link DEFAULT_LIMITER_CAPACITY}.
+ *   least-recently-used key is evicted (true LRU — every access, not just
+ *   insertion, refreshes recency); defaults to {@link DEFAULT_LIMITER_CAPACITY}.
  * - `key` — derives the bucket key from the request; defaults to the
  *   bearer-token-then-client-IP idiom (see the battery's guide).
  * - `message` — the 429 body message; defaults to {@link DEFAULT_LIMITER_MESSAGE}.
  * - `clock` — the injected time source for all window math; defaults to `Date.now`.
  * - `policy` — when `true`, also emits the draft `RateLimit`/`RateLimit-Policy`
  *   structured header fields; defaults to `false`. `Retry-After` always ships.
+ * - `evict` — invoked with a bucket's key when it is evicted for capacity;
+ *   its own throw is swallowed and can never fail the request.
  */
 export interface LimiterOptions<TState = unknown> {
 	readonly max: number
@@ -235,6 +238,7 @@ export interface LimiterOptions<TState = unknown> {
 	readonly message?: string
 	readonly clock?: () => number
 	readonly policy?: boolean
+	readonly evict?: (key: string) => void
 }
 
 /**
@@ -373,9 +377,14 @@ export interface SessionTransport {
  * - `transport` — the {@link SessionTransport} (`createCookieTransport(...)`,
  *   `createHeaderTransport(...)`, or a custom one).
  * - `store` — the {@link SessionStoreInterface}; defaults to
- *   `createMemorySessionStore({ ttl, lifetime })`.
+ *   `createMemorySessionStore({ ttl, lifetime, capacity, evict })`.
  * - `ttl` — the idle timeout in milliseconds.
  * - `lifetime` — the absolute session lifetime in milliseconds from mint.
+ * - `capacity` — the maximum number of distinct session ids the DEFAULT
+ *   memory store tracks before LRU eviction; ignored when `store` is
+ *   provided. Defaults to {@link DEFAULT_SESSION_CAPACITY}.
+ * - `evict` — invoked with a session id evicted by the DEFAULT memory
+ *   store's own policy; ignored when `store` is provided.
  * - `create` — builds a fresh session's public entity from a minted id;
  *   defaults to `new Session(id)`.
  * - `mint` — decides whether to auto-mint a session when none resolves;
@@ -391,6 +400,8 @@ export interface SessionOptions<S, TState = unknown> {
 	readonly store?: SessionStoreInterface<S>
 	readonly ttl?: number
 	readonly lifetime?: number
+	readonly capacity?: number
+	readonly evict?: (id: string) => void
 	readonly create?: (id: string) => S
 	readonly mint?: (context: MiddlewareContext<TState>) => boolean | Promise<boolean>
 	readonly require?: boolean
@@ -434,10 +445,18 @@ export interface HeaderTransportOptions {
  * - `ttl` — the idle timeout in milliseconds (lazy eviction on `get`).
  * - `lifetime` — the absolute lifetime in milliseconds from first `set`
  *   (evicts even a continuously-touched session).
+ * - `capacity` — the maximum number of distinct session ids tracked before
+ *   the least-recently-written id is evicted (LRU by last write — every
+ *   `set` refreshes an id's recency); defaults to {@link DEFAULT_SESSION_CAPACITY}.
+ * - `evict` — invoked with a session id when it is evicted by the store's
+ *   own policy (a capacity eviction or an expired-entry prune) — never for
+ *   an explicit `delete`. Its own throw is swallowed.
  */
 export interface MemorySessionStoreOptions {
 	readonly ttl?: number
 	readonly lifetime?: number
+	readonly capacity?: number
+	readonly evict?: (id: string) => void
 }
 
 /**

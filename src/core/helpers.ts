@@ -40,7 +40,7 @@ import { clientRateKey, isCompressibleType, mergeVary, negotiateEncoding } from 
  * @example
  * ```ts
  * resolveKey({ token: 'abc' }) // 'token:abc'
- * resolveKey({ client: { ip: '2001:db8::1' } }) // 'ip:2001:db8::/64'
+ * resolveKey({ client: { ip: '2001:db8::1' } }) // 'ip:2001:db8:0:0::/64'
  * ```
  */
 export function resolveKey(state: BearerState & ClientState & ConnectionState): string {
@@ -106,9 +106,9 @@ export function buildRateLimitPolicyField(max: number, window: number): string {
 
 /**
  * Whether a candidate address is a bare (non-CIDR) trusted-hop match — an
- * exact string match, or a simple prefix-CIDR match for IPv4 (`/8`–`/32`)
- * and IPv6 (delegating the network computation to `ipv6Network`-shaped
- * comparison of the leading hextets via string prefix).
+ * exact string match, or a simple prefix-CIDR match for IPv4 (`/8`–`/32`).
+ * An IPv6 entry matches by exact string only — there is no IPv6 CIDR
+ * support.
  *
  * @remarks
  * Supports exact addresses and dotted-decimal IPv4 CIDR (`10.0.0.0/8`
@@ -361,16 +361,17 @@ export function rebuildResponse(
  * compression over a caller-supplied set of feature-detected codings.
  *
  * @remarks
- * Decision order: {@link isBufferingIneligible} → `options.filter` →
- * `negotiateEncoding` over `options.encodings` → {@link isCompressionNegotiated}
- * → `isCompressibleType` on `Content-Type` → a fast skip when the response
- * already carries a numeric `Content-Length` BELOW `options.threshold`
- * (avoids buffering a body known too small to be worth compressing) →
- * buffer via `response.arrayBuffer()` → a threshold passthrough when the
- * buffered size is still below `options.threshold` → `options.compress` →
- * set `Content-Encoding`, merge `Vary: Accept-Encoding`, and a fresh
- * `Content-Length` via {@link rebuildResponse}. Returns `response` unchanged
- * on any skip.
+ * Decision order: {@link isBufferingIneligible} → `options.filter` → stamp
+ * `Vary: Accept-Encoding` (every negotiation-eligible response carries it,
+ * even when a later skip declines to compress) → `negotiateEncoding` over
+ * `options.encodings` → {@link isCompressionNegotiated} → `isCompressibleType`
+ * on `Content-Type` → a fast skip when the response already carries a
+ * numeric `Content-Length` BELOW `options.threshold` (avoids buffering a
+ * body known too small to be worth compressing) → buffer via
+ * `response.arrayBuffer()` → a threshold passthrough when the buffered size
+ * is still below `options.threshold` → `options.compress` → set
+ * `Content-Encoding` and a fresh `Content-Length` via {@link rebuildResponse}.
+ * Returns `response` unchanged (aside from the `Vary` stamp) on any skip.
  *
  * @param request - The inbound `Request` (read for `Accept-Encoding`)
  * @param context - The `MiddlewareContext` (read for `context.method`)
@@ -403,6 +404,10 @@ export async function compressResponse(
 ): Promise<Response> {
 	if (isBufferingIneligible(context.method, response, 'content-encoding')) return response
 	if (options.filter !== undefined && !options.filter(request, response)) return response
+	response.headers.set(
+		'vary',
+		mergeVary(response.headers.get('vary') ?? undefined, 'Accept-Encoding'),
+	)
 	const acceptEncoding = request.headers.get('accept-encoding')
 	if (acceptEncoding === null) return response
 	const negotiated = negotiateEncoding(acceptEncoding, options.encodings)
@@ -419,7 +424,6 @@ export async function compressResponse(
 	const compressed = await options.compress(new Uint8Array(buffer), negotiated)
 	const headers = new Headers(response.headers)
 	headers.set('content-encoding', negotiated)
-	headers.set('vary', mergeVary(headers.get('vary') ?? undefined, 'Accept-Encoding'))
 	headers.set('content-length', String(compressed.byteLength))
 	return rebuildResponse(compressed, response, headers)
 }

@@ -318,6 +318,10 @@ describe('createCompression', () => {
 		expect(response.headers.has('content-encoding')).toBe(false)
 	})
 
+	it('rejects a negative threshold at construction', () => {
+		expect(() => createCompression({ threshold: -1 })).toThrow(TypeError)
+	})
+
 	it('rejects a q=0 coding via negotiation (nothing negotiated)', async () => {
 		const compression = createCompression<Record<string, never>>({ threshold: 16 })
 		const request = buildRequest('/', { headers: { 'accept-encoding': 'gzip;q=0, deflate;q=0' } })
@@ -469,6 +473,34 @@ describe('createCors', () => {
 		await runChain([cors], terminal.handler, request, context)
 		expect(terminal.count).toBe(1)
 	})
+
+	it('fixed-string origin mode: the configured origin is set verbatim, matching or not, with no Vary', async () => {
+		const cors = createCors({ origin: 'https://static.example' })
+
+		const matching = buildRequest('/', { headers: { origin: 'https://static.example' } })
+		const matchingResponse = await runChain(
+			[cors],
+			createEchoTerminal(),
+			matching,
+			createTestContext(matching, {}),
+		)
+		expect(matchingResponse.headers.get('access-control-allow-origin')).toBe(
+			'https://static.example',
+		)
+		expect(matchingResponse.headers.has('vary')).toBe(false)
+
+		const mismatched = buildRequest('/', { headers: { origin: 'https://evil.example' } })
+		const mismatchedResponse = await runChain(
+			[cors],
+			createEchoTerminal(),
+			mismatched,
+			createTestContext(mismatched, {}),
+		)
+		expect(mismatchedResponse.headers.get('access-control-allow-origin')).toBe(
+			'https://static.example',
+		)
+		expect(mismatchedResponse.headers.has('vary')).toBe(false)
+	})
 })
 
 // ── createDeadline ────────────────────────────────────────────────────────
@@ -508,6 +540,11 @@ describe('createDeadline', () => {
 
 	it('rejects a non-finite ms at construction', () => {
 		expect(() => createDeadline({ ms: Number.NaN })).toThrow(TypeError)
+	})
+
+	it('rejects a non-positive ms at construction', () => {
+		expect(() => createDeadline({ ms: 0 })).toThrow(TypeError)
+		expect(() => createDeadline({ ms: -1 })).toThrow(TypeError)
 	})
 
 	it('a downstream throw arriving AFTER the deadline wins never escapes as an unhandled rejection', async () => {
@@ -921,13 +958,73 @@ describe('createLimiter', () => {
 		expect(second.status).toBe(429)
 	})
 
-	it('evicts the oldest-inserted key at capacity (LRU)', async () => {
+	it('true LRU: eviction follows access recency, not insertion order', async () => {
 		const clock = createManualClock()
+		const limiter = createLimiter<BearerState & ClientState & ConnectionState>({
+			max: 1,
+			window: 1_000,
+			capacity: 2,
+			clock: clock.clock,
+		})
+		const stateA: BearerState & ClientState & ConnectionState = { client: { ip: '203.0.113.1' } }
+		const stateB: BearerState & ClientState & ConnectionState = { client: { ip: '203.0.113.2' } }
+		const stateC: BearerState & ClientState & ConnectionState = { client: { ip: '203.0.113.3' } }
+		// Insert A then B (buckets: A, B — both exhausted at max:1).
+		await runChain(
+			[limiter],
+			createEchoTerminal(),
+			buildRequest('/'),
+			createTestContext(buildRequest('/'), stateA),
+		)
+		await runChain(
+			[limiter],
+			createEchoTerminal(),
+			buildRequest('/'),
+			createTestContext(buildRequest('/'), stateB),
+		)
+		// Re-access A — under FIFO this would not matter, but true LRU moves A to
+		// the most-recently-used position, leaving B as the least-recently-used.
+		await runChain(
+			[limiter],
+			createEchoTerminal(),
+			buildRequest('/'),
+			createTestContext(buildRequest('/'), stateA),
+		)
+		// Inserting a brand-new key C exceeds capacity 2 — evicts the LRU entry, B.
+		await runChain(
+			[limiter],
+			createEchoTerminal(),
+			buildRequest('/'),
+			createTestContext(buildRequest('/'), stateC),
+		)
+		// A's bucket survived (still exhausted from its earlier requests) —
+		// FIFO would instead have evicted A here, admitting it fresh.
+		const retryA = await runChain(
+			[limiter],
+			createEchoTerminal(),
+			buildRequest('/'),
+			createTestContext(buildRequest('/'), stateA),
+		)
+		expect(retryA.status).toBe(429)
+		// B's bucket was evicted, so it is re-admitted fresh.
+		const retryB = await runChain(
+			[limiter],
+			createEchoTerminal(),
+			buildRequest('/'),
+			createTestContext(buildRequest('/'), stateB),
+		)
+		expect(retryB.status).toBe(200)
+	})
+
+	it('invokes evict with the evicted bucket key', async () => {
+		const clock = createManualClock()
+		const evicted: string[] = []
 		const limiter = createLimiter<BearerState & ClientState & ConnectionState>({
 			max: 1,
 			window: 1_000,
 			capacity: 1,
 			clock: clock.clock,
+			evict: (key) => evicted.push(key),
 		})
 		const stateA: BearerState & ClientState & ConnectionState = { client: { ip: '203.0.113.1' } }
 		const stateB: BearerState & ClientState & ConnectionState = { client: { ip: '203.0.113.2' } }
@@ -943,13 +1040,57 @@ describe('createLimiter', () => {
 			buildRequest('/'),
 			createTestContext(buildRequest('/'), stateB),
 		)
-		const retryA = await runChain(
+		expect(evicted).toEqual(['ip:203.0.113.1'])
+	})
+
+	it('honors a custom key function', async () => {
+		const clock = createManualClock()
+		const limiter = createLimiter<BearerState & ClientState & ConnectionState>({
+			max: 1,
+			window: 1_000,
+			clock: clock.clock,
+			key: () => 'fixed-key',
+		})
+		const stateA: BearerState & ClientState & ConnectionState = { client: { ip: '203.0.113.1' } }
+		const stateB: BearerState & ClientState & ConnectionState = { client: { ip: '203.0.113.2' } }
+		const first = await runChain(
 			[limiter],
 			createEchoTerminal(),
 			buildRequest('/'),
 			createTestContext(buildRequest('/'), stateA),
 		)
-		expect(retryA.status).toBe(200)
+		const second = await runChain(
+			[limiter],
+			createEchoTerminal(),
+			buildRequest('/'),
+			createTestContext(buildRequest('/'), stateB),
+		)
+		expect(first.status).toBe(200)
+		expect(second.status).toBe(429)
+	})
+
+	it('honors a custom message on the 429 body', async () => {
+		const clock = createManualClock()
+		const limiter = createLimiter<BearerState & ClientState & ConnectionState>({
+			max: 1,
+			window: 1_000,
+			clock: clock.clock,
+			message: 'slow down',
+		})
+		const state: BearerState & ClientState & ConnectionState = { client: { ip: '203.0.113.1' } }
+		const context = createTestContext(buildRequest('/'), state)
+		await runChain([limiter], createEchoTerminal(), buildRequest('/'), context)
+		const second = await runChain([limiter], createEchoTerminal(), buildRequest('/'), context)
+		expect(second.status).toBe(429)
+		expect(await second.text()).toBe('slow down')
+	})
+
+	it('rejects malformed construction options with a TypeError', () => {
+		expect(() => createLimiter({ max: 0, window: 1_000 })).toThrow(TypeError)
+		expect(() => createLimiter({ max: 1.5, window: 1_000 })).toThrow(TypeError)
+		expect(() => createLimiter({ max: 1, window: 0 })).toThrow(TypeError)
+		expect(() => createLimiter({ max: 1, window: 1_000, capacity: 0 })).toThrow(TypeError)
+		expect(() => createLimiter({ max: 1, window: 1_000, capacity: 1.5 })).toThrow(TypeError)
 	})
 
 	it('emits the exact RateLimit/RateLimit-Policy wire shape when policy: true', async () => {
@@ -1120,6 +1261,13 @@ describe('createSession', () => {
 		)
 		expect(state.session?.id).toBe(id)
 		expect(response.headers.has('x-test-session')).toBe(false)
+	})
+
+	it('rejects a malformed capacity at construction (delegated to the default MemorySessionStore)', () => {
+		const transport = createTestTransport()
+		expect(() => createSession<SessionInterface, SessionState>({ transport, capacity: 0 })).toThrow(
+			TypeError,
+		)
 	})
 
 	it('require: true renders 404 when no session resolves and mint declines', async () => {
@@ -1361,6 +1509,80 @@ describe('createSession', () => {
 		const state: SessionState = {}
 		await runChain([session], createEchoTerminal(), request, createTestContext(request, state))
 		expect(setCount).toBe(1)
+	})
+
+	it('threads capacity/evict into the default MemorySessionStore, which evicts and notifies at capacity', async () => {
+		const evicted: string[] = []
+		const transport = createTestTransport()
+		const session = createSession<SessionInterface, SessionState>({
+			transport,
+			capacity: 1,
+			evict: (id) => evicted.push(id),
+		})
+		const first = await runChain(
+			[session],
+			createEchoTerminal(),
+			buildRequest('/'),
+			createTestContext(buildRequest('/'), {}),
+		)
+		const firstId = first.headers.get('x-test-session')
+		expect(firstId).not.toBeNull()
+
+		// A second, distinct incoming (unresolvable) session id forces the store to
+		// mint a brand-new session, exceeding capacity:1 and evicting the first.
+		const second = await runChain(
+			[session],
+			createEchoTerminal(),
+			buildRequest('/'),
+			createTestContext(buildRequest('/'), {}),
+		)
+		expect(second.headers.get('x-test-session')).not.toBe(firstId)
+		expect(evicted).toContain(firstId)
+	})
+
+	it('DELETE with no resolvable session is a no-op — falls through to mint/next, never short-circuits', async () => {
+		const transport = createTestTransport()
+		const session = createSession<SessionInterface, SessionState>({ transport, ends: true })
+		const request = buildRequest('/', { method: 'DELETE' })
+		const terminal = createRecordingTerminal()
+		const response = await runChain(
+			[session],
+			terminal.handler,
+			request,
+			createTestContext(request, {}),
+		)
+		expect(terminal.count).toBe(1)
+		expect(response.status).not.toBe(204)
+	})
+
+	it('destroy() after an earlier regenerate() wins — the session is not persisted', async () => {
+		const transport = createTestTransport()
+		const store = createMemorySessionStore<SessionInterface>()
+		const session = createSession<SessionInterface, SessionState>({ transport, store })
+		const first = await runChain(
+			[session],
+			createEchoTerminal(),
+			buildRequest('/'),
+			createTestContext(buildRequest('/'), {}),
+		)
+		const oldId = first.headers.get('x-test-session')
+		expect(oldId).not.toBeNull()
+
+		const request = buildRequest('/', { headers: { 'x-test-session': oldId ?? '' } })
+		const state: SessionState = {}
+		const response = await runChain(
+			[session],
+			async (_request, requestContext) => {
+				requestContext.state.control?.regenerate()
+				requestContext.state.control?.destroy()
+				return new Response()
+			},
+			request,
+			createTestContext(request, state),
+		)
+		expect(response.headers.has('x-test-session')).toBe(false)
+		const oldStored = await store.get(oldId ?? '', Date.now())
+		expect(oldStored).toBeUndefined()
 	})
 })
 

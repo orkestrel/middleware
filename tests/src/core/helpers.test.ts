@@ -135,6 +135,10 @@ describe('matchesTrustedEntry', () => {
 		expect(matchesTrustedEntry('2001:db8::1', '2001:db8::1')).toBe(true)
 		expect(matchesTrustedEntry('2001:db8::2', '2001:db8::1')).toBe(false)
 	})
+
+	it('doc-pin: an IPv6 CIDR-shaped entry is never expanded — no IPv6 CIDR support', () => {
+		expect(matchesTrustedEntry('2001:db8::1', '2001:db8::/32')).toBe(false)
+	})
 })
 
 describe('resolveForwardedFor', () => {
@@ -194,14 +198,8 @@ describe('resolveForwardedFor', () => {
 })
 
 describe('detectEncodings', () => {
-	it('returns a subset of the candidates offered, in order', () => {
-		const detected = detectEncodings(['gzip', 'deflate'])
-		expect(detected.every((encoding) => ['gzip', 'deflate'].includes(encoding))).toBe(true)
-		for (let index = 1; index < detected.length; index += 1) {
-			expect(['gzip', 'deflate'].indexOf(detected[index] ?? '')).toBeGreaterThan(
-				['gzip', 'deflate'].indexOf(detected[index - 1] ?? ''),
-			)
-		}
+	it('returns exactly the runtime-supported subset of a known candidate list, in order', () => {
+		expect(detectEncodings(['gzip', 'deflate'])).toEqual(['gzip', 'deflate'])
 	})
 
 	it('never probes identity and never throws on an empty candidate list', () => {
@@ -539,5 +537,71 @@ describe('compressResponse', () => {
 			compress,
 		})
 		expect(result).toBe(response)
+	})
+
+	it('stamps Vary: Accept-Encoding when there is no Accept-Encoding header at all', async () => {
+		const response = new Response('x'.repeat(2_000), { headers: { 'content-type': 'text/plain' } })
+		const request = new Request('https://example.test/')
+		const result = await compressResponse(request, buildContext(), response, {
+			threshold: 100,
+			encodings: ['gzip'],
+			compress,
+		})
+		expect(result.headers.get('vary')).toBe('Accept-Encoding')
+	})
+
+	it('stamps Vary: Accept-Encoding even when the body is below threshold', async () => {
+		const response = new Response('short', { headers: { 'content-type': 'text/plain' } })
+		const request = new Request('https://example.test/', {
+			headers: { 'accept-encoding': 'gzip' },
+		})
+		const result = await compressResponse(request, buildContext(), response, {
+			threshold: 100_000,
+			encodings: ['gzip'],
+			compress,
+		})
+		expect(result.headers.get('vary')).toBe('Accept-Encoding')
+	})
+
+	it('stamps Vary: Accept-Encoding even for a non-compressible content type', async () => {
+		const response = new Response('x'.repeat(2_000), { headers: { 'content-type': 'image/png' } })
+		const request = new Request('https://example.test/', {
+			headers: { 'accept-encoding': 'gzip' },
+		})
+		const result = await compressResponse(request, buildContext(), response, {
+			threshold: 100,
+			encodings: ['gzip'],
+			compress,
+		})
+		expect(result.headers.get('vary')).toBe('Accept-Encoding')
+	})
+
+	it('stamps Vary: Accept-Encoding on the actually-compressed path', async () => {
+		const response = new Response('x'.repeat(2_000), { headers: { 'content-type': 'text/plain' } })
+		const request = new Request('https://example.test/', {
+			headers: { 'accept-encoding': 'gzip' },
+		})
+		const result = await compressResponse(request, buildContext(), response, {
+			threshold: 100,
+			encodings: ['gzip'],
+			compress,
+		})
+		expect(result.headers.get('content-encoding')).toBe('gzip')
+		expect(result.headers.get('vary')).toBe('Accept-Encoding')
+	})
+
+	it('never adds Vary to a buffering-ineligible response (already content-encoded)', async () => {
+		const response = new Response('x'.repeat(2_000), {
+			headers: { 'content-type': 'text/plain', 'content-encoding': 'br' },
+		})
+		const request = new Request('https://example.test/', {
+			headers: { 'accept-encoding': 'gzip' },
+		})
+		const result = await compressResponse(request, buildContext(), response, {
+			threshold: 100,
+			encodings: ['gzip'],
+			compress,
+		})
+		expect(result.headers.has('vary')).toBe(false)
 	})
 })

@@ -1,6 +1,7 @@
 import type { ConnectionState } from '@src/core'
 import type { MultipartState } from '@src/core'
 import { readdir } from 'node:fs/promises'
+import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
 import {
 	createBearer,
@@ -16,13 +17,20 @@ import {
 	createTelemetry,
 	isMultipartBody,
 } from '@src/core'
-import { createCompression, createMultipart, createStatic } from '@src/server'
+import {
+	createCompression,
+	createMultipart,
+	createStatic,
+	createUploadedFile,
+	moveUploadedFile,
+} from '@src/server'
 import { compose, HTTPError, signToken } from '@orkestrel/server'
 import { createDispatcher } from '@orkestrel/router'
 import { buildRequest as buildRouterRequest, sendResponse } from '@orkestrel/router/server'
 import {
 	buildMultipartRequest,
 	buildStaticFixture,
+	buildSymlinkFixture,
 	buildTempDirectory,
 	PNG_MAGIC,
 	startServer,
@@ -254,6 +262,26 @@ describe('createStatic', () => {
 		}
 	})
 
+	it('SPA fallback Accept gate: a non-HTML Accept header falls through to next() instead of the shell', async () => {
+		const fixture = await buildStaticFixture()
+		try {
+			const handler = createStatic({ root: fixture.root, fallback: true })
+			const request = new Request('http://test.local/app/dashboard', {
+				headers: { accept: 'application/json' },
+			})
+			let nextCalled = false
+			const response = await handler(request, createTestContext(request, {}), async () => {
+				nextCalled = true
+				return new Response('json miss', { status: 404 })
+			})
+			expect(nextCalled).toBe(true)
+			expect(response.status).toBe(404)
+			expect(await response.text()).not.toContain('root index')
+		} finally {
+			await fixture.cleanup()
+		}
+	})
+
 	it('If-None-Match returns 304', async () => {
 		const fixture = await buildStaticFixture()
 		try {
@@ -280,6 +308,74 @@ describe('createStatic', () => {
 			await fixture.cleanup()
 		}
 	})
+
+	it('a non-matching If-None-Match returns 200 with the full body', async () => {
+		const fixture = await buildStaticFixture()
+		try {
+			const handler = createStatic({ root: fixture.root })
+			const conditional = new Request('http://test.local/index.html', {
+				headers: { 'if-none-match': '"not-a-real-etag"' },
+			})
+			const response = await handler(
+				conditional,
+				createTestContext(conditional, {}),
+				async () => new Response('miss'),
+			)
+			expect(response.status).toBe(200)
+			expect(await response.text()).toContain('root index')
+		} finally {
+			await fixture.cleanup()
+		}
+	})
+
+	it('etag:false omits the ETag header entirely', async () => {
+		const fixture = await buildStaticFixture()
+		try {
+			const handler = createStatic({ root: fixture.root, etag: false })
+			const response = await handler(
+				buildRequest('/index.html'),
+				createTestContext(buildRequest('/index.html'), {}),
+				async () => new Response('miss'),
+			)
+			expect(response.status).toBe(200)
+			expect(response.headers.get('etag')).toBeNull()
+		} finally {
+			await fixture.cleanup()
+		}
+	})
+
+	it.runIf(process.platform !== 'win32')(
+		'symlink escape: an in-root symlink to an OUTSIDE target falls through to next(); an in-root symlink to an in-root target still serves 200',
+		async () => {
+			const symlinkFixture = await buildSymlinkFixture()
+			try {
+				const handler = createStatic({ root: symlinkFixture.root })
+
+				let nextCalled = false
+				const escapeResponse = await handler(
+					buildRequest('/link-outside.html'),
+					createTestContext(buildRequest('/link-outside.html'), {}),
+					async () => {
+						nextCalled = true
+						return new Response('miss', { status: 404 })
+					},
+				)
+				expect(nextCalled).toBe(true)
+				expect(escapeResponse.status).toBe(404)
+				expect(await escapeResponse.text()).not.toContain('outside secret')
+
+				const insideResponse = await handler(
+					buildRequest('/link-inside.html'),
+					createTestContext(buildRequest('/link-inside.html'), {}),
+					async () => new Response('miss'),
+				)
+				expect(insideResponse.status).toBe(200)
+				expect(await insideResponse.text()).toContain('inside target')
+			} finally {
+				await symlinkFixture.cleanup()
+			}
+		},
+	)
 
 	it('Range: single request returns 206 with the exact byte slice', async () => {
 		const fixture = await buildStaticFixture()
@@ -566,6 +662,57 @@ describe('createMultipart', () => {
 		expect(nextCalled).toBe(true)
 		expect(state.multipart).toBeUndefined()
 	})
+
+	it('a downstream throw unlinks every still-staged temp file, but a MOVED file survives', async () => {
+		const directory = await buildTempDirectory()
+		try {
+			const handler = createMultipart<MultipartState>({ directory: directory.path })
+			const request = buildMultipartRequest([
+				{
+					kind: 'file',
+					name: 'keep',
+					filename: 'a.png',
+					contentType: 'image/png',
+					bytes: Buffer.from(PNG_MAGIC),
+				},
+				{
+					kind: 'file',
+					name: 'discard',
+					filename: 'b.png',
+					contentType: 'image/png',
+					bytes: Buffer.from(PNG_MAGIC),
+				},
+			])
+			const state: MultipartState = {}
+			const context = createTestContext(request, state)
+			const destination = join(directory.path, 'moved.png')
+			await expect(
+				handler(request, context, async () => {
+					const keep = state.multipart?.files.keep?.[0]
+					if (keep !== undefined) {
+						const record = createUploadedFile({
+							field: keep.field,
+							name: keep.name,
+							size: keep.size,
+							mime: keep.mime,
+							validated: keep.validated,
+							status: 'staged',
+							path: keep.path,
+						})
+						await moveUploadedFile(record, destination)
+					}
+					throw new Error('downstream failure')
+				}),
+			).rejects.toThrow('downstream failure')
+
+			const remaining = await readdir(directory.path)
+			// The moved file (renamed to `moved.png`) survives; the still-staged
+			// `discard` file was unlinked by the fail-closed cleanup.
+			expect(remaining).toEqual(['moved.png'])
+		} finally {
+			await directory.cleanup()
+		}
+	})
 })
 
 // ── createCompression (node face) ────────────────────────────────────────────
@@ -582,6 +729,22 @@ describe('createCompression (node face)', () => {
 		)
 		expect(response.headers.get('content-encoding')).toBe('gzip')
 		expect(response.headers.get('vary')).toContain('Accept-Encoding')
+	})
+
+	it('compresses with deflate when the client only sends Accept-Encoding: deflate, and it decodes correctly', async () => {
+		const handler = createCompression({ threshold: 10 })
+		const body = 'y'.repeat(5000)
+		const request = new Request('http://test.local/', { headers: { 'accept-encoding': 'deflate' } })
+		const response = await handler(
+			request,
+			createTestContext(request, {}),
+			async () => new Response(body, { headers: { 'content-type': 'text/plain' } }),
+		)
+		expect(response.headers.get('content-encoding')).toBe('deflate')
+		const compressed = new Uint8Array(await response.arrayBuffer())
+		const { inflateSync } = await import('node:zlib')
+		const decoded = inflateSync(Buffer.from(compressed)).toString('utf8')
+		expect(decoded).toBe(body)
 	})
 
 	it('br is honestly exercised only if the runtime negotiates it — this node face guarantees only gzip/deflate', async () => {

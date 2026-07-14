@@ -1,5 +1,5 @@
 import type { AddressInfo } from 'node:net'
-import { mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises'
+import { mkdtemp, mkdir, rm, symlink, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { randomUUID } from 'node:crypto'
@@ -98,6 +98,120 @@ export async function buildStaticFixture(): Promise<StaticFixtureInterface> {
 		reservedLikePath,
 		cleanup,
 	}
+}
+
+/** A temp-dir fixture with a symlink INSIDE root pointing IN-root, and one pointing OUTSIDE root — for `createStatic`'s symlink-escape matrix. */
+export interface SymlinkFixtureInterface {
+	readonly root: string
+	readonly insideTarget: string
+	readonly linkToInside: string
+	readonly linkToOutside: string
+	cleanup(): Promise<void>
+}
+
+/**
+ * Build a real temp-dir fixture with two symlinks: one inside `root` pointing
+ * to another file inside `root` (should still serve normally), and one
+ * inside `root` pointing to a file OUTSIDE `root` (the escape `createStatic`
+ * must refuse) — POSIX-only (§16: no mocks; the platform-gated caller is
+ * responsible for `it.runIf(process.platform !== 'win32')`).
+ *
+ * @returns A {@link SymlinkFixtureInterface} with a `cleanup()` teardown every caller MUST invoke
+ *
+ * @example
+ * ```ts
+ * const fixture = await buildSymlinkFixture()
+ * try {
+ * 	// ... drive createStatic({ root: fixture.root }) against fixture.linkToOutside ...
+ * } finally {
+ * 	await fixture.cleanup()
+ * }
+ * ```
+ */
+export async function buildSymlinkFixture(): Promise<SymlinkFixtureInterface> {
+	const root = await mkdtemp(join(tmpdir(), 'middleware-symlink-root-'))
+	const outsideDir = await mkdtemp(join(tmpdir(), 'middleware-symlink-outside-'))
+
+	const insideTarget = join(root, 'inside.html')
+	await writeFile(insideTarget, '<!doctype html><html><body>inside target</body></html>')
+
+	const outsideTarget = join(outsideDir, 'secret.html')
+	await writeFile(outsideTarget, '<!doctype html><html><body>outside secret</body></html>')
+
+	const linkToInside = join(root, 'link-inside.html')
+	await symlink(insideTarget, linkToInside)
+
+	const linkToOutside = join(root, 'link-outside.html')
+	await symlink(outsideTarget, linkToOutside)
+
+	async function cleanup(): Promise<void> {
+		await rm(root, { recursive: true, force: true })
+		await rm(outsideDir, { recursive: true, force: true })
+	}
+
+	return { root, insideTarget, linkToInside, linkToOutside, cleanup }
+}
+
+/** A `Request` carrying a real multipart body over a single-chunk stream, with an observable `cancelled` flag. */
+export interface CancelTrackingRequestInterface {
+	readonly request: Request
+	readonly cancelled: { value: boolean }
+}
+
+/**
+ * Build a multipart `Request` whose body is a CHUNKED, pull-driven
+ * `ReadableStream` that records whether it was cancelled — the observable
+ * hook `parseMultipartRequest`'s reader-cancellation contract needs (§16.1:
+ * centralized fixture, no ad-hoc stream reimplementation per test). Chunked
+ * (rather than one bulk `enqueue`+`close`) deliberately so the stream is
+ * still OPEN — not yet naturally closed — at the moment a mid-stream limit
+ * breach fires, which is what makes the parser's `reader.cancel()` call
+ * observable at all (cancelling an already-closed stream is a spec no-op).
+ *
+ * @param parts - The ordered multipart parts to encode
+ * @param boundary - An optional explicit boundary token
+ * @param chunkSize - The byte size fed per pull; defaults to 64
+ * @returns A {@link CancelTrackingRequestInterface} pairing the request with a live `cancelled` flag
+ *
+ * @example
+ * ```ts
+ * const { request, cancelled } = buildCancelTrackingMultipartRequest([...])
+ * await expect(parseMultipartRequest(request, { limits: { file: 1 } })).rejects.toBeDefined()
+ * expect(cancelled.value).toBe(true)
+ * ```
+ */
+export function buildCancelTrackingMultipartRequest(
+	parts: readonly MultipartPartInput[],
+	boundary?: string,
+	chunkSize = 64,
+): CancelTrackingRequestInterface {
+	const { body, contentType } = buildMultipartBody(parts, boundary)
+	const cancelled = { value: false }
+	let offset = 0
+	const stream = new ReadableStream<Uint8Array>({
+		pull(controller) {
+			if (offset >= body.length) {
+				controller.close()
+				return
+			}
+			const chunk = body.subarray(offset, offset + chunkSize)
+			offset += chunkSize
+			controller.enqueue(chunk)
+		},
+		cancel() {
+			cancelled.value = true
+		},
+	})
+	// `duplex: 'half'` is required by the runtime for a streamed request body
+	// but is absent from this project's DOM-sourced `RequestInit` type — an
+	// intersection annotation states the real runtime shape without an `as` cast.
+	const init: RequestInit & { readonly duplex: 'half' } = {
+		method: 'POST',
+		headers: { 'content-type': contentType },
+		body: stream,
+		duplex: 'half',
+	}
+	return { request: new Request('http://test.local/upload', init), cancelled }
 }
 
 /** One part of a real `multipart/form-data` body — either a text field or a file. */

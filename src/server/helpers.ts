@@ -2,11 +2,12 @@ import type { MultipartBody, MultipartFile } from '@src/core'
 import type {
 	MultipartLimits,
 	MultipartOptions,
+	PartHeaders,
+	UploadedFileInput,
 	UploadedFileInterface,
-	UploadStatus,
 } from './types.js'
 import { createReadStream } from 'node:fs'
-import { copyFile, open, readFile, rename, unlink } from 'node:fs/promises'
+import { chmod, copyFile, mkdtemp, open, readFile, rename, unlink } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { extname, join, normalize, resolve, sep } from 'node:path'
 import { randomUUID } from 'node:crypto'
@@ -21,6 +22,7 @@ import {
 	DEFAULT_MULTIPART_TOTAL,
 	EXTENSION_TYPES,
 	MULTIPART_MAX_HEADER_BLOCK,
+	MULTIPART_MAX_PREAMBLE,
 	RESERVED_DEVICE_NAMES,
 } from './constants.js'
 import { MultipartError } from './errors.js'
@@ -270,6 +272,36 @@ export function resolveMultipartLimits(
 }
 
 /**
+ * Memoized `Promise` for `parseMultipartRequest`'s lazily-created default
+ * staging directory — created once per process via {@link resolveDefaultDirectory}.
+ */
+let defaultDirectory: Promise<string> | undefined
+
+/**
+ * Resolve `parseMultipartRequest`'s default staging directory when the
+ * caller did not configure one — a process-owned directory created ONCE
+ * (lazily, memoized across calls) via `mkdtemp` under `os.tmpdir()` and
+ * locked to mode `0o700`.
+ *
+ * @returns The absolute path of the process-owned staging directory
+ *
+ * @example
+ * ```ts
+ * const directory = await resolveDefaultDirectory()
+ * ```
+ */
+export function resolveDefaultDirectory(): Promise<string> {
+	if (defaultDirectory === undefined) {
+		defaultDirectory = (async () => {
+			const path = await mkdtemp(join(tmpdir(), 'orkestrel-multipart-'))
+			await chmod(path, 0o700)
+			return path
+		})()
+	}
+	return defaultDirectory
+}
+
+/**
  * Parse one multipart part's raw header block into its `name` (from
  * `Content-Disposition`), optional `filename`, and optional `Content-Type`.
  *
@@ -284,11 +316,7 @@ export function resolveMultipartLimits(
  * // { name: 'title', filename: undefined, contentType: undefined }
  * ```
  */
-export function parsePartHeaders(block: string): {
-	readonly name: string | undefined
-	readonly filename: string | undefined
-	readonly contentType: string | undefined
-} {
+export function parsePartHeaders(block: string): PartHeaders {
 	let name: string | undefined
 	let filename: string | undefined
 	let contentType: string | undefined
@@ -323,10 +351,18 @@ export function parsePartHeaders(block: string): {
  * named `__proto__` / `constructor` / `prototype` is silently skipped and
  * never keyed onto the returned {@link MultipartBody} (a skipped file's
  * staged temp file is unlinked immediately, since it can never be
- * referenced). A malformed
+ * referenced). A file part with an empty declared filename (`filename=""`)
+ * AND a zero-byte body — the browser convention for an unselected optional
+ * `<input type="file">` — is a silent no-op: its temp file is unlinked, it is
+ * never counted against the `files` limit, and it never runs the `allowed`
+ * check. A malformed
  * structure (missing/unterminated boundary, nameless part, an oversized
- * header block) throws with reason `'malformed'`. A file whose SNIFFED bytes
- * fail the configured `allowed` MIME list throws with reason `'rejected'`. A
+ * header block, or a preamble exceeding {@link MULTIPART_MAX_PREAMBLE} before
+ * the first boundary) throws with reason `'malformed'`. A file is accepted
+ * against the configured `allowed` MIME list iff its SNIFFED bytes detect a
+ * type present in the list — sniff-authoritative, independent of whether the
+ * declared `Content-Type` matches (that agreement is exposed separately as
+ * `validated`); otherwise throws with reason `'rejected'`. A
  * request abort mid-upload triggers the same fail-closed cleanup as a limit
  * breach. Returns `undefined` for a non-multipart request (untouched).
  *
@@ -352,7 +388,7 @@ export async function parseMultipartRequest(
 
 	const limits = resolveMultipartLimits(options.limits)
 	const allowed = options.allowed
-	const directory = options.directory ?? tmpdir()
+	const directory = options.directory ?? (await resolveDefaultDirectory())
 
 	const staged: string[] = []
 	const files: Record<string, MultipartFile[]> = Object.create(null)
@@ -398,8 +434,17 @@ export async function parseMultipartRequest(
 
 	try {
 		const openMarker = Buffer.from(`--${boundary}`)
+		let preambleScanned = 0
 		let index = buffer.indexOf(openMarker)
 		while (index === -1) {
+			const carry = openMarker.length - 1
+			if (buffer.length > carry) {
+				const drop = buffer.length - carry
+				preambleScanned += drop
+				if (preambleScanned > MULTIPART_MAX_PREAMBLE)
+					throw new MultipartError('malformed', 'multipart preamble too large')
+				buffer = buffer.subarray(drop)
+			}
 			if (!(await pull())) throw new MultipartError('malformed', 'missing multipart boundary')
 			index = buffer.indexOf(openMarker)
 		}
@@ -434,7 +479,7 @@ export async function parseMultipartRequest(
 				if (fileCount > limits.files) throw new MultipartError('limit', 'too many multipart files')
 				const path = join(directory, randomUUID())
 				staged.push(path)
-				const handle = await open(path, 'w')
+				const handle = await open(path, 'w', 0o600)
 				let size = 0
 				let head = Buffer.alloc(0)
 				try {
@@ -468,30 +513,40 @@ export async function parseMultipartRequest(
 				} finally {
 					await handle.close()
 				}
-				const detected = detectMIME(head)
-				const declared = contentType ?? DEFAULT_CONTENT_TYPE
-				const validated = detected !== undefined && detected === declared
-				if (allowed !== undefined) {
-					const acceptable = validated && detected !== undefined && allowed.includes(detected)
-					if (!acceptable)
-						throw new MultipartError('rejected', 'multipart file failed type validation')
-				}
-				if (isDangerousKey(name)) {
+				if (filename === '' && size === 0) {
+					// Browser empty-optional-file-input convention: an
+					// unselected <input type="file"> still submits a part
+					// with an empty filename and zero-byte body — a no-op,
+					// never counted against the files limit or the allow-list.
 					await unlink(path)
 					staged.splice(staged.indexOf(path), 1)
+					fileCount -= 1
 				} else {
-					const record = createUploadedFile({
-						field: name,
-						name: filename,
-						size,
-						mime: detected ?? declared,
-						validated,
-						status: 'staged',
-						path,
-					})
-					const existing = files[name]
-					if (existing === undefined) files[name] = [record]
-					else existing.push(record)
+					const detected = detectMIME(head)
+					const declared = contentType ?? DEFAULT_CONTENT_TYPE
+					const validated = detected !== undefined && detected === declared
+					if (allowed !== undefined) {
+						const acceptable = detected !== undefined && allowed.includes(detected)
+						if (!acceptable)
+							throw new MultipartError('rejected', 'multipart file failed type validation')
+					}
+					if (isDangerousKey(name)) {
+						await unlink(path)
+						staged.splice(staged.indexOf(path), 1)
+					} else {
+						const record = createUploadedFile({
+							field: name,
+							name: filename,
+							size,
+							mime: detected ?? declared,
+							validated,
+							status: 'staged',
+							path,
+						})
+						const existing = files[name]
+						if (existing === undefined) files[name] = [record]
+						else existing.push(record)
+					}
 				}
 			} else {
 				fieldCount += 1
@@ -528,9 +583,11 @@ export async function parseMultipartRequest(
 		}
 	} catch (error) {
 		await cleanup()
+		await reader.cancel().catch(() => {})
 		throw error
 	} finally {
 		request.signal.removeEventListener('abort', onAbort)
+		if (!ended) await reader.cancel().catch(() => {})
 	}
 
 	return { files: Object.freeze(files), fields: Object.freeze(fields) }
@@ -547,16 +604,35 @@ export async function parseMultipartRequest(
  * createUploadedFile({ field: 'avatar', name: 'a.png', size: 1024, mime: 'image/png', validated: true, status: 'staged', path: '/tmp/x' })
  * ```
  */
-export function createUploadedFile(input: {
-	readonly field: string
-	readonly name: string
-	readonly size: number
-	readonly mime: string
-	readonly validated: boolean
-	readonly status: UploadStatus
-	readonly path: string
-}): UploadedFileInterface {
+export function createUploadedFile(input: UploadedFileInput): UploadedFileInterface {
 	return Object.freeze({ ...input })
+}
+
+/**
+ * Best-effort unlink every still-`'staged'` file in a parsed
+ * {@link MultipartBody} — the fail-closed cleanup `createMultipart` runs when
+ * its downstream handler throws, mirroring `parseMultipartRequest`'s own
+ * cleanup pattern (a missing file is already gone; failures are swallowed).
+ *
+ * @param body - The parsed multipart body to clean up
+ * @returns A promise that resolves once every staged file has been attempted
+ *
+ * @example
+ * ```ts
+ * await unlinkStagedFiles(body)
+ * ```
+ */
+export async function unlinkStagedFiles(body: MultipartBody): Promise<void> {
+	for (const records of Object.values(body.files)) {
+		for (const file of records) {
+			if (file.status !== 'staged') continue
+			try {
+				await unlink(file.path)
+			} catch {
+				// Already gone — cleanup is best-effort.
+			}
+		}
+	}
 }
 
 /**
@@ -608,6 +684,7 @@ export function streamFile(
 					return
 				}
 				if (!(value instanceof Uint8Array)) {
+					await iterator.return?.()
 					controller.error(new TypeError('streamFile: read stream yielded a non-Uint8Array chunk'))
 					return
 				}

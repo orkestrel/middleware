@@ -11,6 +11,7 @@ import type {
 	DeadlineOptions,
 	ETagOptions,
 	ForwardedOptions,
+	IdentifierState,
 	LimiterOptions,
 	SecurityOptions,
 	SessionControlInterface,
@@ -185,7 +186,10 @@ export function createTelemetry<TState>(options: TelemetryOptions): MiddlewareHa
  * ```
  */
 export function createCompression<TState>(options?: CompressionOptions): MiddlewareHandler<TState> {
-	if (options?.threshold !== undefined && !isFiniteNumber(options.threshold))
+	if (
+		options?.threshold !== undefined &&
+		(!isFiniteNumber(options.threshold) || options.threshold < 0)
+	)
 		throw new TypeError('CompressionOptions.threshold must be a finite number when provided')
 	if (options?.filter !== undefined && !isFunction(options.filter))
 		throw new TypeError('CompressionOptions.filter must be a function when provided')
@@ -224,7 +228,7 @@ export function createCompression<TState>(options?: CompressionOptions): Middlew
  * const security = createSecurity({ hsts: true })
  * ```
  */
-export function createSecurity<TState extends { identifier?: string }>(
+export function createSecurity<TState extends IdentifierState>(
 	options?: SecurityOptions,
 ): MiddlewareHandler<TState> {
 	if (
@@ -375,7 +379,8 @@ export function createCors<TState>(options?: CorsOptions): MiddlewareHandler<TSt
  * ```
  */
 export function createDeadline<TState>(options: DeadlineOptions): MiddlewareHandler<TState> {
-	if (!isFiniteNumber(options.ms)) throw new TypeError('DeadlineOptions.ms must be a finite number')
+	if (!isFiniteNumber(options.ms) || options.ms <= 0)
+		throw new TypeError('DeadlineOptions.ms must be a finite number')
 	if (options.status !== undefined && !isFiniteNumber(options.status))
 		throw new TypeError('DeadlineOptions.status must be a finite number when provided')
 	const ms = options.ms
@@ -552,12 +557,17 @@ export function createBearer<TState extends BearerState>(
 export function createLimiter<TState extends BearerState & ClientState & ConnectionState>(
 	options: LimiterOptions<TState>,
 ): MiddlewareHandler<TState> {
-	if (!isFiniteNumber(options.max))
-		throw new TypeError('LimiterOptions.max must be a finite number')
-	if (!isFiniteNumber(options.window))
-		throw new TypeError('LimiterOptions.window must be a finite number')
-	if (options.capacity !== undefined && !isFiniteNumber(options.capacity))
-		throw new TypeError('LimiterOptions.capacity must be a finite number when provided')
+	if (!isFiniteNumber(options.max) || !Number.isInteger(options.max) || options.max <= 0)
+		throw new TypeError('LimiterOptions.max must be a positive integer')
+	if (!isFiniteNumber(options.window) || options.window <= 0)
+		throw new TypeError('LimiterOptions.window must be a positive finite number')
+	if (
+		options.capacity !== undefined &&
+		(!isFiniteNumber(options.capacity) ||
+			!Number.isInteger(options.capacity) ||
+			options.capacity <= 0)
+	)
+		throw new TypeError('LimiterOptions.capacity must be a positive integer when provided')
 	if (options.key !== undefined && !isFunction(options.key))
 		throw new TypeError('LimiterOptions.key must be a function when provided')
 	if (options.message !== undefined && !isString(options.message))
@@ -566,6 +576,8 @@ export function createLimiter<TState extends BearerState & ClientState & Connect
 		throw new TypeError('LimiterOptions.clock must be a function when provided')
 	if (options.policy !== undefined && !isBoolean(options.policy))
 		throw new TypeError('LimiterOptions.policy must be a boolean when provided')
+	if (options.evict !== undefined && !isFunction(options.evict))
+		throw new TypeError('LimiterOptions.evict must be a function when provided')
 	const max = options.max
 	const window = options.window
 	const capacity = options.capacity ?? DEFAULT_LIMITER_CAPACITY
@@ -574,6 +586,15 @@ export function createLimiter<TState extends BearerState & ClientState & Connect
 	const message = options.message ?? DEFAULT_LIMITER_MESSAGE
 	const clock = options.clock ?? Date.now
 	const policy = options.policy ?? false
+	const evict = options.evict
+	const notify = (evictedKey: string): void => {
+		if (evict === undefined) return
+		try {
+			evict(evictedKey)
+		} catch {
+			// swallowed — a broken evict callback can never fail the request
+		}
+	}
 	const buckets = new Map<string, { budget: BudgetInterface<number>; resetAt: number }>()
 	return async (request, context, next) => {
 		const key = deriveKey(context)
@@ -582,16 +603,23 @@ export function createLimiter<TState extends BearerState & ClientState & Connect
 		if (bucket === undefined) {
 			if (buckets.size >= capacity) {
 				const oldest = buckets.keys().next().value
-				if (oldest !== undefined) buckets.delete(oldest)
+				if (oldest !== undefined) {
+					buckets.delete(oldest)
+					notify(oldest)
+				}
 			}
 			bucket = {
 				budget: createBudget<number>({ max, consume: (value) => value }),
 				resetAt: now + window,
 			}
 			buckets.set(key, bucket)
-		} else if (now >= bucket.resetAt) {
-			bucket.budget.clear()
-			bucket.resetAt = now + window
+		} else {
+			buckets.delete(key)
+			buckets.set(key, bucket)
+			if (now >= bucket.resetAt) {
+				bucket.budget.clear()
+				bucket.resetAt = now + window
+			}
 		}
 		if (bucket.budget.exhausted) {
 			const headers = new Headers()
@@ -692,7 +720,12 @@ export function createSession<
 	const clock = options.clock ?? Date.now
 	const store: SessionStoreInterface<SessionInterface> =
 		options.store ??
-		new MemorySessionStore<SessionInterface>({ ttl: options.ttl, lifetime: options.lifetime })
+		new MemorySessionStore<SessionInterface>({
+			ttl: options.ttl,
+			lifetime: options.lifetime,
+			capacity: options.capacity,
+			evict: options.evict,
+		})
 	const create: (id: string) => SessionInterface =
 		options.create ?? ((id: string) => new Session(id))
 	const mint = options.mint

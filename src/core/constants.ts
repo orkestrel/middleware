@@ -86,6 +86,9 @@ export const DEFAULT_BEARER_SCHEME = 'Bearer'
 /** Default maximum number of distinct rate-limit keys `createLimiter` tracks before LRU eviction. */
 export const DEFAULT_LIMITER_CAPACITY = 10_000
 
+/** Default maximum number of distinct session ids `createMemorySessionStore` tracks before LRU (by last write) eviction. */
+export const DEFAULT_SESSION_CAPACITY = 10_000
+
 /** Default 429 body message `createLimiter` sends when a key is over budget. */
 export const DEFAULT_LIMITER_MESSAGE = 'rate limit exceeded'
 

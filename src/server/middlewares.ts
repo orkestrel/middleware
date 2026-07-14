@@ -1,7 +1,7 @@
 import type { MultipartState } from '@src/core'
 import type { MultipartOptions, NodeCompressionOptions, StaticOptions } from './types.js'
 import { DEFAULT_COMPRESSION_THRESHOLD, compressResponse } from '@src/core'
-import { stat } from 'node:fs/promises'
+import { realpath, stat } from 'node:fs/promises'
 import { extname, join, relative, resolve } from 'node:path'
 import { deflate as zlibDeflate, gzip as zlibGzip } from 'node:zlib'
 import { promisify } from 'node:util'
@@ -18,6 +18,7 @@ import {
 	parseMultipartRequest,
 	resolveStaticPath,
 	streamFile,
+	unlinkStagedFiles,
 } from './helpers.js'
 
 // ============================================================================
@@ -32,6 +33,17 @@ import {
 /**
  * Serve static files from `options.root` over `node:fs` — the node-bound
  * static-file battery (PROPOSAL §4.14).
+ *
+ * @remarks
+ * Containment is enforced on CANONICAL paths, not merely the lexically
+ * resolved one: `options.root` is canonicalized once (memoized) and every
+ * request's candidate path is re-canonicalized (`fs.realpath`) before it is
+ * served, so a symlink whose target escapes `root` is refused (falls through
+ * to `next()`) even though the lexical path resolved inside `root`. A
+ * symlink that resolves to a target still INSIDE `root` is unaffected and
+ * still serves normally. A dangling symlink (`realpath` throws `ENOENT`) or
+ * any other `realpath` failure is treated as a miss — this battery never
+ * throws or 500s on a symlink surprise.
  *
  * @typeParam TState - The consumer's opaque per-request state type
  * @param options - See {@link StaticOptions}
@@ -59,6 +71,12 @@ export function createStatic<TState>(options: StaticOptions): MiddlewareHandler<
 				? undefined
 				: { exclude: options.fallback.exclude ?? DEFAULT_STATIC_FALLBACK_EXCLUDE }
 
+	let canonicalRootPromise: Promise<string> | undefined
+	function canonicalRoot(): Promise<string> {
+		if (canonicalRootPromise === undefined) canonicalRootPromise = realpath(root)
+		return canonicalRootPromise
+	}
+
 	return async (request, context, next) => {
 		if (context.method !== 'GET' && context.method !== 'HEAD') return next()
 
@@ -71,7 +89,15 @@ export function createStatic<TState>(options: StaticOptions): MiddlewareHandler<
 			if (dotfiles === 'ignore') return next()
 		}
 
-		let resolvedPath = target
+		let resolvedPath: string
+		try {
+			const [rootReal, targetReal] = await Promise.all([canonicalRoot(), realpath(target)])
+			if (!isUnderPath(targetReal, rootReal)) return next()
+			resolvedPath = targetReal
+		} catch {
+			return trySpaFallback()
+		}
+
 		let info: Awaited<ReturnType<typeof stat>>
 		try {
 			info = await stat(resolvedPath)
@@ -158,7 +184,11 @@ export function createStatic<TState>(options: StaticOptions): MiddlewareHandler<
  * {@link MultipartError} this battery's parser throws is re-thrown as an
  * {@link HTTPError} carrying the same status/message, so `createBoundary`
  * (or any HTTPError-aware renderer) maps it correctly without depending on
- * this node face's error type.
+ * this node face's error type. Fail-closed on the DOWNSTREAM handler too: if
+ * `next()` throws, every still-`'staged'` uploaded file is unlinked
+ * (best-effort) before the error is re-thrown, so an unhandled downstream
+ * failure never leaks temp files. A normal return leaves staged files
+ * untouched — the downstream handler owns moving/reading them.
  *
  * @typeParam TState - The consumer's state type, extending {@link MultipartState}
  * @param options - See {@link MultipartOptions}
@@ -186,7 +216,12 @@ export function createMultipart<TState extends MultipartState>(
 		}
 		if (body === undefined) return next()
 		context.state.multipart = body
-		return next()
+		try {
+			return await next()
+		} catch (error) {
+			await unlinkStagedFiles(body)
+			throw error
+		}
 	}
 }
 
