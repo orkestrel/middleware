@@ -237,8 +237,10 @@ export function detectEncodings(candidates: readonly Encoding[]): readonly Encod
 	for (const candidate of candidates) {
 		if (candidate === 'identity') continue
 		try {
-			new CompressionStream(candidate)
-			supported.push(candidate)
+			// Construction throws when the runtime doesn't support this coding;
+			// `readable` is checked only to use the instance, never inspected further.
+			const stream = new CompressionStream(candidate)
+			if (stream.readable) supported.push(candidate)
 		} catch {
 			// Unsupported coding on this runtime — drop it, never throw.
 		}

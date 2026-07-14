@@ -1,7 +1,8 @@
 import type { MultipartState } from '@src/core'
 import type { MultipartOptions, NodeCompressionOptions, StaticOptions } from './types.js'
+import type { FileHandle } from 'node:fs/promises'
 import { DEFAULT_COMPRESSION_THRESHOLD, compressResponse } from '@src/core'
-import { realpath, stat } from 'node:fs/promises'
+import { open, realpath, stat } from 'node:fs/promises'
 import { extname, join, relative, resolve } from 'node:path'
 import { deflate as zlibDeflate, gzip as zlibGzip } from 'node:zlib'
 import { promisify } from 'node:util'
@@ -98,26 +99,46 @@ export function createStatic<TState>(options: StaticOptions): MiddlewareHandler<
 			return trySpaFallback()
 		}
 
-		let info: Awaited<ReturnType<typeof stat>>
+		// Directory-detection only — routing decision, not the served file's
+		// facts. The bytes streamed and the headers computed for them come
+		// from a single `fstat` on an opened handle below, closing the
+		// stat-to-stream TOCTOU (a file replaced between "check" and "serve"
+		// can no longer yield a 200 with stale headers over swapped bytes).
+		let directoryInfo: Awaited<ReturnType<typeof stat>>
 		try {
-			info = await stat(resolvedPath)
+			directoryInfo = await stat(resolvedPath)
 		} catch {
 			return trySpaFallback()
 		}
 
-		if (info.isDirectory()) {
+		if (directoryInfo.isDirectory()) {
 			resolvedPath = join(resolvedPath, index)
 			try {
 				const [rootReal, indexReal] = await Promise.all([canonicalRoot(), realpath(resolvedPath)])
 				if (!isUnderPath(indexReal, rootReal)) return trySpaFallback()
 				resolvedPath = indexReal
-				info = await stat(resolvedPath)
 			} catch {
 				return trySpaFallback()
 			}
 		}
 
-		if (!info.isFile()) return trySpaFallback()
+		let handle: FileHandle
+		try {
+			handle = await open(resolvedPath, 'r')
+		} catch {
+			return trySpaFallback()
+		}
+		let info: Awaited<ReturnType<FileHandle['stat']>>
+		try {
+			info = await handle.stat()
+		} catch {
+			await handle.close()
+			return trySpaFallback()
+		}
+		if (!info.isFile()) {
+			await handle.close()
+			return trySpaFallback()
+		}
 
 		const headers = new Headers({
 			'content-type': lookupContentType(resolvedPath),
@@ -129,11 +150,14 @@ export function createStatic<TState>(options: StaticOptions): MiddlewareHandler<
 			const etag = computeFileETag(info.size, info.mtimeMs)
 			headers.set('etag', etag)
 			const ifNoneMatch = request.headers.get('if-none-match')
-			if (ifNoneMatch !== null && matchesETag(ifNoneMatch, etag))
+			if (ifNoneMatch !== null && matchesETag(ifNoneMatch, etag)) {
+				await handle.close()
 				return new Response(null, { status: 304, headers })
+			}
 		}
 
 		if (context.method === 'HEAD') {
+			await handle.close()
 			headers.set('content-length', String(info.size))
 			return new Response(null, { status: 200, headers })
 		}
@@ -142,16 +166,17 @@ export function createStatic<TState>(options: StaticOptions): MiddlewareHandler<
 		const range = parseRange(rangeHeader === null ? undefined : rangeHeader, info.size)
 		if (range === undefined) {
 			headers.set('content-length', String(info.size))
-			const body = streamFile(resolvedPath)
+			const body = streamFile(handle)
 			return new Response(body, { status: 200, headers })
 		}
 		if (!range.satisfiable) {
+			await handle.close()
 			headers.set('content-range', `bytes */${info.size}`)
 			return new Response(null, { status: 416, headers })
 		}
 		headers.set('content-range', `bytes ${range.start}-${range.end}/${info.size}`)
 		headers.set('content-length', String(range.end - range.start + 1))
-		const body = streamFile(resolvedPath, { start: range.start, end: range.end })
+		const body = streamFile(handle, { start: range.start, end: range.end })
 		return new Response(body, { status: 206, headers })
 
 		function trySpaFallback(): Response | Promise<Response> {
@@ -165,9 +190,9 @@ export function createStatic<TState>(options: StaticOptions): MiddlewareHandler<
 			return Promise.all([canonicalRoot(), realpath(shellPath)])
 				.then(([rootReal, shellReal]) => {
 					if (!isUnderPath(shellReal, rootReal)) return next()
-					return stat(shellReal).then(
-						() =>
-							new Response(streamFile(shellReal), {
+					return open(shellReal, 'r').then(
+						(shellHandle) =>
+							new Response(streamFile(shellHandle), {
 								status: 200,
 								headers: new Headers({ 'content-type': lookupContentType(shellReal) }),
 							}),

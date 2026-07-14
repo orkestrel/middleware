@@ -179,26 +179,26 @@ const handle = compose<State>([boundary, security], async (_request, context) =>
 
 ### Helpers — node
 
-| API                       | Kind     | Summary                                                                                            |
-| ------------------------- | -------- | -------------------------------------------------------------------------------------------------- |
-| `resolveStaticPath`       | function | The traversal-safe request-path-to-filesystem-path resolver (exact algorithm order load-bearing).  |
-| `isUnderPath`             | function | Segment-boundary under-path test shared by the traversal strip and the SPA `exclude`.              |
-| `isReservedDeviceName`    | function | Whether a path segment is a Windows reserved device name (CVE-2025-27210).                         |
-| `isDotfilePath`           | function | Whether a relative path has a dotfile segment.                                                     |
-| `lookupContentType`       | function | Resolve a `Content-Type` from a file's extension.                                                  |
-| `computeFileETag`         | function | Compute a weak file `ETag` from size + mtime (`W/"<size>-<floor(mtimeMs)>"`).                      |
-| `detectMIME`              | function | Sniff a MIME type from a file's leading magic bytes.                                               |
-| `multipartBoundary`       | function | Extract the multipart boundary token from a `Content-Type` header.                                 |
-| `parsePartHeaders`        | function | Parse one multipart part's raw header block into its field/filename/mime facts.                    |
-| `resolveMultipartLimits`  | function | Resolve `MultipartLimits` defaults into a fully-populated `Required<MultipartLimits>`.             |
-| `parseMultipartRequest`   | function | Stream-parse a multipart request body into a `MultipartBody`, or `undefined`.                      |
-| `resolveDefaultDirectory` | function | Lazily create + memoize the default `0o700` `mkdtemp` staging directory under `os.tmpdir()`.       |
-| `createUploadedFile`      | function | Build a frozen `UploadedFileInterface` record.                                                     |
-| `streamFile`              | function | Open a DOM `ReadableStream` over a file's bytes (optional byte range), for a `Response` body.      |
-| `streamUploadedFile`      | function | Open a `ReadableStream` over a staged upload's on-disk bytes.                                      |
-| `readUploadedFile`        | function | Read a staged upload's on-disk bytes into one `Uint8Array`.                                        |
-| `moveUploadedFile`        | function | Relocate a staged upload's temp file (rename, with EXDEV copy+unlink fallback).                    |
-| `unlinkStagedFiles`       | function | Best-effort unlink of every still-`'staged'` file in a `MultipartBody` (downstream-throw cleanup). |
+| API                       | Kind     | Summary                                                                                                              |
+| ------------------------- | -------- | -------------------------------------------------------------------------------------------------------------------- |
+| `resolveStaticPath`       | function | The traversal-safe request-path-to-filesystem-path resolver (exact algorithm order load-bearing).                    |
+| `isUnderPath`             | function | Segment-boundary under-path test shared by the traversal strip and the SPA `exclude`.                                |
+| `isReservedDeviceName`    | function | Whether a path segment is a Windows reserved device name (CVE-2025-27210).                                           |
+| `isDotfilePath`           | function | Whether a relative path has a dotfile segment.                                                                       |
+| `lookupContentType`       | function | Resolve a `Content-Type` from a file's extension.                                                                    |
+| `computeFileETag`         | function | Compute a weak file `ETag` from size + mtime (`W/"<size>-<floor(mtimeMs)>"`).                                        |
+| `detectMIME`              | function | Sniff a MIME type from a file's leading magic bytes.                                                                 |
+| `multipartBoundary`       | function | Extract the multipart boundary token from a `Content-Type` header.                                                   |
+| `parsePartHeaders`        | function | Parse one multipart part's raw header block into its field/filename/mime facts.                                      |
+| `resolveMultipartLimits`  | function | Resolve `MultipartLimits` defaults into a fully-populated `Required<MultipartLimits>`.                               |
+| `parseMultipartRequest`   | function | Stream-parse a multipart request body into a `MultipartBody`, or `undefined`.                                        |
+| `resolveDefaultDirectory` | function | Lazily create + memoize the default `0o700` `mkdtemp` staging directory under `os.tmpdir()`.                         |
+| `createUploadedFile`      | function | Build a frozen `UploadedFileInterface` record.                                                                       |
+| `streamFile`              | function | Open a DOM `ReadableStream` over a path's or open `FileHandle`'s bytes (optional byte range), for a `Response` body. |
+| `streamUploadedFile`      | function | Open a `ReadableStream` over a staged upload's on-disk bytes.                                                        |
+| `readUploadedFile`        | function | Read a staged upload's on-disk bytes into one `Uint8Array`.                                                          |
+| `moveUploadedFile`        | function | Relocate a staged upload's temp file (rename, with EXDEV copy+unlink fallback).                                      |
+| `unlinkStagedFiles`       | function | Best-effort unlink of every still-`'staged'` file in a `MultipartBody` (downstream-throw cleanup).                   |
 
 ### Entities
 
@@ -370,7 +370,11 @@ prevents:
     double-submit halves; without a session, `createCSRF` falls back to
     signed-random double-submit (documented weaker — no cross-session
     binding is possible without one).
-21. **Static.** The traversal guard's algorithm order is load-bearing —
+21. **Static.** Every served response is opened as a `FileHandle` and its
+    headers (`Content-Length`/`ETag`) are computed from that SAME handle's
+    `fstat` — the bytes `streamFile` later reads can never diverge from the
+    headers already sent, closing the stat-to-stream TOCTOU. The traversal
+    guard's algorithm order is load-bearing —
     strip `prefix` on a segment boundary, `decodeURIComponent` (refusing
     malformed escapes), reject NUL, make relative BEFORE `normalize` (so a
     leading `..` survives as a climbing segment), `normalize`, refuse a

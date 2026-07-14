@@ -1,6 +1,6 @@
 import type { ConnectionState } from '@src/core'
 import type { MultipartState } from '@src/core'
-import { mkdir, mkdtemp, readdir, rm, symlink, writeFile } from 'node:fs/promises'
+import { mkdtemp, readdir, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
@@ -29,6 +29,7 @@ import { compose, HTTPError, signToken } from '@orkestrel/server'
 import { createDispatcher } from '@orkestrel/router'
 import { buildRequest as buildRouterRequest, sendResponse } from '@orkestrel/router/server'
 import {
+	buildDirectoryIndexFixture,
 	buildMultipartRequest,
 	buildStaticFixture,
 	buildSymlinkFixture,
@@ -381,16 +382,9 @@ describe('createStatic', () => {
 	it.runIf(process.platform !== 'win32')(
 		'directory-index symlink escape: a directory whose index.html symlinks OUTSIDE root is a miss, not served',
 		async () => {
-			const root = await mkdtemp(join(tmpdir(), 'middleware-dirindex-root-'))
-			const outsideDir = await mkdtemp(join(tmpdir(), 'middleware-dirindex-outside-'))
+			const fixture = await buildDirectoryIndexFixture()
 			try {
-				const outsideTarget = join(outsideDir, 'secret.html')
-				await writeFile(outsideTarget, '<!doctype html><html><body>outside secret</body></html>')
-				const subdir = join(root, 'sub')
-				await mkdir(subdir, { recursive: true })
-				await symlink(outsideTarget, join(subdir, 'index.html'))
-
-				const handler = createStatic({ root })
+				const handler = createStatic({ root: fixture.root })
 				let nextCalled = false
 				const response = await handler(
 					buildRequest('/sub/'),
@@ -404,8 +398,7 @@ describe('createStatic', () => {
 				expect(response.status).toBe(404)
 				expect(await response.text()).not.toContain('outside secret')
 			} finally {
-				await rm(root, { recursive: true, force: true })
-				await rm(outsideDir, { recursive: true, force: true })
+				await fixture.cleanup()
 			}
 		},
 	)

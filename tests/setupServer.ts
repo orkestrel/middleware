@@ -152,6 +152,50 @@ export async function buildSymlinkFixture(): Promise<SymlinkFixtureInterface> {
 	return { root, insideTarget, linkToInside, linkToOutside, cleanup }
 }
 
+/** A temp-dir fixture with a subdirectory whose `index.html` is a symlink pointing OUTSIDE root — for `createStatic`'s directory-index symlink-escape case. */
+export interface DirectoryIndexFixtureInterface {
+	readonly root: string
+	readonly subdir: string
+	cleanup(): Promise<void>
+}
+
+/**
+ * Build a real temp-dir fixture with a subdirectory whose `index.html` is a
+ * symlink to a file OUTSIDE `root` — the directory-index escape `createStatic`
+ * must refuse (§16: no mocks; the platform-gated caller is responsible for
+ * `it.runIf(process.platform !== 'win32')`).
+ *
+ * @returns A {@link DirectoryIndexFixtureInterface} with a `cleanup()` teardown every caller MUST invoke
+ *
+ * @example
+ * ```ts
+ * const fixture = await buildDirectoryIndexFixture()
+ * try {
+ * 	// ... drive createStatic({ root: fixture.root }) against `${fixture.subdir}/` ...
+ * } finally {
+ * 	await fixture.cleanup()
+ * }
+ * ```
+ */
+export async function buildDirectoryIndexFixture(): Promise<DirectoryIndexFixtureInterface> {
+	const root = await mkdtemp(join(tmpdir(), 'middleware-dirindex-root-'))
+	const outsideDir = await mkdtemp(join(tmpdir(), 'middleware-dirindex-outside-'))
+
+	const outsideTarget = join(outsideDir, 'secret.html')
+	await writeFile(outsideTarget, '<!doctype html><html><body>outside secret</body></html>')
+
+	const subdir = join(root, 'sub')
+	await mkdir(subdir, { recursive: true })
+	await symlink(outsideTarget, join(subdir, 'index.html'))
+
+	async function cleanup(): Promise<void> {
+		await rm(root, { recursive: true, force: true })
+		await rm(outsideDir, { recursive: true, force: true })
+	}
+
+	return { root, subdir, cleanup }
+}
+
 /** A `Request` carrying a real multipart body over a single-chunk stream, with an observable `cancelled` flag. */
 export interface CancelTrackingRequestInterface {
 	readonly request: Request

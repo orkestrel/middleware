@@ -1,5 +1,5 @@
 import { join, resolve as resolvePath } from 'node:path'
-import { readFile, readdir, stat, writeFile } from 'node:fs/promises'
+import { open, readFile, readdir, stat, writeFile } from 'node:fs/promises'
 import { randomUUID } from 'node:crypto'
 import { describe, expect, it } from 'vitest'
 import { isMultipartFile } from '@src/core'
@@ -872,6 +872,73 @@ describe('streamFile', () => {
 					.filter((resource) => resource === 'FSReqCallback').length
 			}
 			expect(afterOpenReads).toBe(0)
+		} finally {
+			await directory.cleanup()
+		}
+	})
+
+	it('streams the full file contents byte-for-byte from an open FileHandle', async () => {
+		const directory = await buildTempDirectory()
+		try {
+			const filePath = join(directory.path, 'content.bin')
+			const expected = Buffer.alloc(50_000, 0x5a)
+			await writeFile(filePath, expected)
+			const handle = await open(filePath, 'r')
+			const reader = streamFile(handle).getReader()
+			const chunks: Uint8Array[] = []
+			for (;;) {
+				const { done, value } = await reader.read()
+				if (done) break
+				chunks.push(value)
+			}
+			expect(Buffer.concat(chunks)).toEqual(expected)
+		} finally {
+			await directory.cleanup()
+		}
+	})
+
+	it('a fully-consumed FileHandle stream closes the handle (autoClose) — no lingering fd', async () => {
+		const directory = await buildTempDirectory()
+		try {
+			const filePath = join(directory.path, 'content.bin')
+			await writeFile(filePath, Buffer.alloc(200_000, 0x41))
+			const handle = await open(filePath, 'r')
+			const reader = streamFile(handle).getReader()
+			for (;;) {
+				const { done } = await reader.read()
+				if (done) break
+			}
+			// A closed FileHandle rejects any further operation with EBADF —
+			// the only observable, race-free proof the fd was released
+			// (FSReqCallback resource counts do not track FileHandle-backed
+			// streams the way they track path-backed ones).
+			await expect(handle.stat()).rejects.toSatisfy(
+				(error: unknown) => error instanceof Error && 'code' in error && error.code === 'EBADF',
+			)
+		} finally {
+			await directory.cleanup()
+		}
+	})
+
+	it('cancelling a FileHandle stream mid-read closes the handle (autoClose) — no lingering fd', async () => {
+		const directory = await buildTempDirectory()
+		try {
+			const filePath = join(directory.path, 'content.bin')
+			await writeFile(filePath, Buffer.alloc(200_000, 0x41))
+			const handle = await open(filePath, 'r')
+			const reader = streamFile(handle).getReader()
+			await reader.read()
+			await reader.cancel()
+			let closed = false
+			for (let attempt = 0; attempt < 20 && !closed; attempt += 1) {
+				try {
+					await handle.stat()
+				} catch (error) {
+					closed = error instanceof Error && 'code' in error && error.code === 'EBADF'
+				}
+				if (!closed) await new Promise((resolve) => setTimeout(resolve, 5))
+			}
+			expect(closed).toBe(true)
 		} finally {
 			await directory.cleanup()
 		}

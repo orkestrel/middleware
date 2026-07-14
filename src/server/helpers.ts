@@ -6,6 +6,7 @@ import type {
 	UploadedFileInput,
 	UploadedFileInterface,
 } from './types.js'
+import type { FileHandle } from 'node:fs/promises'
 import { createReadStream } from 'node:fs'
 import { chmod, copyFile, mkdtemp, open, readFile, rename, unlink } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
@@ -643,9 +644,10 @@ export async function unlinkStagedFiles(body: MultipartBody): Promise<void> {
 }
 
 /**
- * Adapt a `node:fs` read stream over `path` into a DOM-compatible
- * `ReadableStream<Uint8Array>` — the single shared node↔web stream bridge
- * every static-file and uploaded-file response body routes through.
+ * Adapt a `node:fs` read stream over `path` (or an already-open
+ * `FileHandle`) into a DOM-compatible `ReadableStream<Uint8Array>` — the
+ * single shared node↔web stream bridge every static-file and uploaded-file
+ * response body routes through.
  *
  * @remarks
  * PULL-driven, not push-driven: the underlying node stream's async iterator
@@ -661,9 +663,14 @@ export async function unlinkStagedFiles(body: MultipartBody): Promise<void> {
  * mid-stream read failure. Cancelling the returned `ReadableStream` (e.g. the
  * consumer aborts the response) calls the iterator's `return()`, which
  * destroys the underlying node read stream so the file descriptor is
- * released.
+ * released. When `path` is a `FileHandle`, `FileHandle.createReadStream`'s
+ * default `autoClose` closes the handle on every terminal path (end, error,
+ * or `destroy()` via the iterator's `return()`) — the caller never needs a
+ * separate `handle.close()` for a handle passed here.
  *
- * @param path - The absolute on-disk file path to stream
+ * @param path - The absolute on-disk file path to stream, or an already-open
+ * `FileHandle` (e.g. one already `fstat`'d so the served bytes match the
+ * headers computed from that same `fstat`)
  * @param range - An optional inclusive byte range (`start`/`end`, both
  * 0-indexed and inclusive, matching `node:fs`'s `createReadStream` options)
  * @returns A `ReadableStream<Uint8Array>` valid as a fetch `BodyInit`
@@ -674,13 +681,17 @@ export async function unlinkStagedFiles(body: MultipartBody): Promise<void> {
  * ```
  */
 export function streamFile(
-	path: string,
+	path: string | FileHandle,
 	range?: { readonly start: number; readonly end: number },
 ): ReadableStream<Uint8Array> {
 	const source =
-		range === undefined
-			? createReadStream(path)
-			: createReadStream(path, { start: range.start, end: range.end })
+		typeof path === 'string'
+			? range === undefined
+				? createReadStream(path)
+				: createReadStream(path, { start: range.start, end: range.end })
+			: range === undefined
+				? path.createReadStream()
+				: path.createReadStream({ start: range.start, end: range.end })
 	const iterator: AsyncIterator<unknown> = source[Symbol.asyncIterator]()
 	return new ReadableStream<Uint8Array>({
 		async pull(controller) {
