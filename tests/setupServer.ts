@@ -75,7 +75,10 @@ export async function buildStaticFixture(): Promise<StaticFixtureInterface> {
 	await writeFile(largePath, Buffer.alloc(200_000, 0x41))
 
 	const reservedPath = join(root, 'NUL.json')
-	await writeFile(reservedPath, '{}')
+	if (process.platform !== 'win32') {
+		// On Windows, NUL is a reserved device name — the write would hit the null device, not disk.
+		await writeFile(reservedPath, '{}')
+	}
 
 	const reservedLikePath = join(root, 'nullable.css')
 	await writeFile(reservedLikePath, 'body { color: red }')

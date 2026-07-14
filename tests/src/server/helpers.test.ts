@@ -1,4 +1,4 @@
-import { join } from 'node:path'
+import { join, resolve as resolvePath } from 'node:path'
 import { readFile, readdir, rename, writeFile } from 'node:fs/promises'
 import { randomUUID } from 'node:crypto'
 import { describe, expect, it } from 'vitest'
@@ -26,7 +26,7 @@ import {
 // ── resolveStaticPath — the traversal matrix ────────────────────────────────
 
 describe('resolveStaticPath', () => {
-	const root = '/srv/public'
+	const root = resolvePath('/srv/public')
 
 	it('resolves a plain nested path under root', () => {
 		expect(resolveStaticPath(root, undefined, '/a/b.html')).toBe(join(root, 'a', 'b.html'))
@@ -66,17 +66,28 @@ describe('resolveStaticPath', () => {
 		expect(resolveStaticPath(root, undefined, '/a\0b')).toBeUndefined()
 	})
 
-	it('treats a backslash as a literal POSIX filename character, not a separator (documented platform scope)', () => {
-		// `normalize`/`resolve` on POSIX never treat `\` as a path separator —
-		// a backslash-joined string is a single literal segment, so it stays
-		// (harmlessly) under root rather than escaping. This guard's mixed-
-		// separator defense is a Windows-path concern; on POSIX the string is
-		// not actually a traversal vector, so the honest assertion here is
-		// "stays under root", not "refused".
-		const resolved = resolveStaticPath(root, undefined, '/a\\..\\..\\etc\\passwd')
-		expect(resolved).toBeDefined()
-		expect(resolved?.startsWith(root)).toBe(true)
-	})
+	// `normalize`/`resolve` on POSIX never treat `\` as a path separator — a
+	// backslash-joined string is a single literal segment, so it stays
+	// (harmlessly) under root rather than escaping. On win32, `node:path`
+	// treats `\` as a genuine separator, so the same string traverses out of
+	// root and is refused. This guard's mixed-separator defense is a
+	// Windows-path concern.
+	it.runIf(process.platform !== 'win32')(
+		'treats a backslash as a literal filename character on POSIX — the segment stays under root',
+		() => {
+			const resolved = resolveStaticPath(root, undefined, '/a\\..\\..\\etc\\passwd')
+			expect(resolved).toBeDefined()
+			expect(resolved?.startsWith(root)).toBe(true)
+		},
+	)
+
+	it.runIf(process.platform === 'win32')(
+		'treats a backslash as a separator on win32 — the traversal escapes root and is refused',
+		() => {
+			const resolved = resolveStaticPath(root, undefined, '/a\\..\\..\\etc\\passwd')
+			expect(resolved).toBeUndefined()
+		},
+	)
 
 	it('resolves the root itself for an empty remainder', () => {
 		expect(resolveStaticPath(root, undefined, '/')).toBe(root)
