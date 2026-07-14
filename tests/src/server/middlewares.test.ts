@@ -295,6 +295,7 @@ describe('createStatic', () => {
 			)
 			const etag = first.headers.get('etag')
 			expect(etag).not.toBeNull()
+			await first.body?.cancel()
 			if (etag === null) throw new Error('expected an etag header on the first response')
 			const conditional = new Request('http://test.local/index.html', {
 				headers: { 'if-none-match': etag },
@@ -341,6 +342,7 @@ describe('createStatic', () => {
 			)
 			expect(response.status).toBe(200)
 			expect(response.headers.get('etag')).toBeNull()
+			await response.body?.cancel()
 		} finally {
 			await fixture.cleanup()
 		}
@@ -464,6 +466,7 @@ describe('createStatic', () => {
 			)
 			expect(suffixResponse.status).toBe(206)
 			expect(suffixResponse.headers.get('content-range')).toBe('bytes 199990-199999/200000')
+			await suffixResponse.body?.cancel()
 
 			const openRequest = new Request('http://test.local/large.bin', {
 				headers: { range: 'bytes=199990-' },
@@ -475,6 +478,7 @@ describe('createStatic', () => {
 			)
 			expect(openResponse.status).toBe(206)
 			expect(openResponse.headers.get('content-range')).toBe('bytes 199990-199999/200000')
+			await openResponse.body?.cancel()
 		} finally {
 			await fixture.cleanup()
 		}
@@ -523,6 +527,7 @@ describe('createStatic', () => {
 				async () => new Response('miss'),
 			)
 			expect(malformedResponse.status).toBe(200)
+			await malformedResponse.body?.cancel()
 		} finally {
 			await fixture.cleanup()
 		}

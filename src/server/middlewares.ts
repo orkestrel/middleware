@@ -45,7 +45,12 @@ import {
  * symlink that resolves to a target still INSIDE `root` is unaffected and
  * still serves normally. A dangling symlink (`realpath` throws `ENOENT`) or
  * any other `realpath` failure is treated as a miss — this battery never
- * throws or 500s on a symlink surprise.
+ * throws or 500s on a symlink surprise. On a streamed response (a 200 or 206
+ * that carries a file body), the open `FileHandle` is owned by the
+ * `Response` body and is released only once that body is fully read or
+ * cancelled — Node HTTP servers do this automatically when sending the
+ * response, but a caller that holds an unread `Response` (e.g. in a test)
+ * must cancel its body to release the handle promptly.
  *
  * @typeParam TState - The consumer's opaque per-request state type
  * @param options - See {@link StaticOptions}
