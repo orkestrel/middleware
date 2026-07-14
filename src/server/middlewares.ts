@@ -108,6 +108,9 @@ export function createStatic<TState>(options: StaticOptions): MiddlewareHandler<
 		if (info.isDirectory()) {
 			resolvedPath = join(resolvedPath, index)
 			try {
+				const [rootReal, indexReal] = await Promise.all([canonicalRoot(), realpath(resolvedPath)])
+				if (!isUnderPath(indexReal, rootReal)) return trySpaFallback()
+				resolvedPath = indexReal
 				info = await stat(resolvedPath)
 			} catch {
 				return trySpaFallback()
@@ -159,14 +162,17 @@ export function createStatic<TState>(options: StaticOptions): MiddlewareHandler<
 			if (!accept.includes('text/html') && !accept.includes('*/*')) return next()
 			if (isUnderPath(context.url.pathname, fallback.exclude)) return next()
 			const shellPath = join(root, index)
-			return stat(shellPath)
-				.then(
-					() =>
-						new Response(streamFile(shellPath), {
-							status: 200,
-							headers: new Headers({ 'content-type': lookupContentType(shellPath) }),
-						}),
-				)
+			return Promise.all([canonicalRoot(), realpath(shellPath)])
+				.then(([rootReal, shellReal]) => {
+					if (!isUnderPath(shellReal, rootReal)) return next()
+					return stat(shellReal).then(
+						() =>
+							new Response(streamFile(shellReal), {
+								status: 200,
+								headers: new Headers({ 'content-type': lookupContentType(shellReal) }),
+							}),
+					)
+				})
 				.catch(() => next())
 		}
 	}

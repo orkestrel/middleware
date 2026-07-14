@@ -1,6 +1,7 @@
 import type { ConnectionState } from '@src/core'
 import type { MultipartState } from '@src/core'
-import { readdir } from 'node:fs/promises'
+import { mkdir, mkdtemp, readdir, rm, symlink, writeFile } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
 import {
@@ -292,8 +293,8 @@ describe('createStatic', () => {
 				async () => new Response('miss'),
 			)
 			const etag = first.headers.get('etag')
-			expect(etag).toBeDefined()
-			if (etag === null) return
+			expect(etag).not.toBeNull()
+			if (etag === null) throw new Error('expected an etag header on the first response')
 			const conditional = new Request('http://test.local/index.html', {
 				headers: { 'if-none-match': etag },
 			})
@@ -373,6 +374,63 @@ describe('createStatic', () => {
 				expect(await insideResponse.text()).toContain('inside target')
 			} finally {
 				await symlinkFixture.cleanup()
+			}
+		},
+	)
+
+	it.runIf(process.platform !== 'win32')(
+		'directory-index symlink escape: a directory whose index.html symlinks OUTSIDE root is a miss, not served',
+		async () => {
+			const root = await mkdtemp(join(tmpdir(), 'middleware-dirindex-root-'))
+			const outsideDir = await mkdtemp(join(tmpdir(), 'middleware-dirindex-outside-'))
+			try {
+				const outsideTarget = join(outsideDir, 'secret.html')
+				await writeFile(outsideTarget, '<!doctype html><html><body>outside secret</body></html>')
+				const subdir = join(root, 'sub')
+				await mkdir(subdir, { recursive: true })
+				await symlink(outsideTarget, join(subdir, 'index.html'))
+
+				const handler = createStatic({ root })
+				let nextCalled = false
+				const response = await handler(
+					buildRequest('/sub/'),
+					createTestContext(buildRequest('/sub/'), {}),
+					async () => {
+						nextCalled = true
+						return new Response('miss', { status: 404 })
+					},
+				)
+				expect(nextCalled).toBe(true)
+				expect(response.status).toBe(404)
+				expect(await response.text()).not.toContain('outside secret')
+			} finally {
+				await rm(root, { recursive: true, force: true })
+				await rm(outsideDir, { recursive: true, force: true })
+			}
+		},
+	)
+
+	it.runIf(process.platform !== 'win32')(
+		'SPA-shell control: the root index.html (no symlink escape) still serves normally through the fallback',
+		async () => {
+			const root = await mkdtemp(join(tmpdir(), 'middleware-spashell-root-'))
+			try {
+				await writeFile(
+					join(root, 'index.html'),
+					'<!doctype html><html><body>spa shell</body></html>',
+				)
+
+				const handler = createStatic({ root, fallback: true })
+				const request = buildRequest('/missing-route', { headers: { accept: 'text/html' } })
+				const response = await handler(
+					request,
+					createTestContext(request, {}),
+					async () => new Response('miss', { status: 404 }),
+				)
+				expect(response.status).toBe(200)
+				expect(await response.text()).toContain('spa shell')
+			} finally {
+				await rm(root, { recursive: true, force: true })
 			}
 		},
 	)

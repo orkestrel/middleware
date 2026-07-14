@@ -228,7 +228,9 @@ export interface BearerOptions {
  * - `policy` — when `true`, also emits the draft `RateLimit`/`RateLimit-Policy`
  *   structured header fields; defaults to `false`. `Retry-After` always ships.
  * - `evict` — invoked with a bucket's key when it is evicted for capacity;
- *   its own throw is swallowed and can never fail the request.
+ *   its own throw is swallowed and can never fail the request. It is a
+ *   notification sink only — it must never call back into the limiter
+ *   (no re-entrant reads/writes); mutations during eviction are unsupported.
  */
 export interface LimiterOptions<TState = unknown> {
 	readonly max: number
@@ -384,7 +386,9 @@ export interface SessionTransport {
  *   memory store tracks before LRU eviction; ignored when `store` is
  *   provided. Defaults to {@link DEFAULT_SESSION_CAPACITY}.
  * - `evict` — invoked with a session id evicted by the DEFAULT memory
- *   store's own policy; ignored when `store` is provided.
+ *   store's own policy; ignored when `store` is provided. It is a
+ *   notification sink only — it must never call back into the store
+ *   (no re-entrant `get`/`set`); mutations during eviction are unsupported.
  * - `create` — builds a fresh session's public entity from a minted id;
  *   defaults to `new Session(id)`.
  * - `mint` — decides whether to auto-mint a session when none resolves;
@@ -450,7 +454,9 @@ export interface HeaderTransportOptions {
  *   `set` refreshes an id's recency); defaults to {@link DEFAULT_SESSION_CAPACITY}.
  * - `evict` — invoked with a session id when it is evicted by the store's
  *   own policy (a capacity eviction or an expired-entry prune) — never for
- *   an explicit `delete`. Its own throw is swallowed.
+ *   an explicit `delete`. Its own throw is swallowed. It is a notification
+ *   sink only — it must never call back into the store (no re-entrant
+ *   `get`/`set`); mutations during eviction are unsupported.
  */
 export interface MemorySessionStoreOptions {
 	readonly ttl?: number

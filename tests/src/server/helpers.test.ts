@@ -21,6 +21,7 @@ import {
 	resolveStaticPath,
 	streamFile,
 	streamUploadedFile,
+	unlinkStagedFiles,
 } from '@src/server'
 import {
 	PNG_MAGIC,
@@ -679,6 +680,25 @@ describe('parseMultipartRequest', () => {
 		}
 	})
 
+	it('an empty-filename part arriving AFTER the files limit was already met does not spuriously trip the limit', async () => {
+		const directory = await buildTempDirectory()
+		try {
+			const request = buildMultipartRequest([
+				{ kind: 'file', name: 'a', filename: 'a.txt', bytes: new TextEncoder().encode('x') },
+				{ kind: 'file', name: 'unused', filename: '', bytes: new Uint8Array(0) },
+			])
+			const body = await parseMultipartRequest(request, {
+				limits: { files: 1 },
+				directory: directory.path,
+			})
+			expect(body?.files.a?.[0]?.name).toBe('a.txt')
+			expect(body?.files.unused).toBeUndefined()
+			expect(await readdir(directory.path)).toHaveLength(1)
+		} finally {
+			await directory.cleanup()
+		}
+	})
+
 	it('trips the field-size limit', async () => {
 		const request = buildMultipartRequest([{ kind: 'field', name: 'a', value: 'x'.repeat(100) }])
 		await expect(parseMultipartRequest(request, { limits: { field: 10 } })).rejects.toSatisfy(
@@ -909,6 +929,105 @@ describe('moveUploadedFile', () => {
 	it.todo(
 		'EXDEV fallback (copyFile + unlink) — requires two distinct filesystems/mount points, unavailable in this sandbox',
 	)
+})
+
+// ── unlinkStagedFiles ────────────────────────────────────────────────────────
+
+describe('unlinkStagedFiles', () => {
+	it('unlinks every still-staged file across multiple fields', async () => {
+		const directory = await buildTempDirectory()
+		try {
+			const pathA = join(directory.path, randomUUID())
+			const pathB = join(directory.path, randomUUID())
+			await writeFile(pathA, 'a')
+			await writeFile(pathB, 'b')
+			const body = {
+				files: Object.freeze({
+					a: Object.freeze([
+						createUploadedFile({
+							field: 'a',
+							name: 'a.txt',
+							size: 1,
+							mime: 'text/plain',
+							validated: true,
+							status: 'staged',
+							path: pathA,
+						}),
+					]),
+					b: Object.freeze([
+						createUploadedFile({
+							field: 'b',
+							name: 'b.txt',
+							size: 1,
+							mime: 'text/plain',
+							validated: true,
+							status: 'staged',
+							path: pathB,
+						}),
+					]),
+				}),
+				fields: Object.freeze({}),
+			}
+			await unlinkStagedFiles(body)
+			expect(await readdir(directory.path)).toHaveLength(0)
+		} finally {
+			await directory.cleanup()
+		}
+	})
+
+	it('skips a file whose status is "moved"', async () => {
+		const directory = await buildTempDirectory()
+		try {
+			const path = join(directory.path, randomUUID())
+			await writeFile(path, 'a')
+			const body = {
+				files: Object.freeze({
+					a: Object.freeze([
+						createUploadedFile({
+							field: 'a',
+							name: 'a.txt',
+							size: 1,
+							mime: 'text/plain',
+							validated: true,
+							status: 'moved',
+							path,
+						}),
+					]),
+				}),
+				fields: Object.freeze({}),
+			}
+			await unlinkStagedFiles(body)
+			expect(await readdir(directory.path)).toHaveLength(1)
+		} finally {
+			await directory.cleanup()
+		}
+	})
+
+	it('swallows an already-missing staged path without throwing', async () => {
+		const directory = await buildTempDirectory()
+		try {
+			const path = join(directory.path, randomUUID())
+			const body = {
+				files: Object.freeze({
+					a: Object.freeze([
+						createUploadedFile({
+							field: 'a',
+							name: 'a.txt',
+							size: 1,
+							mime: 'text/plain',
+							validated: true,
+							status: 'staged',
+							path,
+						}),
+					]),
+				}),
+				fields: Object.freeze({}),
+			}
+			await expect(unlinkStagedFiles(body)).resolves.toBeUndefined()
+		} finally {
+			await directory.cleanup()
+		}
+	})
 })
 
 // ── readUploadedFile / streamUploadedFile ───────────────────────────────────

@@ -1,3 +1,4 @@
+import type { MemorySessionStoreOptions } from '@src/core'
 import { DEFAULT_SESSION_CAPACITY, MemorySessionStore } from '@src/core'
 import { describe, expect, it } from 'vitest'
 
@@ -28,6 +29,13 @@ describe('MemorySessionStore construction', () => {
 		expect(() => new MemorySessionStore({ lifetime: Number.NaN })).toThrow(TypeError)
 		expect(() => new MemorySessionStore({ lifetime: 0 })).toThrow(TypeError)
 		expect(() => new MemorySessionStore({ lifetime: -1 })).toThrow(TypeError)
+	})
+
+	it('throws a TypeError when evict is provided but not a function', () => {
+		// JSON.parse yields a structurally-invalid options bag (evict is a
+		// string, not a function) without resorting to `as`/`any`/`!`.
+		const invalid: MemorySessionStoreOptions = JSON.parse('{"evict":"not-a-function"}')
+		expect(() => new MemorySessionStore(invalid)).toThrow(TypeError)
 	})
 })
 

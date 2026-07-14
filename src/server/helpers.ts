@@ -475,8 +475,11 @@ export async function parseMultipartRequest(
 			const partDelimiter = Buffer.from(`\r\n--${boundary}`)
 
 			if (filename !== undefined) {
-				fileCount += 1
-				if (fileCount > limits.files) throw new MultipartError('limit', 'too many multipart files')
+				if (filename !== '') {
+					fileCount += 1
+					if (fileCount > limits.files)
+						throw new MultipartError('limit', 'too many multipart files')
+				}
 				const path = join(directory, randomUUID())
 				staged.push(path)
 				const handle = await open(path, 'w', 0o600)
@@ -520,8 +523,12 @@ export async function parseMultipartRequest(
 					// never counted against the files limit or the allow-list.
 					await unlink(path)
 					staged.splice(staged.indexOf(path), 1)
-					fileCount -= 1
 				} else {
+					if (filename === '') {
+						fileCount += 1
+						if (fileCount > limits.files)
+							throw new MultipartError('limit', 'too many multipart files')
+					}
 					const detected = detectMIME(head)
 					const declared = contentType ?? DEFAULT_CONTENT_TYPE
 					const validated = detected !== undefined && detected === declared
@@ -690,6 +697,7 @@ export function streamFile(
 				}
 				controller.enqueue(value)
 			} catch (error) {
+				await iterator.return?.()
 				controller.error(error)
 			}
 		},

@@ -1,6 +1,6 @@
 import type { MemorySessionStoreOptions, SessionStoreInterface } from './types.js'
 import { DEFAULT_SESSION_CAPACITY } from './constants.js'
-import { isFiniteNumber } from '@orkestrel/contract'
+import { isFiniteNumber, isFunction } from '@orkestrel/contract'
 
 /**
  * The default in-process {@link SessionStoreInterface} — a `Map`-backed store
@@ -62,6 +62,10 @@ export class MemorySessionStore<S> implements SessionStoreInterface<S> {
 		)
 			throw new TypeError(
 				'MemorySessionStore requires options.capacity to be a positive integer when provided',
+			)
+		if (options?.evict !== undefined && !isFunction(options.evict))
+			throw new TypeError(
+				'MemorySessionStore requires options.evict to be a function when provided',
 			)
 		this.#entries = new Map()
 		this.#ttl = options?.ttl
