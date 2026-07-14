@@ -10,7 +10,7 @@ import type { FileHandle } from 'node:fs/promises'
 import { createReadStream } from 'node:fs'
 import { chmod, copyFile, mkdtemp, open, readFile, rename, unlink } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
-import { extname, join, normalize, resolve, sep } from 'node:path'
+import { extname, isAbsolute, join, normalize, relative, resolve, sep } from 'node:path'
 import { randomUUID } from 'node:crypto'
 import { isRecord } from '@orkestrel/contract'
 import { isDangerousKey } from '@orkestrel/server'
@@ -56,6 +56,35 @@ export function isUnderPath(pathname: string, prefix: string): boolean {
 	if (pathname === prefix) return true
 	const boundary = prefix.endsWith('/') ? prefix : `${prefix}/`
 	return pathname.startsWith(boundary)
+}
+
+/**
+ * Whether `child` is `parent` itself or lies inside it on-disk — the
+ * FILESYSTEM containment predicate `createStatic` applies to `fs.realpath`
+ * output (never to a URL pathname — that is {@link isUnderPath}'s job).
+ *
+ * @remarks
+ * Argument order is `(child, parent)` — deliberately the OPPOSITE conceptual
+ * order from {@link isUnderPath}`(pathname, prefix)`, so a call site cannot
+ * casually swap one predicate in for the other. Built on `path.relative`,
+ * this is separator-correct on both POSIX (`/`) and win32 (`\`) — unlike a
+ * hardcoded `${parent}/` boundary check, which silently fails to match every
+ * realpath on Windows — and case-folds on win32 because `path.relative` does.
+ *
+ * @param child - The absolute on-disk path to test
+ * @param parent - The absolute on-disk directory it must lie under
+ * @returns `true` when `child` equals `parent` or resolves inside it
+ *
+ * @example
+ * ```ts
+ * isContainedPath('/srv/public/a.html', '/srv/public') // true
+ * isContainedPath('/srv/other/a.html', '/srv/public') // false
+ * ```
+ */
+export function isContainedPath(child: string, parent: string): boolean {
+	if (child === parent) return true
+	const rel = relative(parent, child)
+	return rel.length > 0 && !rel.startsWith('..') && !isAbsolute(rel)
 }
 
 /**

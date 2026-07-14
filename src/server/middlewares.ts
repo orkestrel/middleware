@@ -13,6 +13,7 @@ import { DEFAULT_STATIC_FALLBACK_EXCLUDE, DEFAULT_STATIC_INDEX } from './constan
 import { isMultipartError } from './errors.js'
 import {
 	computeFileETag,
+	isContainedPath,
 	isDotfilePath,
 	isUnderPath,
 	lookupContentType,
@@ -93,7 +94,7 @@ export function createStatic<TState>(options: StaticOptions): MiddlewareHandler<
 		let resolvedPath: string
 		try {
 			const [rootReal, targetReal] = await Promise.all([canonicalRoot(), realpath(target)])
-			if (!isUnderPath(targetReal, rootReal)) return next()
+			if (!isContainedPath(targetReal, rootReal)) return next()
 			resolvedPath = targetReal
 		} catch {
 			return trySpaFallback()
@@ -115,7 +116,7 @@ export function createStatic<TState>(options: StaticOptions): MiddlewareHandler<
 			resolvedPath = join(resolvedPath, index)
 			try {
 				const [rootReal, indexReal] = await Promise.all([canonicalRoot(), realpath(resolvedPath)])
-				if (!isUnderPath(indexReal, rootReal)) return trySpaFallback()
+				if (!isContainedPath(indexReal, rootReal)) return trySpaFallback()
 				resolvedPath = indexReal
 			} catch {
 				return trySpaFallback()
@@ -197,7 +198,7 @@ export function createStatic<TState>(options: StaticOptions): MiddlewareHandler<
 			const shellPath = join(root, index)
 			return Promise.all([canonicalRoot(), realpath(shellPath)])
 				.then(([rootReal, shellReal]) => {
-					if (!isUnderPath(shellReal, rootReal)) return next()
+					if (!isContainedPath(shellReal, rootReal)) return next()
 					return open(shellReal, 'r').then((shellHandle) => {
 						let shellStreaming = false
 						try {

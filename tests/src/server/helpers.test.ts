@@ -7,6 +7,7 @@ import {
 	computeFileETag,
 	createUploadedFile,
 	detectMIME,
+	isContainedPath,
 	isDotfilePath,
 	isMultipartError,
 	isReservedDeviceName,
@@ -120,6 +121,35 @@ describe('isUnderPath', () => {
 
 	it('does not match an unrelated path', () => {
 		expect(isUnderPath('/other', '/api')).toBe(false)
+	})
+})
+
+// ── isContainedPath ──────────────────────────────────────────────────────────
+
+describe('isContainedPath', () => {
+	const root = resolvePath('/srv/public')
+
+	it('matches the parent itself', () => {
+		expect(isContainedPath(root, root)).toBe(true)
+	})
+
+	it('matches a contained subpath', () => {
+		expect(isContainedPath(join(root, 'a', 'b.html'), root)).toBe(true)
+	})
+
+	it('does not match a child escaping via ..', () => {
+		expect(isContainedPath(resolvePath(root, '..', 'etc', 'passwd'), root)).toBe(false)
+	})
+
+	it('does not match an absolute path under a different root', () => {
+		const other = resolvePath('/srv/other')
+		expect(isContainedPath(join(other, 'a.html'), root)).toBe(false)
+	})
+
+	it('is separator-correct on the current platform (native realpath-style paths)', () => {
+		const base = resolvePath('/srv/public')
+		const child = join(base, 'nested', 'file.html')
+		expect(isContainedPath(child, base)).toBe(true)
 	})
 })
 
