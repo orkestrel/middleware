@@ -151,6 +151,15 @@ describe('isContainedPath', () => {
 		const child = join(base, 'nested', 'file.html')
 		expect(isContainedPath(child, base)).toBe(true)
 	})
+
+	it('does not match a sibling whose name merely shares the parent as a prefix', () => {
+		const sibling = resolvePath('/srv/publicx')
+		expect(isContainedPath(join(sibling, 'file.html'), root)).toBe(false)
+	})
+
+	it('matches a literal entry name that is merely prefixed with ..', () => {
+		expect(isContainedPath(join(root, '..foo'), root)).toBe(true)
+	})
 })
 
 // ── isReservedDeviceName ─────────────────────────────────────────────────────

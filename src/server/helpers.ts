@@ -84,7 +84,7 @@ export function isUnderPath(pathname: string, prefix: string): boolean {
 export function isContainedPath(child: string, parent: string): boolean {
 	if (child === parent) return true
 	const rel = relative(parent, child)
-	return rel.length > 0 && !rel.startsWith('..') && !isAbsolute(rel)
+	return rel.length > 0 && rel !== '..' && !rel.startsWith(`..${sep}`) && !isAbsolute(rel)
 }
 
 /**
