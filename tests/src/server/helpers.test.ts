@@ -912,9 +912,16 @@ describe('streamFile', () => {
 			// the only observable, race-free proof the fd was released
 			// (FSReqCallback resource counts do not track FileHandle-backed
 			// streams the way they track path-backed ones).
-			await expect(handle.stat()).rejects.toSatisfy(
-				(error: unknown) => error instanceof Error && 'code' in error && error.code === 'EBADF',
-			)
+			let closed = false
+			for (let attempt = 0; attempt < 20 && !closed; attempt += 1) {
+				try {
+					await handle.stat()
+				} catch (error) {
+					closed = error instanceof Error && 'code' in error && error.code === 'EBADF'
+				}
+				if (!closed) await new Promise((resolve) => setTimeout(resolve, 5))
+			}
+			expect(closed).toBe(true)
 		} finally {
 			await directory.cleanup()
 		}

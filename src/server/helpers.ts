@@ -668,7 +668,7 @@ export async function unlinkStagedFiles(body: MultipartBody): Promise<void> {
  * or `destroy()` via the iterator's `return()`) — the caller never needs a
  * separate `handle.close()` for a handle passed here.
  *
- * @param path - The absolute on-disk file path to stream, or an already-open
+ * @param source - The absolute on-disk file path to stream, or an already-open
  * `FileHandle` (e.g. one already `fstat`'d so the served bytes match the
  * headers computed from that same `fstat`)
  * @param range - An optional inclusive byte range (`start`/`end`, both
@@ -681,18 +681,18 @@ export async function unlinkStagedFiles(body: MultipartBody): Promise<void> {
  * ```
  */
 export function streamFile(
-	path: string | FileHandle,
+	source: string | FileHandle,
 	range?: { readonly start: number; readonly end: number },
 ): ReadableStream<Uint8Array> {
-	const source =
-		typeof path === 'string'
+	const stream =
+		typeof source === 'string'
 			? range === undefined
-				? createReadStream(path)
-				: createReadStream(path, { start: range.start, end: range.end })
+				? createReadStream(source)
+				: createReadStream(source, { start: range.start, end: range.end })
 			: range === undefined
-				? path.createReadStream()
-				: path.createReadStream({ start: range.start, end: range.end })
-	const iterator: AsyncIterator<unknown> = source[Symbol.asyncIterator]()
+				? source.createReadStream()
+				: source.createReadStream({ start: range.start, end: range.end })
+	const iterator: AsyncIterator<unknown> = stream[Symbol.asyncIterator]()
 	return new ReadableStream<Uint8Array>({
 		async pull(controller) {
 			try {

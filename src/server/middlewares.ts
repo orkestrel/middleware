@@ -140,44 +140,52 @@ export function createStatic<TState>(options: StaticOptions): MiddlewareHandler<
 			return trySpaFallback()
 		}
 
-		const headers = new Headers({
-			'content-type': lookupContentType(resolvedPath),
-			'accept-ranges': 'bytes',
-		})
-		if (options.cache !== undefined) headers.set('cache-control', `max-age=${options.cache}`)
+		let streaming = false
+		try {
+			const headers = new Headers({
+				'content-type': lookupContentType(resolvedPath),
+				'accept-ranges': 'bytes',
+			})
+			if (options.cache !== undefined) headers.set('cache-control', `max-age=${options.cache}`)
 
-		if (useETag) {
-			const etag = computeFileETag(info.size, info.mtimeMs)
-			headers.set('etag', etag)
-			const ifNoneMatch = request.headers.get('if-none-match')
-			if (ifNoneMatch !== null && matchesETag(ifNoneMatch, etag)) {
-				await handle.close()
-				return new Response(null, { status: 304, headers })
+			if (useETag) {
+				const etag = computeFileETag(info.size, info.mtimeMs)
+				headers.set('etag', etag)
+				const ifNoneMatch = request.headers.get('if-none-match')
+				if (ifNoneMatch !== null && matchesETag(ifNoneMatch, etag)) {
+					await handle.close()
+					return new Response(null, { status: 304, headers })
+				}
 			}
-		}
 
-		if (context.method === 'HEAD') {
-			await handle.close()
-			headers.set('content-length', String(info.size))
-			return new Response(null, { status: 200, headers })
-		}
+			if (context.method === 'HEAD') {
+				await handle.close()
+				headers.set('content-length', String(info.size))
+				return new Response(null, { status: 200, headers })
+			}
 
-		const rangeHeader = request.headers.get('range')
-		const range = parseRange(rangeHeader === null ? undefined : rangeHeader, info.size)
-		if (range === undefined) {
-			headers.set('content-length', String(info.size))
-			const body = streamFile(handle)
-			return new Response(body, { status: 200, headers })
+			const rangeHeader = request.headers.get('range')
+			const range = parseRange(rangeHeader === null ? undefined : rangeHeader, info.size)
+			if (range === undefined) {
+				headers.set('content-length', String(info.size))
+				const body = streamFile(handle)
+				streaming = true
+				return new Response(body, { status: 200, headers })
+			}
+			if (!range.satisfiable) {
+				await handle.close()
+				headers.set('content-range', `bytes */${info.size}`)
+				return new Response(null, { status: 416, headers })
+			}
+			headers.set('content-range', `bytes ${range.start}-${range.end}/${info.size}`)
+			headers.set('content-length', String(range.end - range.start + 1))
+			const body = streamFile(handle, { start: range.start, end: range.end })
+			streaming = true
+			return new Response(body, { status: 206, headers })
+		} catch (error) {
+			if (!streaming) await handle.close().catch(() => {})
+			throw error
 		}
-		if (!range.satisfiable) {
-			await handle.close()
-			headers.set('content-range', `bytes */${info.size}`)
-			return new Response(null, { status: 416, headers })
-		}
-		headers.set('content-range', `bytes ${range.start}-${range.end}/${info.size}`)
-		headers.set('content-length', String(range.end - range.start + 1))
-		const body = streamFile(handle, { start: range.start, end: range.end })
-		return new Response(body, { status: 206, headers })
 
 		function trySpaFallback(): Response | Promise<Response> {
 			if (fallback === undefined) return next()
@@ -190,13 +198,20 @@ export function createStatic<TState>(options: StaticOptions): MiddlewareHandler<
 			return Promise.all([canonicalRoot(), realpath(shellPath)])
 				.then(([rootReal, shellReal]) => {
 					if (!isUnderPath(shellReal, rootReal)) return next()
-					return open(shellReal, 'r').then(
-						(shellHandle) =>
-							new Response(streamFile(shellHandle), {
+					return open(shellReal, 'r').then((shellHandle) => {
+						let shellStreaming = false
+						try {
+							const body = streamFile(shellHandle)
+							shellStreaming = true
+							return new Response(body, {
 								status: 200,
 								headers: new Headers({ 'content-type': lookupContentType(shellReal) }),
-							}),
-					)
+							})
+						} catch (error) {
+							if (!shellStreaming) shellHandle.close().catch(() => {})
+							throw error
+						}
+					})
 				})
 				.catch(() => next())
 		}
