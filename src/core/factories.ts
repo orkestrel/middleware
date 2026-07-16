@@ -13,8 +13,8 @@ import type { TableInterface } from '@orkestrel/database'
 import { integerShape, isString, jsonShape, stringShape } from '@orkestrel/contract'
 import { clearCookie, readSignedCookie, resolveSecure, writeSignedCookie } from '@orkestrel/server'
 import { DEFAULT_SESSION_COOKIE, DEFAULT_SESSION_HEADER } from './constants.js'
-import { DatabaseSessionStore } from './DatabaseSessionStore.js'
-import { MemorySessionStore } from './MemorySessionStore.js'
+import { DatabaseSessionStore } from './stores/DatabaseSessionStore.js'
+import { MemorySessionStore } from './stores/MemorySessionStore.js'
 
 // ============================================================================
 //  @orkestrel/middleware — entity / transport / store factories

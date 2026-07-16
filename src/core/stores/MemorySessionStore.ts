@@ -1,6 +1,6 @@
-import type { MemorySessionStoreOptions, SessionStoreInterface } from './types.js'
-import { DEFAULT_SESSION_CAPACITY } from './constants.js'
-import { sessionExpired } from './helpers.js'
+import type { MemorySessionStoreOptions, SessionStoreInterface } from '../types.js'
+import { DEFAULT_SESSION_CAPACITY } from '../constants.js'
+import { sessionExpired } from '../helpers.js'
 import { isFiniteNumber, isFunction } from '@orkestrel/contract'
 
 /**

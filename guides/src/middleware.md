@@ -695,10 +695,10 @@ const serveApp = createStatic({ root: '/srv/public', fallback: true }) // exclud
   `isMultipartBody` totality guards, `isPreflight`, `buildClientInfo`.
 - [`tests/src/core/Session.test.ts`](../../tests/src/core/Session.test.ts) —
   the entity shape (`id`, an independent, mutable `data` Map per instance).
-- [`tests/src/core/MemorySessionStore.test.ts`](../../tests/src/core/MemorySessionStore.test.ts) —
+- [`tests/src/core/stores/MemorySessionStore.test.ts`](../../tests/src/core/stores/MemorySessionStore.test.ts) —
   construction guards, get/set/delete, idle + absolute-lifetime eviction,
   `createdAt` stamped once and preserved across re-set.
-- [`tests/src/core/DatabaseSessionStore.test.ts`](../../tests/src/core/DatabaseSessionStore.test.ts) —
+- [`tests/src/core/stores/DatabaseSessionStore.test.ts`](../../tests/src/core/stores/DatabaseSessionStore.test.ts) —
   get/set/delete over a real `@orkestrel/database` memory-driver table, idle +
   absolute-lifetime eviction (including the underlying row's removal),
   `createdAt` stamped once and preserved across re-set, guard rejection.

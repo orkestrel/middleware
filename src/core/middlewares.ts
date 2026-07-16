@@ -82,7 +82,7 @@ import {
 	resolveOptInHeader,
 	transferSessionData,
 } from './helpers.js'
-import { MemorySessionStore } from './MemorySessionStore.js'
+import { MemorySessionStore } from './stores/MemorySessionStore.js'
 import { Session } from './Session.js'
 import { computeBodyETag, matchesETag } from '@orkestrel/server'
 
