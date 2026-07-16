@@ -624,6 +624,13 @@ export function sessionExpired(
  * @param session - The session to snapshot
  * @returns A plain-object copy of `session.data`, keyed alongside `session.id`
  *
+ * @remarks
+ * `data` is built on a null-prototype object (`Object.create(null)`), never
+ * a `{}` literal — a session key literally named `__proto__` must round-trip
+ * as an OWN enumerable property instead of hitting `Object.prototype`'s
+ * `__proto__` accessor (which would silently drop the entry and risk
+ * polluting the shared prototype).
+ *
  * @example
  * ```ts
  * snapshotSession(session) // { id: 'abc', data: { userId: 'u_1' } }
@@ -633,7 +640,7 @@ export function snapshotSession(session: SessionInterface): {
 	readonly id: string
 	readonly data: Record<string, unknown>
 } {
-	const data: Record<string, unknown> = {}
+	const data: Record<string, unknown> = Object.create(null)
 	for (const [key, value] of session.data) data[key] = value
 	return { id: session.id, data }
 }

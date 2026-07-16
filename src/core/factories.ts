@@ -3,10 +3,10 @@ import type {
 	HeaderTransportOptions,
 	MemorySessionStoreOptions,
 	SessionInterface,
+	SessionRow,
 	SessionStoreInterface,
 	SessionTransport,
 } from './types.js'
-import type { SessionRow } from './DatabaseSessionStore.js'
 import type { Session } from './Session.js'
 import type { Guard } from '@orkestrel/contract'
 import type { TableInterface } from '@orkestrel/database'
@@ -120,6 +120,14 @@ export function createMemorySessionStore<S>(
  * The `@orkestrel/database` column shape for a {@link SessionRow} table — pass
  * as-is to `createDatabase({ tables: { sessions: sessionColumns } })` so an
  * app declaring a durable session table never hand-writes the shape.
+ *
+ * @remarks
+ * `lastSeen`/`createdAt` are `integerShape({ min: 0 })` — the table VALIDATES
+ * them as integers, so `DatabaseSessionStore`'s `now` clock must yield
+ * integer milliseconds (`Date.now()`, the implicit default `createSession`
+ * clock). A fractional clock (`performance.now()`) fails the write with a
+ * validation error; `MemorySessionStore` carries no such column shape and
+ * accepts a fractional clock without complaint.
  *
  * @example
  * ```ts

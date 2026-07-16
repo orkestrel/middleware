@@ -1,20 +1,8 @@
-import type { SessionInterface, SessionStoreInterface } from './types.js'
+import type { SessionInterface, SessionRow, SessionStoreInterface } from './types.js'
 import type { Guard } from '@orkestrel/contract'
 import type { TableInterface } from '@orkestrel/database'
 import { restoreSession, sessionExpired, snapshotSession } from './helpers.js'
 import { Session } from './Session.js'
-
-/**
- * One persisted session row — an opaque snapshot column plus the store-owned
- * idle/absolute-lifetime cursors, the shape a {@link DatabaseSessionStore}'s
- * backing table holds.
- */
-export interface SessionRow {
-	readonly id: string
-	readonly session: unknown
-	readonly lastSeen: number
-	readonly createdAt: number
-}
 
 /**
  * A durable {@link SessionStoreInterface} over an `@orkestrel/database`
@@ -33,6 +21,14 @@ export interface SessionRow {
  * re-`set` of the same id (stamped once at the first `set`), mirroring
  * {@link MemorySessionStore}. `delete` of an absent id is a no-op (the
  * table's `remove` contract).
+ *
+ * A malformed-snapshot or failed-guard `undefined` LEAVES the row in place —
+ * unlike the expired path, which removes it. This is deliberate: a
+ * caller-contextual `is` guard may reject a session that is still perfectly
+ * valid for another flow reading the same table (a differently-shaped `S`,
+ * a stricter guard mid-rollout), so `get` never destroys data on a guard
+ * miss. A row that no caller's guard ever accepts again self-heals once its
+ * `ttl`/`lifetime` elapses on a later `get`.
  *
  * @example
  * ```ts

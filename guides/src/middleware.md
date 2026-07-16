@@ -413,6 +413,17 @@ prevents:
     message never reaches the body); an `HTTPError`'s own `message` ALWAYS
     surfaces (it is the handler's deliberate signal); a `report` sink's own
     throw is swallowed and can never alter the response.
+24. **`only`/`except` are NOT a security boundary.** Both match
+    `context.url.pathname` EXACTLY — a trailing slash (`/login/` vs `/login`),
+    a case variant, or a percent-encoded path silently falls outside an
+    `only()`-scoped path set, and a security battery scoped that way goes
+    dark on that request with no signal. Prefer `except()` for security
+    batteries (CSRF, bearer, rate limiting) — its failure mode is FAIL-CLOSED
+    (an unlisted or misspelled path still gets the battery; only the
+    explicitly excluded paths lose it), where `only()`'s failure mode is
+    fail-OPEN. Whichever combinator is used, keep its path set in lockstep
+    with the router's actual routes — a route added after the fact and not
+    added to the set is silently unscoped.
 
 ## Patterns
 

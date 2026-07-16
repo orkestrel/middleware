@@ -363,6 +363,18 @@ export interface SessionStoreInterface<S> {
 }
 
 /**
+ * One persisted session row — an opaque snapshot column plus the store-owned
+ * idle/absolute-lifetime cursors, the shape a {@link DatabaseSessionStore}'s
+ * backing table holds.
+ */
+export interface SessionRow {
+	readonly id: string
+	readonly session: unknown
+	readonly lastSeen: number
+	readonly createdAt: number
+}
+
+/**
  * The transport seam `createSession`'s `transport` option implements — how a
  * session id travels to and from the client (a signed cookie, a header, …).
  *

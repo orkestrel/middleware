@@ -682,6 +682,17 @@ describe('snapshotSession / restoreSession', () => {
 		expect(snapshotSession({ id: 'x', data: new Map() })).toEqual({ id: 'x', data: {} })
 	})
 
+	it('round-trips a "__proto__"-named data key without polluting Object.prototype', () => {
+		const data = new Map<string, unknown>([['__proto__', 'evil']])
+		const snapshot = snapshotSession({ id: 'x', data })
+		expect(Object.getPrototypeOf(snapshot.data)).toBeNull()
+		expect(Object.prototype.hasOwnProperty.call(snapshot.data, '__proto__')).toBe(true)
+		expect(snapshot.data['__proto__']).toBe('evil')
+		const restored = restoreSession(snapshot)
+		expect(restored?.data.get('__proto__')).toBe('evil')
+		expect(Object.getPrototypeOf({})).toBe(Object.prototype)
+	})
+
 	it('returns undefined for malformed restore input', () => {
 		expect(restoreSession(undefined)).toBeUndefined()
 		expect(restoreSession(null)).toBeUndefined()
