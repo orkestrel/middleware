@@ -22,10 +22,28 @@ npm install @orkestrel/middleware @orkestrel/server
 - ESM core (`.`); a CJS node face (`./server`) for the node-bound batteries
   (`createStatic`, `createMultipart`)
 
-## Status
+## Usage
 
-The public API is defined in `PROPOSAL.md` and not yet implemented — this
-package currently ships no runtime code.
+```ts
+import { createBoundary, createSecurity } from '@orkestrel/middleware'
+import type { IdentifierState } from '@orkestrel/middleware'
+import { compose } from '@orkestrel/server'
+
+interface State extends IdentifierState {}
+
+const boundary = createBoundary({ expose: false })
+const security = createSecurity({ hsts: true })
+
+const handle = compose<State>([boundary, security], async (_request, context) => {
+	return Response.json({ identifier: context.state.identifier })
+})
+```
+
+Each battery is a typed `options => MiddlewareHandler<TState>` factory that composes with
+the others through the frozen `@orkestrel/server` seam — mount boundary, telemetry,
+compression, security headers, CORS, rate limiting, sessions (with `MemorySessionStore` or
+`DatabaseSessionStore` over `@orkestrel/database`), CSRF, static files, and multipart uploads
+in any combination, scoped with `only()` / `except()` where needed.
 
 ## Guides
 
