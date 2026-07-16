@@ -1,26 +1,25 @@
 # Server
 
-> This package's ONE guide, covering both faces (AGENTS §22 — one guide per
-> package): the pure, environment-agnostic core — the middleware seam
-> (`compose`, `MiddlewareContext`/`NextFunction`/`MiddlewareHandler`), the
-> `HTTPError` vocabulary, and the shared substrate (cookies, WebCrypto tokens,
-> content negotiation via `Negotiator`, ETag/Range, security primitives, SSE,
-> and the body pipeline) — and the deliberately node-bound server face: the
-> `Server` lifecycle entity binding `node:http` via `@orkestrel/router`'s
-> adapter helpers, the upgrade seam, connection-fact injection, and
-> `discoverPort`. The server **consumes** `@orkestrel/router` — routing,
-> matching, and dispatch are that package's, never re-implemented here (AGENTS
-> §21 "mechanism, never policy"). Source: [`src/core`](../../src/core),
-> [`src/server`](../../src/server). Surfaced through the `@orkestrel/server`
-> barrel (aliased `@src/core` / `@src/server` inside this repo).
+> This package's ONE guide (AGENTS §22 — one guide per package), covering its
+> single published surface: the middleware seam (`compose`,
+> `MiddlewareContext`/`NextFunction`/`MiddlewareHandler`), the `HTTPError`
+> vocabulary, the shared substrate (cookies, WebCrypto tokens, content
+> negotiation via `Negotiator`, ETag/Range, security primitives, SSE, and the
+> body pipeline), and the deliberately node-bound `Server` lifecycle entity
+> binding `node:http` via `@orkestrel/router`'s adapter helpers, the upgrade
+> seam, connection-fact injection, and `discoverPort`. The server
+> **consumes** `@orkestrel/router` — routing, matching, and dispatch are that
+> package's, never re-implemented here (AGENTS §21 "mechanism, never
+> policy"). Source: [`src/server`](../../src/server). Surfaced through the
+> `@orkestrel/server` barrel (aliased `@src/server` inside this repo).
 
 ## Surface
 
 Bring your own `@orkestrel/router` dispatcher, mount middleware, and start:
 
 ```ts
+import type { MiddlewareHandler } from '@src/server'
 import { createServer } from '@src/server'
-import type { MiddlewareHandler } from '@src/core'
 import { createDispatcher } from '@orkestrel/router'
 
 interface State {
@@ -65,64 +64,65 @@ Cross-face and substrate usage appear under [Patterns](#patterns).
 
 ### Constants
 
-| API                          | Kind  | Summary                                                                           |
-| ---------------------------- | ----- | --------------------------------------------------------------------------------- |
-| `DEFAULT_DRAIN_MS`           | const | Default graceful-stop deadline (ms) `stop()` gives in-flight requests.            |
-| `DEFAULT_BODY_LIMIT`         | const | Default maximum request body size (bytes) `readBody` accepts before a 413.        |
-| `DEFAULT_DECOMPRESSED_LIMIT` | const | Default maximum DECOMPRESSED body size (bytes) — the zip-bomb cap.                |
-| `SSE_HEADERS`                | const | The response headers `openStream` always sets for an SSE stream.                  |
-| `REQUEST_ID_PATTERN`         | const | The strict charset `isValidRequestId` requires an `X-Request-ID` to match.        |
-| `COMPRESSIBLE_TYPES`         | const | The bare `Content-Type`s `isCompressibleType` treats as compressible.             |
-| `DEFAULT_ENCODINGS`          | const | The default `Encoding` content-codings the substrate offers, in preference order. |
+| API                          | Kind  | Summary                                                                                                                                        |
+| ---------------------------- | ----- | ---------------------------------------------------------------------------------------------------------------------------------------------- |
+| `DEFAULT_DRAIN_MS`           | const | Default graceful-stop deadline (ms) `stop()` gives in-flight requests.                                                                         |
+| `DEFAULT_BODY_LIMIT`         | const | Default maximum request body size (bytes) `readBody` accepts before a 413.                                                                     |
+| `DEFAULT_DECOMPRESSED_LIMIT` | const | Default maximum DECOMPRESSED body size (bytes) — the zip-bomb cap.                                                                             |
+| `SSE_HEADERS`                | const | The response headers `openStream` always sets for an SSE stream.                                                                               |
+| `REQUEST_ID_PATTERN`         | const | The strict charset `isValidRequestId` requires an `X-Request-ID` to match.                                                                     |
+| `COMPRESSIBLE_TYPES`         | const | The bare `Content-Type`s `isCompressibleType` treats as compressible.                                                                          |
+| `HTTP_ERROR_BRAND`           | const | The `Symbol.for`-interned brand `HTTPError` carries so `isHTTPError` recognizes an instance across package copies. Not a field to set by hand. |
+| `DEFAULT_ENCODINGS`          | const | The default `Encoding` content-codings the substrate offers, in preference order.                                                              |
 
 ### Helpers
 
-| API                     | Kind     | Summary                                                                                             |
-| ----------------------- | -------- | --------------------------------------------------------------------------------------------------- |
-| `compose`               | function | Compose an ordered middleware chain around a `terminal` handler (the frozen seam).                  |
-| `parseCookies`          | function | Parse a raw `Cookie:` header into a `name → value` lookup.                                          |
-| `isCookieName`          | function | Whether a string is a valid RFC 6265 cookie name (no whitespace).                                   |
-| `decodeCookieValue`     | function | Decode a cookie value, falling back to raw text on malformed escapes.                               |
-| `isCookieAttribute`     | function | Whether a string is safe to interpolate as a `Domain`/`Path` attribute value.                       |
-| `serializeCookie`       | function | Serialize a cookie into a `Set-Cookie` header value with its attributes.                            |
-| `resolveSecure`         | function | Resolve a cookie's effective `Secure` flag from its setting + the TLS fact.                         |
-| `appendCookie`          | function | Append a `Set-Cookie` header onto `Headers` without clobbering a prior one.                         |
-| `writeSignedCookie`     | function | Write a SIGNED cookie (`signToken` + `Set-Cookie`).                                                 |
-| `readSignedCookie`      | function | Read + verify a SIGNED cookie off a request — total, returns `undefined` on any failure.            |
-| `clearCookie`           | function | Clear a cookie via an immediately-expiring `Set-Cookie`.                                            |
-| `encodeBase64Url`       | function | Base64url-encode a byte sequence.                                                                   |
-| `decodeBase64Url`       | function | Decode a base64url string back into its bytes.                                                      |
-| `signToken`             | function | Sign a value into a stateless, HMAC-SHA256 token.                                                   |
-| `verifyToken`           | function | Verify a stateless token and return its embedded value — total, never throws.                       |
-| `decodeTokenPayload`    | function | Decode + narrow a signed token's payload, honoring its expiry.                                      |
-| `normalizeSecret`       | function | Normalize a `TokenSecret` to a concrete list of usable secrets.                                     |
-| `parseAcceptHeader`     | function | Parse a weighted `Accept`-family header into its q-sorted entries.                                  |
-| `codingQuality`         | function | The client's quality for one content-coding from parsed `Accept-Encoding` entries.                  |
-| `negotiateEncoding`     | function | Select the best content-coding for an `Accept-Encoding` header.                                     |
-| `matchMediaType`        | function | Rank + quality of one candidate media type against parsed `Accept` entries.                         |
-| `languageQuality`       | function | The client's quality for one candidate language from parsed `Accept-Language` entries.              |
-| `isCompressibleType`    | function | Whether a `Content-Type` is worth compressing.                                                      |
-| `computeBodyETag`       | function | Compute a content `ETag` over a fully-buffered response body via WebCrypto.                         |
-| `unwrapETag`            | function | Strip the weak indicator (`W/`) from an entity-tag.                                                 |
-| `matchesETag`           | function | Whether a request's `If-None-Match` matches a resource's current `ETag` (RFC 7232 weak comparison). |
-| `parseRange`            | function | Parse an HTTP `Range` header against a known resource size — total.                                 |
-| `resolveOrigin`         | function | Resolve the `Access-Control-Allow-Origin` value for a request.                                      |
-| `mergeVary`             | function | Merge a `Vary` value into an existing `Vary` header without duplication.                            |
-| `resolveSecurityHeader` | function | Resolve one opt-out, value-bearing security header.                                                 |
-| `isValidRequestId`      | function | Whether a client-supplied `X-Request-ID` is safe to echo back.                                      |
-| `ipv6Network`           | function | Compute the `/64` network of a full IPv6 address, or `undefined`.                                   |
-| `clientRateKey`         | function | Collapse a client IP into its rate-limit bucket key (IPv6 `/64`, IPv4 unchanged).                   |
-| `serializeEvent`        | function | Serialize one `SSEMessage` to the SSE wire.                                                         |
-| `openStream`            | function | Open a generic Server-Sent-Events stream over a `ReadableStream` `Response`.                        |
-| `isDangerousKey`        | function | Whether a key is a prototype-pollution vector (`__proto__`/`constructor`/`prototype`).              |
-| `scrubPrototype`        | function | Recursively strip prototype-pollution keys from a parsed value in place.                            |
-| `collectRequestBody`    | function | Collect a `Request` body into one `Uint8Array`, enforcing a size limit.                             |
-| `requestEncoding`       | function | Narrow a raw `Content-Encoding` header to a decompressible `Encoding`.                              |
-| `decompressRequestBody` | function | Transparently decompress a collected body, capping decompressed output (the zip-bomb defense).      |
-| `readBody`              | function | Collect + decode a `Request` body — the pipeline behind `context.body()`.                           |
-| `isHTTPError`           | function | Narrow an unknown caught value to an `HTTPError` (including subclasses).                            |
-| `isAddressInfo`         | function | Whether a `node:net` address is the structured `AddressInfo` shape.                                 |
-| `discoverPort`          | function | Find a free TCP port — try a `preferred` one first, else an ephemeral port.                         |
+| API                     | Kind     | Summary                                                                                                                                     |
+| ----------------------- | -------- | ------------------------------------------------------------------------------------------------------------------------------------------- |
+| `compose`               | function | Compose an ordered middleware chain around a `terminal` handler (the frozen seam).                                                          |
+| `parseCookies`          | function | Parse a raw `Cookie:` header into a `name → value` lookup.                                                                                  |
+| `isCookieName`          | function | Whether a string is a valid RFC 6265 cookie name (no whitespace).                                                                           |
+| `decodeCookieValue`     | function | Decode a cookie value, falling back to raw text on malformed escapes.                                                                       |
+| `isCookieAttribute`     | function | Whether a string is safe to interpolate as a `Domain`/`Path` attribute value.                                                               |
+| `serializeCookie`       | function | Serialize a cookie into a `Set-Cookie` header value with its attributes.                                                                    |
+| `resolveSecure`         | function | Resolve a cookie's effective `Secure` flag from its setting + the TLS fact.                                                                 |
+| `appendCookie`          | function | Append a `Set-Cookie` header onto `Headers` without clobbering a prior one.                                                                 |
+| `writeSignedCookie`     | function | Write a SIGNED cookie (`signToken` + `Set-Cookie`).                                                                                         |
+| `readSignedCookie`      | function | Read + verify a SIGNED cookie off a request — total, returns `undefined` on any failure.                                                    |
+| `clearCookie`           | function | Clear a cookie via an immediately-expiring `Set-Cookie`.                                                                                    |
+| `encodeBase64Url`       | function | Base64url-encode a byte sequence.                                                                                                           |
+| `decodeBase64Url`       | function | Decode a base64url string back into its bytes.                                                                                              |
+| `signToken`             | function | Sign a value into a stateless, HMAC-SHA256 token.                                                                                           |
+| `verifyToken`           | function | Verify a stateless token and return its embedded value — total, never throws.                                                               |
+| `decodeTokenPayload`    | function | Decode + narrow a signed token's payload, honoring its expiry.                                                                              |
+| `normalizeSecret`       | function | Normalize a `TokenSecret` to a concrete list of usable secrets.                                                                             |
+| `parseAcceptHeader`     | function | Parse a weighted `Accept`-family header into its q-sorted entries.                                                                          |
+| `codingQuality`         | function | The client's quality for one content-coding from parsed `Accept-Encoding` entries.                                                          |
+| `negotiateEncoding`     | function | Select the best content-coding for an `Accept-Encoding` header.                                                                             |
+| `matchMediaType`        | function | Rank + quality of one candidate media type against parsed `Accept` entries.                                                                 |
+| `languageQuality`       | function | The client's quality for one candidate language from parsed `Accept-Language` entries.                                                      |
+| `isCompressibleType`    | function | Whether a `Content-Type` is worth compressing.                                                                                              |
+| `computeBodyETag`       | function | Compute a content `ETag` over a fully-buffered response body via WebCrypto.                                                                 |
+| `unwrapETag`            | function | Strip the weak indicator (`W/`) from an entity-tag.                                                                                         |
+| `matchesETag`           | function | Whether a request's `If-None-Match` matches a resource's current `ETag` (RFC 7232 weak comparison).                                         |
+| `parseRange`            | function | Parse an HTTP `Range` header against a known resource size — total.                                                                         |
+| `resolveOrigin`         | function | Resolve the `Access-Control-Allow-Origin` value for a request.                                                                              |
+| `mergeVary`             | function | Merge a `Vary` value into an existing `Vary` header without duplication.                                                                    |
+| `resolveSecurityHeader` | function | Resolve one opt-out, value-bearing security header.                                                                                         |
+| `isValidRequestId`      | function | Whether a client-supplied `X-Request-ID` is safe to echo back.                                                                              |
+| `ipv6Network`           | function | Compute the `/64` network of a full IPv6 address, or `undefined`.                                                                           |
+| `clientRateKey`         | function | Collapse a client IP into its rate-limit bucket key (IPv6 `/64`, IPv4 unchanged).                                                           |
+| `serializeEvent`        | function | Serialize one `SSEMessage` to the SSE wire.                                                                                                 |
+| `openStream`            | function | Open a generic Server-Sent-Events stream over a `ReadableStream` `Response`.                                                                |
+| `isDangerousKey`        | function | Whether a key is a prototype-pollution vector (`__proto__`/`constructor`/`prototype`).                                                      |
+| `scrubPrototype`        | function | Recursively strip prototype-pollution keys from a parsed value in place.                                                                    |
+| `collectRequestBody`    | function | Collect a `Request` body into one `Uint8Array`, enforcing a size limit.                                                                     |
+| `requestEncoding`       | function | Narrow a raw `Content-Encoding` header to a decompressible `Encoding`.                                                                      |
+| `decompressRequestBody` | function | Transparently decompress a collected body, capping decompressed output (the zip-bomb defense).                                              |
+| `readBody`              | function | Collect + decode a `Request` body — the pipeline behind `context.body()`.                                                                   |
+| `isHTTPError`           | function | Narrow an unknown caught value to an `HTTPError` (including subclasses) — recognized across package copies via a structural brand fallback. |
+| `isAddressInfo`         | function | Whether a `node:net` address is the structured `AddressInfo` shape.                                                                         |
+| `discoverPort`          | function | Find a free TCP port — try a `preferred` one first, else an ephemeral port.                                                                 |
 
 ### Entities
 
@@ -204,7 +204,7 @@ resolves the actually-bound port; `stop` gracefully drains then closes;
 
 ## Contract
 
-These invariants hold across `src/core` / `src/server` ↔ `server.md`.
+These invariants hold across `src/server` ↔ `server.md`.
 
 1. **DOC ↔ SOURCE bijection.** Every `function` / `class` / `interface` /
    `type` / `const` row in the `## Surface` tables is a real export of its
@@ -318,14 +318,26 @@ stopping → stopped`; `start()` from `listening`/`starting`/`stopping`
     `'Internal Server Error'` string unless `expose` is explicitly `true`; an
     `HTTPError`'s own `message` is ALWAYS client-facing (it is the handler's
     deliberate signal), independent of `expose`.
+16. **`isHTTPError` recognizes an `HTTPError` across package copies, not just
+    `instanceof`.** A version-skewed or workspace-linked duplicate install of
+    this package produces a SECOND, distinct `HTTPError` constructor —
+    `instanceof` fails across the two copies even though the thrown value is
+    structurally identical, which would otherwise collapse a deliberate 4xx
+    into the built-in boundary's 500 fallback. `isHTTPError` tries
+    `instanceof` first, then falls back to a total structural check: the
+    value must carry a stable cross-copy brand (a `Symbol.for`-interned key,
+    so every copy resolves the same symbol) AND expose a numeric `status` and
+    a string `message` — the exact fields the boundary reads off a
+    recognized error. The brand is an implementation detail of `HTTPError`'s
+    constructor, not a field a consumer sets by hand.
 
 ## Patterns
 
 ### Quickstart: dispatcher, middleware, lifecycle
 
 ```ts
+import type { MiddlewareHandler } from '@src/server'
 import { createServer } from '@src/server'
-import type { MiddlewareHandler } from '@src/core'
 import { createDispatcher } from '@orkestrel/router'
 
 interface State {
@@ -359,8 +371,8 @@ dispatcher's own auto-`OPTIONS` responder ever sees it — mount it earliest in
 the array, ahead of anything that would short-circuit later.
 
 ```ts
+import type { MiddlewareHandler } from '@src/server'
 import { createServer } from '@src/server'
-import type { MiddlewareHandler } from '@src/core'
 import { createDispatcher } from '@orkestrel/router'
 
 interface State {
@@ -390,7 +402,7 @@ intersects the slices it mounts into one `TState` — no per-middleware generic
 accumulation.
 
 ```ts
-import type { MiddlewareHandler } from '@src/core'
+import type { MiddlewareHandler } from '@src/server'
 
 interface TokenState {
 	readonly userId?: string
@@ -406,7 +418,7 @@ const withUser: MiddlewareHandler<State> = async (_request, context, next) => ne
 ### SSE route
 
 ```ts
-import { openStream } from '@src/core'
+import { openStream } from '@src/server'
 
 function streamHandler(): Response {
 	const stream = openStream()
@@ -452,6 +464,7 @@ server.upgrade((_request, socket, _head) => {
 ### Substrate direct use — tokens, cookies, negotiation
 
 ```ts
+import type { MiddlewareContext } from '@src/server'
 import {
 	createNegotiator,
 	decodeTokenPayload,
@@ -460,8 +473,7 @@ import {
 	signToken,
 	verifyToken,
 	writeSignedCookie,
-} from '@src/core'
-import type { MiddlewareContext } from '@src/core'
+} from '@src/server'
 
 declare const context: MiddlewareContext<Record<string, never>>
 
@@ -511,27 +523,27 @@ await decompressRequestBody(gzipped, 'gzip', 1_048_576) // capped decompression 
 
 ## Tests
 
-- [`tests/src/core/helpers.test.ts`](../../tests/src/core/helpers.test.ts) —
+- [`tests/src/server/helpers.test.ts`](../../tests/src/server/helpers.test.ts) —
   `compose` (outer-first ordering, double-`next` rejection, short-circuit,
   request substitution, response transformation), cookie parse/serialize/
-  attribute-injection guards, `resolveSecure`, `appendCookie`/`clearCookie`.
-- [`tests/src/core/Negotiator.test.ts`](../../tests/src/core/Negotiator.test.ts) —
+  attribute-injection guards, `resolveSecure`, `appendCookie`/`clearCookie`,
+  `isAddressInfo` narrowing, and `discoverPort` (default, preferred, and
+  taken-preferred-falls-back cases).
+- [`tests/src/server/Negotiator.test.ts`](../../tests/src/server/Negotiator.test.ts) —
   `negotiate`/`encoding`/`language`/`format`: exact vs subtype-wildcard vs
   any-range precedence, `;q=0` rejection semantics, q-tie server-order
   break, `format`'s 406 fallback and handler dispatch.
-- [`tests/src/core/errors.test.ts`](../../tests/src/core/errors.test.ts) —
+- [`tests/src/server/errors.test.ts`](../../tests/src/server/errors.test.ts) —
   `HTTPError`/`ContentTooLargeError` shape and `isHTTPError` narrowing.
-- [`tests/src/core/factories.test.ts`](../../tests/src/core/factories.test.ts) —
-  `createNegotiator` round-trip and factory return-type assertion.
+- [`tests/src/server/factories.test.ts`](../../tests/src/server/factories.test.ts) —
+  `createNegotiator` round-trip + factory return-type assertion, and
+  `createServer` round-trip, option threading, and construction guards.
 - [`tests/src/server/Server.test.ts`](../../tests/src/server/Server.test.ts) —
   the status matrix, restart-fresh-abort, `EADDRINUSE` honesty, host/port
   binds, ephemeral default, graceful-vs-forced drain, 20-parallel-none-
   dropped, connection facts threaded into state, `context.body()` caching,
   boundary mapping (`HTTPError`/other/`expose`), and the stop-signal-reaches-
   handlers case.
-- [`tests/src/server/helpers.test.ts`](../../tests/src/server/helpers.test.ts) —
-  `isAddressInfo` narrowing and `discoverPort` (default, preferred, and
-  taken-preferred-falls-back cases).
 
 ## See also
 
