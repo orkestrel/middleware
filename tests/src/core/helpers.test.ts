@@ -17,6 +17,10 @@ import {
 	rebuildResponse,
 	resolveForwardedFor,
 	resolveKey,
+	restoreSession,
+	Session,
+	sessionExpired,
+	snapshotSession,
 	transferSessionData,
 } from '@src/core'
 import { describe, expect, it } from 'vitest'
@@ -295,6 +299,29 @@ describe('transferSessionData', () => {
 describe('isSession', () => {
 	it('accepts a value shaped like a SessionInterface', () => {
 		expect(isSession({ id: 'a', data: new Map() })).toBe(true)
+	})
+
+	it('accepts a real Session class instance', () => {
+		expect(isSession(new Session('a'))).toBe(true)
+	})
+
+	it('accepts a real Session instance with entries in data', () => {
+		const session = new Session('a')
+		session.data.set('userId', 'u_1')
+		expect(isSession(session)).toBe(true)
+	})
+
+	it('rejects a class instance that does not match the shape', () => {
+		class NotASession {
+			readonly id = 42
+			readonly data = []
+		}
+		expect(isSession(new NotASession())).toBe(false)
+
+		class MissingData {
+			readonly id = 'a'
+		}
+		expect(isSession(new MissingData())).toBe(false)
 	})
 
 	it('rejects hostile inputs totally', () => {
@@ -603,5 +630,64 @@ describe('compressResponse', () => {
 			compress,
 		})
 		expect(result.headers.has('vary')).toBe(false)
+	})
+})
+
+describe('sessionExpired', () => {
+	it('is false when neither ttl nor lifetime is configured', () => {
+		expect(sessionExpired({ lastSeen: 0, createdAt: 0 }, 1_000_000, {})).toBe(false)
+	})
+
+	it('is true once idle time reaches ttl (boundary >=)', () => {
+		expect(sessionExpired({ lastSeen: 0, createdAt: 0 }, 999, { ttl: 1_000 })).toBe(false)
+		expect(sessionExpired({ lastSeen: 0, createdAt: 0 }, 1_000, { ttl: 1_000 })).toBe(true)
+	})
+
+	it('is true once absolute lifetime reaches its threshold (boundary >=)', () => {
+		expect(sessionExpired({ lastSeen: 500, createdAt: 0 }, 1_999, { lifetime: 2_000 })).toBe(false)
+		expect(sessionExpired({ lastSeen: 500, createdAt: 0 }, 2_000, { lifetime: 2_000 })).toBe(true)
+	})
+
+	it('is true when either ttl or lifetime independently elapses (both configured)', () => {
+		expect(
+			sessionExpired({ lastSeen: 0, createdAt: 0 }, 1_000, { ttl: 1_000, lifetime: 5_000 }),
+		).toBe(true)
+		expect(
+			sessionExpired({ lastSeen: 4_000, createdAt: 0 }, 5_000, { ttl: 2_000, lifetime: 5_000 }),
+		).toBe(true)
+	})
+
+	it('is false when neither threshold has elapsed (both configured)', () => {
+		expect(
+			sessionExpired({ lastSeen: 100, createdAt: 0 }, 500, { ttl: 1_000, lifetime: 5_000 }),
+		).toBe(false)
+	})
+})
+
+describe('snapshotSession / restoreSession', () => {
+	it('round-trips a session data Map through a plain-record snapshot', () => {
+		const data = new Map<string, unknown>([
+			['userId', 'u_1'],
+			['count', 3],
+		])
+		const snapshot = snapshotSession({ id: 'abc', data })
+		expect(snapshot).toEqual({ id: 'abc', data: { userId: 'u_1', count: 3 } })
+		const restored = restoreSession(snapshot)
+		expect(restored?.id).toBe('abc')
+		expect(restored?.data.get('userId')).toBe('u_1')
+		expect(restored?.data.get('count')).toBe(3)
+	})
+
+	it('snapshots an empty session data Map to an empty record', () => {
+		expect(snapshotSession({ id: 'x', data: new Map() })).toEqual({ id: 'x', data: {} })
+	})
+
+	it('returns undefined for malformed restore input', () => {
+		expect(restoreSession(undefined)).toBeUndefined()
+		expect(restoreSession(null)).toBeUndefined()
+		expect(restoreSession('abc')).toBeUndefined()
+		expect(restoreSession({})).toBeUndefined()
+		expect(restoreSession({ id: 1, data: {} })).toBeUndefined()
+		expect(restoreSession({ id: 'abc', data: 'not-a-record' })).toBeUndefined()
 	})
 })

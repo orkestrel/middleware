@@ -333,6 +333,19 @@ export interface SessionState {
 }
 
 /**
+ * The body state slice `createBody` stashes.
+ *
+ * @remarks
+ * `body` holds the same value the cached `context.body()` resolved to
+ * (`undefined` when the request declared no body, or a body `createBody`
+ * did not reject) — a mid-handler read without a second `context.body()`
+ * await.
+ */
+export interface BodyState {
+	body?: unknown
+}
+
+/**
  * The pluggable session persistence seam `createSession`'s `store` option
  * implements — a point-access store (AGENTS §5) keyed by session id.
  *

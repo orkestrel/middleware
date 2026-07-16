@@ -2,12 +2,18 @@ import type {
 	CookieTransportOptions,
 	HeaderTransportOptions,
 	MemorySessionStoreOptions,
+	SessionInterface,
 	SessionStoreInterface,
 	SessionTransport,
 } from './types.js'
-import { isString } from '@orkestrel/contract'
+import type { SessionRow } from './DatabaseSessionStore.js'
+import type { Session } from './Session.js'
+import type { Guard } from '@orkestrel/contract'
+import type { TableInterface } from '@orkestrel/database'
+import { integerShape, isString, jsonShape, stringShape } from '@orkestrel/contract'
 import { clearCookie, readSignedCookie, resolveSecure, writeSignedCookie } from '@orkestrel/server'
 import { DEFAULT_SESSION_COOKIE, DEFAULT_SESSION_HEADER } from './constants.js'
+import { DatabaseSessionStore } from './DatabaseSessionStore.js'
 import { MemorySessionStore } from './MemorySessionStore.js'
 
 // ============================================================================
@@ -108,4 +114,50 @@ export function createMemorySessionStore<S>(
 	options?: MemorySessionStoreOptions,
 ): SessionStoreInterface<S> {
 	return new MemorySessionStore<S>(options)
+}
+
+/**
+ * The `@orkestrel/database` column shape for a {@link SessionRow} table — pass
+ * as-is to `createDatabase({ tables: { sessions: sessionColumns } })` so an
+ * app declaring a durable session table never hand-writes the shape.
+ *
+ * @example
+ * ```ts
+ * const db = createDatabase({ driver, tables: { sessions: sessionColumns } })
+ * ```
+ */
+export const sessionColumns = {
+	id: stringShape(),
+	session: jsonShape(),
+	lastSeen: integerShape({ min: 0 }),
+	createdAt: integerShape({ min: 0 }),
+}
+
+/**
+ * Create a {@link DatabaseSessionStore} as a {@link SessionStoreInterface} —
+ * the durable counterpart to `createMemorySessionStore`, over a caller-opened
+ * `@orkestrel/database` table (declare it with {@link sessionColumns}).
+ *
+ * @typeParam S - The session data payload type
+ * @param table - The backing `TableInterface<SessionRow>`
+ * @param is - A {@link Guard} narrowing a restored snapshot to `S`
+ * @param options - The idle `ttl` / absolute `lifetime` thresholds
+ * @returns A {@link SessionStoreInterface}
+ *
+ * @remarks
+ * This factory only wraps `new DatabaseSessionStore(...)` — it never opens a
+ * database or driver itself; the caller owns that lifecycle and passes in an
+ * already-open table.
+ *
+ * @example
+ * ```ts
+ * const store = createDatabaseSessionStore(db.table('sessions'), isSession, { ttl: 60_000 })
+ * ```
+ */
+export function createDatabaseSessionStore<S extends SessionInterface = Session>(
+	table: TableInterface<SessionRow>,
+	is: Guard<S>,
+	options?: { readonly ttl?: number; readonly lifetime?: number },
+): SessionStoreInterface<S> {
+	return new DatabaseSessionStore<S>(table, is, options)
 }

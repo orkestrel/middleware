@@ -11,6 +11,7 @@ import type {
 import type { Encoding, MiddlewareContext } from '@orkestrel/server'
 import { isRecord, isString } from '@orkestrel/contract'
 import { clientRateKey, isCompressibleType, mergeVary, negotiateEncoding } from '@orkestrel/server'
+import { Session } from './Session.js'
 
 // ============================================================================
 //  @orkestrel/middleware — core pure leaves (AGENTS §5 helpers.ts).
@@ -448,7 +449,10 @@ export function transferSessionData(from: SessionInterface, to: SessionInterface
 
 /**
  * Determine whether a value implements {@link SessionInterface} — a total
- * structural guard (§14): an `id` string plus a `data` `Map`.
+ * structural guard (§14): an `id` string plus a `data` `Map`. Prototype-agnostic
+ * — accepts a plain object, a null-prototype object, AND a class instance
+ * (a real `Session`), since a restored/stored session is routinely a class
+ * instance, not a literal.
  *
  * @param value - The candidate value
  * @returns `true` when `value` is shaped like a {@link SessionInterface}
@@ -456,11 +460,14 @@ export function transferSessionData(from: SessionInterface, to: SessionInterface
  * @example
  * ```ts
  * isSession({ id: 'a', data: new Map() }) // true
+ * isSession(new Session('a')) // true
  * ```
  */
 export function isSession(value: unknown): value is SessionInterface {
-	if (!isRecord(value)) return false
-	return isString(value.id) && value.data instanceof Map
+	if (typeof value !== 'object' || value === null) return false
+	const id: unknown = Reflect.get(value, 'id')
+	const data: unknown = Reflect.get(value, 'data')
+	return isString(id) && data instanceof Map
 }
 
 /**
@@ -584,4 +591,70 @@ export function equalsConstantTime(a: string, b: string): boolean {
 	for (let index = 0; index < a.length; index += 1)
 		diff |= a.charCodeAt(index) ^ b.charCodeAt(index)
 	return diff === 0
+}
+
+/**
+ * Whether a session has aged past its idle timeout or absolute lifetime as
+ * of `now` — the pure expiry predicate `MemorySessionStore` delegates to.
+ *
+ * @param cursors - The session's `lastSeen` (idle) and `createdAt` (absolute) instants
+ * @param now - The current instant (same clock unit as `cursors`)
+ * @param limits - The optional `ttl` (idle) and `lifetime` (absolute) thresholds
+ * @returns `true` when either configured threshold has elapsed
+ *
+ * @example
+ * ```ts
+ * sessionExpired({ lastSeen: 0, createdAt: 0 }, 1_000, { ttl: 500 }) // true
+ * ```
+ */
+export function sessionExpired(
+	cursors: { readonly lastSeen: number; readonly createdAt: number },
+	now: number,
+	limits: { readonly ttl?: number; readonly lifetime?: number },
+): boolean {
+	if (limits.ttl !== undefined && now - cursors.lastSeen >= limits.ttl) return true
+	if (limits.lifetime !== undefined && now - cursors.createdAt >= limits.lifetime) return true
+	return false
+}
+
+/**
+ * Snapshot a session's `data` Map into a plain, serializable record — the
+ * projection a durable store's `set` writes to disk.
+ *
+ * @param session - The session to snapshot
+ * @returns A plain-object copy of `session.data`, keyed alongside `session.id`
+ *
+ * @example
+ * ```ts
+ * snapshotSession(session) // { id: 'abc', data: { userId: 'u_1' } }
+ * ```
+ */
+export function snapshotSession(session: SessionInterface): {
+	readonly id: string
+	readonly data: Record<string, unknown>
+} {
+	const data: Record<string, unknown> = {}
+	for (const [key, value] of session.data) data[key] = value
+	return { id: session.id, data }
+}
+
+/**
+ * Rebuild a `Session` from an untrusted snapshot value (the inverse of
+ * {@link snapshotSession}) — a durable store's `get` deserialization step.
+ *
+ * @param value - The candidate snapshot, of unknown shape
+ * @returns A rebuilt `Session`, or `undefined` when `value` is malformed
+ *
+ * @example
+ * ```ts
+ * restoreSession({ id: 'abc', data: { userId: 'u_1' } }) // Session { id: 'abc', data: Map }
+ * restoreSession({ id: 1 }) // undefined
+ * ```
+ */
+export function restoreSession(value: unknown): Session | undefined {
+	if (!isRecord(value)) return undefined
+	if (!isString(value.id) || !isRecord(value.data)) return undefined
+	const session = new Session(value.id)
+	for (const [key, entry] of Object.entries(value.data)) session.data.set(key, entry)
+	return session
 }

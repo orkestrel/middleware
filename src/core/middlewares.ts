@@ -1,6 +1,7 @@
 import type {
 	BearerOptions,
 	BearerState,
+	BodyState,
 	BoundaryOptions,
 	ClientState,
 	CompressionOptions,
@@ -637,9 +638,10 @@ export function createLimiter<TState extends BearerState & ClientState & Connect
 
 /**
  * The body-driving battery — eagerly awaits the cached `context.body()` so
- * its throws (or a malformed-JSON `undefined`) surface before the handler runs.
+ * its throws (or a malformed-JSON `undefined`) surface before the handler
+ * runs, and stashes the resolved value onto {@link BodyState.body}.
  *
- * @typeParam TState - The consumer's opaque per-request state type
+ * @typeParam TState - The consumer's opaque per-request state type, must carry {@link BodyState}
  * @returns A `MiddlewareHandler<TState>`
  * @throws {HTTPError} `400` when the request declares `application/json` and the body resolves `undefined`
  *
@@ -647,16 +649,19 @@ export function createLimiter<TState extends BearerState & ClientState & Connect
  * The shipped `MiddlewareContext.body()` is a parameterless, server-owned
  * cache (`ServerOptions.limit` governs its size cap) — this battery carries
  * no `limit`/`decompression` options (a deliberate break from the deleted old
- * `createBodyParser` surface, which configured them itself).
+ * `createBodyParser` surface, which configured them itself). `state.body` is
+ * stashed from the SAME awaited call the 400 check reads — `context.body()`
+ * is never invoked twice.
  *
  * @example
  * ```ts
  * const body = createBody()
  * ```
  */
-export function createBody<TState>(): MiddlewareHandler<TState> {
+export function createBody<TState extends BodyState = BodyState>(): MiddlewareHandler<TState> {
 	return async (request, context, next) => {
 		const body = await context.body()
+		context.state.body = body
 		const contentType = request.headers.get('content-type')
 		if (
 			contentType !== null &&
@@ -867,5 +872,55 @@ export function createCSRF<TState extends CSRFState & SessionState & ConnectionS
 			if (boundId !== sessionId) throw new HTTPError(403, 'invalid csrf token')
 		}
 		return next()
+	}
+}
+
+/**
+ * Scope a battery to run ONLY on a set of exact pathnames — elsewhere it
+ * steps aside via `next()`.
+ *
+ * @typeParam TState - The consumer's opaque per-request state type
+ * @param paths - One pathname, or a set of pathnames, matched exactly against `context.url.pathname`
+ * @param handler - The battery to run when `paths` matches
+ * @returns A `MiddlewareHandler<TState>`
+ *
+ * @example
+ * ```ts
+ * const scoped = only('/admin', createBearer({ secret }))
+ * ```
+ */
+export function only<TState>(
+	paths: string | readonly string[],
+	handler: MiddlewareHandler<TState>,
+): MiddlewareHandler<TState> {
+	const matches = new Set(typeof paths === 'string' ? [paths] : paths)
+	return async (request, context, next) => {
+		if (matches.has(context.url.pathname)) return handler(request, context, next)
+		return next()
+	}
+}
+
+/**
+ * Scope a battery to run everywhere EXCEPT a set of exact pathnames — there
+ * it steps aside via `next()`.
+ *
+ * @typeParam TState - The consumer's opaque per-request state type
+ * @param paths - One pathname, or a set of pathnames, matched exactly against `context.url.pathname`
+ * @param handler - The battery to run when `paths` does not match
+ * @returns A `MiddlewareHandler<TState>`
+ *
+ * @example
+ * ```ts
+ * const scoped = except('/health', createTelemetry({ record }))
+ * ```
+ */
+export function except<TState>(
+	paths: string | readonly string[],
+	handler: MiddlewareHandler<TState>,
+): MiddlewareHandler<TState> {
+	const matches = new Set(typeof paths === 'string' ? [paths] : paths)
+	return async (request, context, next) => {
+		if (matches.has(context.url.pathname)) return next()
+		return handler(request, context, next)
 	}
 }

@@ -1,5 +1,6 @@
 import type {
 	BearerState,
+	BodyState,
 	ClientState,
 	CSRFState,
 	MultipartBody,
@@ -26,7 +27,9 @@ import {
 	createSecurity,
 	createSession,
 	createTelemetry,
+	except,
 	isMultipartBody,
+	only,
 } from '@src/core'
 import { ContentTooLargeError, HTTPError, signToken } from '@orkestrel/server'
 import {
@@ -1137,6 +1140,34 @@ describe('createBody', () => {
 		expect(sawBody).toEqual({ a: 1 })
 	})
 
+	it('stashes the parsed body onto state.body', async () => {
+		const body = createBody<BodyState>()
+		const request = buildRequest('/', {
+			method: 'POST',
+			headers: { 'content-type': 'application/json' },
+			body: '{"a":1}',
+		})
+		const state: BodyState = {}
+		const context = createTestContext(request, state)
+		await runChain([body], createEchoTerminal(), request, context)
+		expect(context.state.body).toEqual({ a: 1 })
+	})
+
+	it('still throws HTTPError 400 on invalid declared JSON after stashing undefined', async () => {
+		const body = createBody<BodyState>()
+		const request = buildRequest('/', {
+			method: 'POST',
+			headers: { 'content-type': 'application/json' },
+			body: '',
+		})
+		const state: BodyState = {}
+		const context = createTestContext(request, state)
+		await expect(body(request, context, async () => new Response())).rejects.toMatchObject({
+			status: 400,
+		})
+		expect(context.state.body).toBeUndefined()
+	})
+
 	it('throws HTTPError 400 when application/json body resolves undefined (invalid JSON)', async () => {
 		const body = createBody<Record<string, never>>()
 		const request = buildRequest('/', {
@@ -1971,5 +2002,99 @@ describe('transports', () => {
 		const cookieValue = setCookie.split(';')[0] ?? ''
 		const request = buildRequest('/', { headers: { cookie: cookieValue } })
 		expect(await transport.read(request)).toBe('session-id-1')
+	})
+})
+
+// ── only / except ────────────────────────────────────────────────────────
+
+describe('only', () => {
+	it('runs the handler when the pathname matches a single string', async () => {
+		const scoped = only('/admin', createEchoTerminal())
+		const response = await runChain(
+			[scoped],
+			async () => new Response('unreached'),
+			buildRequest('/admin'),
+			createTestContext(buildRequest('/admin'), {}),
+		)
+		expect(await response.text()).toBe(ECHO_MARKER)
+	})
+
+	it('skips (next()) when the pathname does not match a single string', async () => {
+		const scoped = only('/admin', createEchoTerminal())
+		const response = await runChain(
+			[scoped],
+			async () => new Response('reached'),
+			buildRequest('/other'),
+			createTestContext(buildRequest('/other'), {}),
+		)
+		expect(await response.text()).toBe('reached')
+	})
+
+	it('runs the handler when the pathname matches any entry in an array', async () => {
+		const scoped = only(['/a', '/b'], createEchoTerminal())
+		const response = await runChain(
+			[scoped],
+			async () => new Response('unreached'),
+			buildRequest('/b'),
+			createTestContext(buildRequest('/b'), {}),
+		)
+		expect(await response.text()).toBe(ECHO_MARKER)
+	})
+
+	it('skips when the pathname matches no entry in an array', async () => {
+		const scoped = only(['/a', '/b'], createEchoTerminal())
+		const response = await runChain(
+			[scoped],
+			async () => new Response('reached'),
+			buildRequest('/c'),
+			createTestContext(buildRequest('/c'), {}),
+		)
+		expect(await response.text()).toBe('reached')
+	})
+})
+
+describe('except', () => {
+	it('skips (next()) when the pathname matches a single string', async () => {
+		const scoped = except('/health', createEchoTerminal())
+		const response = await runChain(
+			[scoped],
+			async () => new Response('reached'),
+			buildRequest('/health'),
+			createTestContext(buildRequest('/health'), {}),
+		)
+		expect(await response.text()).toBe('reached')
+	})
+
+	it('runs the handler when the pathname does not match a single string', async () => {
+		const scoped = except('/health', createEchoTerminal())
+		const response = await runChain(
+			[scoped],
+			async () => new Response('unreached'),
+			buildRequest('/other'),
+			createTestContext(buildRequest('/other'), {}),
+		)
+		expect(await response.text()).toBe(ECHO_MARKER)
+	})
+
+	it('skips when the pathname matches any entry in an array', async () => {
+		const scoped = except(['/a', '/b'], createEchoTerminal())
+		const response = await runChain(
+			[scoped],
+			async () => new Response('reached'),
+			buildRequest('/a'),
+			createTestContext(buildRequest('/a'), {}),
+		)
+		expect(await response.text()).toBe('reached')
+	})
+
+	it('runs the handler when the pathname matches no entry in an array', async () => {
+		const scoped = except(['/a', '/b'], createEchoTerminal())
+		const response = await runChain(
+			[scoped],
+			async () => new Response('unreached'),
+			buildRequest('/c'),
+			createTestContext(buildRequest('/c'), {}),
+		)
+		expect(await response.text()).toBe(ECHO_MARKER)
 	})
 })

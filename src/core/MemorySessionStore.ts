@@ -1,5 +1,6 @@
 import type { MemorySessionStoreOptions, SessionStoreInterface } from './types.js'
 import { DEFAULT_SESSION_CAPACITY } from './constants.js'
+import { sessionExpired } from './helpers.js'
 import { isFiniteNumber, isFunction } from '@orkestrel/contract'
 
 /**
@@ -103,9 +104,7 @@ export class MemorySessionStore<S> implements SessionStoreInterface<S> {
 		entry: { session: S; lastSeen: number; readonly createdAt: number },
 		now: number,
 	): boolean {
-		if (this.#ttl !== undefined && now - entry.lastSeen >= this.#ttl) return true
-		if (this.#lifetime !== undefined && now - entry.createdAt >= this.#lifetime) return true
-		return false
+		return sessionExpired(entry, now, { ttl: this.#ttl, lifetime: this.#lifetime })
 	}
 
 	// Makes room for a brand-new id: prunes expired entries, then evicts the
