@@ -89,8 +89,8 @@
 		"@microsoft/api-extractor": "^7.58.9",
 		"@orkestrel/database": "^0.0.3",
 		"@orkestrel/guide": "^0.0.1",
-		"@orkestrel/router": "^0.0.1",
-		"@orkestrel/server": "^0.0.2",
+		"@orkestrel/router": "^0.0.2",
+		"@orkestrel/server": "^0.0.3",
 		"@types/node": "^26.1.1",
 		"@vitest/browser-playwright": "^4.1.10",
 		"oxfmt": "^0.58.0",
@@ -102,7 +102,7 @@
 	},
 	"peerDependencies": {
 		"@orkestrel/database": "^0.0.3",
-		"@orkestrel/server": "^0.0.2"
+		"@orkestrel/server": "^0.0.3"
 	},
 	"peerDependenciesMeta": {
 		"@orkestrel/database": {
