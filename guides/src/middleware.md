@@ -502,6 +502,13 @@ import { createBody } from '@orkestrel/middleware'
 const body = createBody() // no options — the seam's context.body() owns limits
 ```
 
+`createBody` now stashes its resolved value on `context.state.body`, so its
+`TState` must extend `BodyState`. Zero-annotation usage (`createBody()`)
+infers `BodyState` by default and needs no change; an explicitly-typed chain
+state (`createBody<SomeState>()`) migrates with one line — add the
+`BodyState` slice (`SomeState & BodyState`, or have `SomeState extend
+BodyState`) — unless it already carries a `body` field.
+
 ### Session: control handle, header transport, injected store
 
 ```ts

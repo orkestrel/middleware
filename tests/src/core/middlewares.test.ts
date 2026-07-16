@@ -1917,7 +1917,7 @@ describe('composition', () => {
 	})
 
 	it('body -> csrf field read: csrf reads the field the body battery cached', async () => {
-		const body = createBody<CSRFState & SessionState>()
+		const body = createBody<BodyState & CSRFState & SessionState>()
 		const csrf = createCSRF<CSRFState & SessionState>({ secret: SECRET })
 		const mintState: CSRFState & SessionState = {}
 		const mintResponse = await runChain(
