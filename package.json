@@ -1,6 +1,6 @@
 {
 	"name": "@orkestrel/middleware",
-	"version": "0.0.4",
+	"version": "0.0.5",
 	"description": "Batteries for the @orkestrel/server middleware seam — boundary, telemetry, compression, security, CORS, rate limiting, sessions, CSRF, static files, and multipart uploads as typed factories. Part of the @orkestrel line.",
 	"keywords": [
 		"compression",
@@ -80,17 +80,17 @@
 		"prepublishOnly": "npm run format:check && npm run lint:check && npm run check && npm run build && npm test"
 	},
 	"dependencies": {
-		"@orkestrel/abort": "^0.0.2",
-		"@orkestrel/budget": "^0.0.2",
-		"@orkestrel/contract": "^0.0.2",
-		"@orkestrel/timeout": "^0.0.2"
+		"@orkestrel/abort": "^0.0.3",
+		"@orkestrel/budget": "^0.0.3",
+		"@orkestrel/contract": "^0.0.5",
+		"@orkestrel/timeout": "^0.0.3"
 	},
 	"devDependencies": {
 		"@microsoft/api-extractor": "^7.58.11",
-		"@orkestrel/database": "^0.0.4",
-		"@orkestrel/guide": "^0.0.2",
-		"@orkestrel/router": "^0.0.3",
-		"@orkestrel/server": "^0.0.5",
+		"@orkestrel/database": "^0.0.5",
+		"@orkestrel/guide": "^0.0.5",
+		"@orkestrel/router": "^0.0.4",
+		"@orkestrel/server": "^0.0.6",
 		"@types/node": "^26.1.1",
 		"@vitest/browser-playwright": "^4.1.10",
 		"oxfmt": "^0.59.0",
@@ -101,8 +101,8 @@
 		"vitest": "^4.1.10"
 	},
 	"peerDependencies": {
-		"@orkestrel/database": "^0.0.4",
-		"@orkestrel/server": "^0.0.5"
+		"@orkestrel/database": "^0.0.5",
+		"@orkestrel/server": "^0.0.6"
 	},
 	"peerDependenciesMeta": {
 		"@orkestrel/database": {
