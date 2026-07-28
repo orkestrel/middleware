@@ -1,7 +1,7 @@
 {
 	"name": "@orkestrel/middleware",
-	"version": "0.0.5",
-	"description": "Batteries for the @orkestrel/server middleware seam — boundary, telemetry, compression, security, CORS, rate limiting, sessions, CSRF, static files, and multipart uploads as typed factories. Part of the @orkestrel line.",
+	"version": "0.0.6",
+	"description": "Batteries for the @orkestrel/server middleware seam \u2014 boundary, telemetry, compression, security, CORS, rate limiting, sessions, CSRF, static files, and multipart uploads as typed factories. Part of the @orkestrel line.",
 	"keywords": [
 		"compression",
 		"cors",
@@ -59,7 +59,7 @@
 	"scripts": {
 		"clean": "node -e \"try{require('node:fs').rmSync('dist',{recursive:true,force:true})}catch{}\"",
 		"copy": "node -e \"const fs=require('node:fs'),p=require('node:path'),a=process.argv[1],b=process.argv[2];fs.mkdirSync(p.dirname(b),{recursive:true});fs.cpSync(a,b,{force:true});console.log('Copied: '+a+' to '+b)\"",
-		"tmp:txt": "node -e \"const fs=require('node:fs'),p=require('node:path');function walk(d){for(const e of fs.readdirSync(d,{withFileTypes:true})){const f=p.join(d,e.name);if(e.isDirectory()){walk(f)}else if(!e.name.endsWith('.md')&&!e.name.endsWith('.txt')){const t=f+'.txt';if(!fs.existsSync(t)){fs.renameSync(f,t)}else{console.warn('Skipping '+f+' — target exists: '+t)}}}}try{walk('tmp')}catch(e){if(e.code!=='ENOENT')throw e}\"",
+		"tmp:txt": "node -e \"const fs=require('node:fs'),p=require('node:path');function walk(d){for(const e of fs.readdirSync(d,{withFileTypes:true})){const f=p.join(d,e.name);if(e.isDirectory()){walk(f)}else if(!e.name.endsWith('.md')&&!e.name.endsWith('.txt')){const t=f+'.txt';if(!fs.existsSync(t)){fs.renameSync(f,t)}else{console.warn('Skipping '+f+' \u2014 target exists: '+t)}}}}try{walk('tmp')}catch(e){if(e.code!=='ENOENT')throw e}\"",
 		"scaffold": "scaffold",
 		"lint": "oxlint --config .oxlintrc.json --fix .",
 		"check": "tsc --noEmit --project tsconfig.json && npm run check:src",
