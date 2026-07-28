@@ -248,12 +248,12 @@ export interface LimiterOptions<TState = unknown> {
  * `context.state` once a token verifies.
  *
  * @remarks
- * `token` is optional-mutable: absent until `createBearer` runs, then
- * written in place — the pattern every stateful battery's slice follows so a
+ * `token` is an optional readonly state contract: absent until
+ * `createBearer` runs, then installed on the request-owned state object. A
  * consumer intersects only the slices it mounts into its own `TState`.
  */
 export interface BearerState {
-	token?: string
+	readonly token?: string
 }
 
 /**
@@ -261,7 +261,7 @@ export interface BearerState {
  * `identifier` option is enabled.
  */
 export interface IdentifierState {
-	identifier?: string
+	readonly identifier?: string
 }
 
 /**
@@ -290,7 +290,7 @@ export interface ClientInfo {
  * The client-facts state slice `createForwarded` stashes.
  */
 export interface ClientState {
-	client?: ClientInfo
+	readonly client?: ClientInfo
 }
 
 /**
@@ -328,21 +328,20 @@ export interface SessionControlInterface {
  * `control` is present whenever `session` is (the handle to act on it).
  */
 export interface SessionState {
-	session?: SessionInterface
-	control?: SessionControlInterface
+	readonly session?: SessionInterface
+	readonly control?: SessionControlInterface
 }
 
 /**
  * The body state slice `createBody` stashes.
  *
  * @remarks
- * `body` holds the same value the cached `context.body()` resolved to
- * (`undefined` when the request declared no body, or a body `createBody`
- * did not reject) — a mid-handler read without a second `context.body()`
- * await.
+ * `body` holds the same defined value the cached `context.body()` resolved
+ * to — a mid-handler read without a second `context.body()` await. The
+ * property remains absent when the body resolves `undefined`.
  */
 export interface BodyState {
-	body?: unknown
+	readonly body?: unknown
 }
 
 /**
@@ -495,7 +494,7 @@ export interface MemorySessionStoreOptions {
  * response exposes for a subsequent mutating request to submit back.
  */
 export interface CSRFState {
-	csrf?: string
+	readonly csrf?: string
 }
 
 /**
@@ -562,5 +561,5 @@ export interface MultipartBody {
  * cached body has nothing left to read.
  */
 export interface MultipartState {
-	multipart?: MultipartBody
+	readonly multipart?: MultipartBody
 }

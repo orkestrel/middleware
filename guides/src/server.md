@@ -18,8 +18,8 @@
 Bring your own `@orkestrel/router` dispatcher, mount middleware, and start:
 
 ```ts
-import type { MiddlewareHandler } from '@src/server'
-import { createServer } from '@src/server'
+import type { MiddlewareHandler } from '@orkestrel/server'
+import { createServer } from '@orkestrel/server'
 import { createDispatcher } from '@orkestrel/router'
 
 interface State {
@@ -336,8 +336,8 @@ stopping → stopped`; `start()` from `listening`/`starting`/`stopping`
 ### Quickstart: dispatcher, middleware, lifecycle
 
 ```ts
-import type { MiddlewareHandler } from '@src/server'
-import { createServer } from '@src/server'
+import type { MiddlewareHandler } from '@orkestrel/server'
+import { createServer } from '@orkestrel/server'
 import { createDispatcher } from '@orkestrel/router'
 
 interface State {
@@ -371,8 +371,8 @@ dispatcher's own auto-`OPTIONS` responder ever sees it — mount it earliest in
 the array, ahead of anything that would short-circuit later.
 
 ```ts
-import type { MiddlewareHandler } from '@src/server'
-import { createServer } from '@src/server'
+import type { MiddlewareHandler } from '@orkestrel/server'
+import { createServer } from '@orkestrel/server'
 import { createDispatcher } from '@orkestrel/router'
 
 interface State {
@@ -402,7 +402,7 @@ intersects the slices it mounts into one `TState` — no per-middleware generic
 accumulation.
 
 ```ts
-import type { MiddlewareHandler } from '@src/server'
+import type { MiddlewareHandler } from '@orkestrel/server'
 
 interface TokenState {
 	readonly userId?: string
@@ -418,7 +418,7 @@ const withUser: MiddlewareHandler<State> = async (_request, context, next) => ne
 ### SSE route
 
 ```ts
-import { openStream } from '@src/server'
+import { openStream } from '@orkestrel/server'
 
 function streamHandler(): Response {
 	const stream = openStream()
@@ -435,7 +435,7 @@ function streamHandler(): Response {
 deadline, then closes; `destroy()` is the final, idempotent teardown.
 
 ```ts
-import { createServer } from '@src/server'
+import { createServer } from '@orkestrel/server'
 import { createDispatcher } from '@orkestrel/router'
 
 const dispatcher = createDispatcher()
@@ -449,7 +449,7 @@ await server.destroy() // idempotent final teardown
 ### Upgrade attach
 
 ```ts
-import { createServer } from '@src/server'
+import { createServer } from '@orkestrel/server'
 import { createDispatcher } from '@orkestrel/router'
 
 const dispatcher = createDispatcher()
@@ -464,7 +464,7 @@ server.upgrade((_request, socket, _head) => {
 ### Substrate direct use — tokens, cookies, negotiation
 
 ```ts
-import type { MiddlewareContext } from '@src/server'
+import type { MiddlewareContext } from '@orkestrel/server'
 import {
 	createNegotiator,
 	decodeTokenPayload,
@@ -473,7 +473,7 @@ import {
 	signToken,
 	verifyToken,
 	writeSignedCookie,
-} from '@src/server'
+} from '@orkestrel/server'
 
 declare const context: MiddlewareContext<Record<string, never>>
 

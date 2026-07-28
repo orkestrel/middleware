@@ -104,7 +104,10 @@ export class MemorySessionStore<S> implements SessionStoreInterface<S> {
 		entry: { session: S; lastSeen: number; readonly createdAt: number },
 		now: number,
 	): boolean {
-		return sessionExpired(entry, now, { ttl: this.#ttl, lifetime: this.#lifetime })
+		return sessionExpired(entry, now, {
+			...(this.#ttl !== undefined ? { ttl: this.#ttl } : {}),
+			...(this.#lifetime !== undefined ? { lifetime: this.#lifetime } : {}),
+		})
 	}
 
 	// Makes room for a brand-new id: prunes expired entries, then evicts the

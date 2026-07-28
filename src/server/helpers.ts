@@ -1,4 +1,4 @@
-import type { MultipartBody, MultipartFile } from '@src/core'
+import type { MultipartBody } from '@src/core'
 import type {
 	MultipartLimits,
 	MultipartOptions,
@@ -7,13 +7,13 @@ import type {
 	UploadedFileInterface,
 } from './types.js'
 import type { FileHandle } from 'node:fs/promises'
+import type { Encoding } from '@orkestrel/server'
 import { createReadStream } from 'node:fs'
-import { chmod, copyFile, mkdtemp, open, readFile, rename, unlink } from 'node:fs/promises'
-import { tmpdir } from 'node:os'
+import { copyFile, readFile, rename, unlink } from 'node:fs/promises'
 import { extname, isAbsolute, join, normalize, relative, resolve, sep } from 'node:path'
-import { randomUUID } from 'node:crypto'
+import { promisify } from 'node:util'
+import { deflate as zlibDeflate, gzip as zlibGzip } from 'node:zlib'
 import { isRecord } from '@orkestrel/contract'
-import { isDangerousKey } from '@orkestrel/server'
 import {
 	DEFAULT_CONTENT_TYPE,
 	DEFAULT_MULTIPART_FIELD,
@@ -22,11 +22,10 @@ import {
 	DEFAULT_MULTIPART_FILES,
 	DEFAULT_MULTIPART_TOTAL,
 	EXTENSION_TYPES,
-	MULTIPART_MAX_HEADER_BLOCK,
-	MULTIPART_MAX_PREAMBLE,
 	RESERVED_DEVICE_NAMES,
 } from './constants.js'
 import { MultipartError } from './errors.js'
+import { MultipartParser } from './MultipartParser.js'
 
 // ============================================================================
 //  @orkestrel/middleware/server — node-face pure/near-pure leaves (AGENTS §5
@@ -56,6 +55,39 @@ export function isUnderPath(pathname: string, prefix: string): boolean {
 	if (pathname === prefix) return true
 	const boundary = prefix.endsWith('/') ? prefix : `${prefix}/`
 	return pathname.startsWith(boundary)
+}
+
+/**
+ * Resolve the fixed SPA shell path when a static-file miss is eligible for
+ * fallback.
+ *
+ * @param root - The configured static root
+ * @param index - The configured shell filename
+ * @param exclude - The URL prefix excluded from fallback
+ * @param method - The request method
+ * @param pathname - The request pathname
+ * @param accept - The request's `Accept` header value
+ * @returns The fixed shell path, or `undefined` when fallback is ineligible
+ *
+ * @example
+ * ```ts
+ * resolveStaticFallbackPath('/srv/public', 'index.html', '/api', 'GET', '/dashboard', 'text/html')
+ * // '/srv/public/index.html'
+ * ```
+ */
+export function resolveStaticFallbackPath(
+	root: string,
+	index: string,
+	exclude: string,
+	method: string,
+	pathname: string,
+	accept: string,
+): string | undefined {
+	if (method !== 'GET') return undefined
+	if (extname(pathname) !== '') return undefined
+	if (!accept.includes('text/html') && !accept.includes('*/*')) return undefined
+	if (isUnderPath(pathname, exclude)) return undefined
+	return join(root, index)
 }
 
 /**
@@ -216,6 +248,28 @@ export function computeFileETag(size: number, mtimeMs: number): string {
 }
 
 /**
+ * Compress response bytes with Node's guaranteed zlib gzip/deflate codecs.
+ *
+ * @param bytes - The uncompressed response bytes
+ * @param encoding - The negotiated actionable coding
+ * @returns The compressed bytes
+ *
+ * @example
+ * ```ts
+ * const bytes = new TextEncoder().encode('compress me')
+ * const compressed = await compressNodeBytes(bytes, 'deflate')
+ * ```
+ */
+export async function compressNodeBytes(
+	bytes: Uint8Array<ArrayBuffer>,
+	encoding: Exclude<Encoding, 'identity'>,
+): Promise<Uint8Array<ArrayBuffer>> {
+	const compressed =
+		encoding === 'gzip' ? await promisify(zlibGzip)(bytes) : await promisify(zlibDeflate)(bytes)
+	return Uint8Array.from(compressed)
+}
+
+/**
  * Sniff a MIME type from a file's leading bytes against a small magic-byte
  * table (jpeg, png, gif87a/89a, webp, pdf, zip) — the SNIFF-AUTHORITATIVE
  * signal `createMultipart`'s type validation rests on, never the declared
@@ -230,25 +284,43 @@ export function computeFileETag(size: number, mtimeMs: number): string {
  * ```
  */
 export function detectMIME(head: Uint8Array): string | undefined {
-	function matches(signature: readonly number[], offset = 0): boolean {
-		if (head.length < offset + signature.length) return false
-		for (let index = 0; index < signature.length; index += 1)
-			if (head[offset + index] !== signature[index]) return false
-		return true
-	}
-	if (matches([0xff, 0xd8, 0xff])) return 'image/jpeg'
-	if (matches([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a])) return 'image/png'
-	if (matches([0x47, 0x49, 0x46, 0x38, 0x37, 0x61])) return 'image/gif'
-	if (matches([0x47, 0x49, 0x46, 0x38, 0x39, 0x61])) return 'image/gif'
-	if (matches([0x52, 0x49, 0x46, 0x46]) && matches([0x57, 0x45, 0x42, 0x50], 8)) return 'image/webp'
-	if (matches([0x25, 0x50, 0x44, 0x46, 0x2d])) return 'application/pdf'
+	if (matchesBytes(head, [0xff, 0xd8, 0xff])) return 'image/jpeg'
+	if (matchesBytes(head, [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a])) return 'image/png'
+	if (matchesBytes(head, [0x47, 0x49, 0x46, 0x38, 0x37, 0x61])) return 'image/gif'
+	if (matchesBytes(head, [0x47, 0x49, 0x46, 0x38, 0x39, 0x61])) return 'image/gif'
 	if (
-		matches([0x50, 0x4b, 0x03, 0x04]) ||
-		matches([0x50, 0x4b, 0x05, 0x06]) ||
-		matches([0x50, 0x4b, 0x07, 0x08])
+		matchesBytes(head, [0x52, 0x49, 0x46, 0x46]) &&
+		matchesBytes(head, [0x57, 0x45, 0x42, 0x50], 8)
+	)
+		return 'image/webp'
+	if (matchesBytes(head, [0x25, 0x50, 0x44, 0x46, 0x2d])) return 'application/pdf'
+	if (
+		matchesBytes(head, [0x50, 0x4b, 0x03, 0x04]) ||
+		matchesBytes(head, [0x50, 0x4b, 0x05, 0x06]) ||
+		matchesBytes(head, [0x50, 0x4b, 0x07, 0x08])
 	)
 		return 'application/zip'
 	return undefined
+}
+
+/**
+ * Whether `bytes` contains `signature` at the requested offset.
+ *
+ * @param bytes - The bytes to inspect
+ * @param signature - The exact byte sequence to match
+ * @param offset - The starting byte offset, defaulting to zero
+ * @returns `true` when the complete signature matches
+ *
+ * @example
+ * ```ts
+ * matchesBytes(Uint8Array.from([0, 0x50, 0x4b]), [0x50, 0x4b], 1) // true
+ * ```
+ */
+export function matchesBytes(bytes: Uint8Array, signature: readonly number[], offset = 0): boolean {
+	if (bytes.length < offset + signature.length) return false
+	for (let index = 0; index < signature.length; index += 1)
+		if (bytes[offset + index] !== signature[index]) return false
+	return true
 }
 
 /**
@@ -302,12 +374,6 @@ export function resolveMultipartLimits(
 }
 
 /**
- * Memoized `Promise` for `parseMultipartRequest`'s lazily-created default
- * staging directory — created once per process via {@link resolveDefaultDirectory}.
- */
-let defaultDirectory: Promise<string> | undefined
-
-/**
  * Resolve `parseMultipartRequest`'s default staging directory when the
  * caller did not configure one — a process-owned directory created ONCE
  * (lazily, memoized across calls) via `mkdtemp` under `os.tmpdir()` and
@@ -321,14 +387,7 @@ let defaultDirectory: Promise<string> | undefined
  * ```
  */
 export function resolveDefaultDirectory(): Promise<string> {
-	if (defaultDirectory === undefined) {
-		defaultDirectory = (async () => {
-			const path = await mkdtemp(join(tmpdir(), 'orkestrel-multipart-'))
-			await chmod(path, 0o700)
-			return path
-		})()
-	}
-	return defaultDirectory
+	return MultipartParser.directory()
 }
 
 /**
@@ -419,215 +478,14 @@ export async function parseMultipartRequest(
 	const limits = resolveMultipartLimits(options.limits)
 	const allowed = options.allowed
 	const directory = options.directory ?? (await resolveDefaultDirectory())
-
-	const staged: string[] = []
-	const files: Record<string, MultipartFile[]> = Object.create(null)
-	const fields: Record<string, string> = Object.create(null)
-	let fileCount = 0
-	let fieldCount = 0
-	let totalBytes = 0
-	let aborted = false
-
-	async function cleanup(): Promise<void> {
-		for (const path of staged) {
-			try {
-				await unlink(path)
-			} catch {
-				// Already gone — cleanup is best-effort.
-			}
-		}
-	}
-
-	const reader = request.body.getReader()
-	let buffer = Buffer.alloc(0)
-	let ended = false
-	const onAbort = (): void => {
-		aborted = true
-	}
-	request.signal.addEventListener('abort', onAbort)
-
-	async function pull(): Promise<boolean> {
-		if (aborted || request.signal.aborted)
-			throw new MultipartError('malformed', 'request aborted mid-upload')
-		if (ended) return false
-		const { done, value } = await reader.read()
-		if (done) {
-			ended = true
-			return false
-		}
-		totalBytes += value.byteLength
-		if (totalBytes > limits.total)
-			throw new MultipartError('limit', 'multipart body exceeds total limit')
-		buffer = Buffer.concat([buffer, Buffer.from(value.buffer, value.byteOffset, value.byteLength)])
-		return true
-	}
-
-	try {
-		const openMarker = Buffer.from(`--${boundary}`)
-		let preambleScanned = 0
-		let index = buffer.indexOf(openMarker)
-		while (index === -1) {
-			const carry = openMarker.length - 1
-			if (buffer.length > carry) {
-				const drop = buffer.length - carry
-				preambleScanned += drop
-				if (preambleScanned > MULTIPART_MAX_PREAMBLE)
-					throw new MultipartError('malformed', 'multipart preamble too large')
-				buffer = buffer.subarray(drop)
-			}
-			if (!(await pull())) throw new MultipartError('malformed', 'missing multipart boundary')
-			index = buffer.indexOf(openMarker)
-		}
-		buffer = buffer.subarray(index + openMarker.length)
-
-		for (;;) {
-			while (buffer.length < 2)
-				if (!(await pull()))
-					throw new MultipartError('malformed', 'unterminated multipart boundary')
-			if (buffer[0] === 0x2d && buffer[1] === 0x2d) break
-			if (buffer[0] !== 0x0d || buffer[1] !== 0x0a)
-				throw new MultipartError('malformed', 'malformed multipart boundary')
-			buffer = buffer.subarray(2)
-
-			let headerEnd = buffer.indexOf('\r\n\r\n')
-			while (headerEnd === -1) {
-				if (buffer.length > MULTIPART_MAX_HEADER_BLOCK)
-					throw new MultipartError('malformed', 'multipart header block too large')
-				if (!(await pull()))
-					throw new MultipartError('malformed', 'unterminated multipart part headers')
-				headerEnd = buffer.indexOf('\r\n\r\n')
-			}
-			const headerBlock = buffer.subarray(0, headerEnd).toString('utf8')
-			buffer = buffer.subarray(headerEnd + 4)
-			const { name, filename, contentType } = parsePartHeaders(headerBlock)
-			if (name === undefined) throw new MultipartError('malformed', 'multipart part missing name')
-
-			const partDelimiter = Buffer.from(`\r\n--${boundary}`)
-
-			if (filename !== undefined) {
-				if (filename !== '') {
-					fileCount += 1
-					if (fileCount > limits.files)
-						throw new MultipartError('limit', 'too many multipart files')
-				}
-				const path = join(directory, randomUUID())
-				staged.push(path)
-				const handle = await open(path, 'w', 0o600)
-				let size = 0
-				let head = Buffer.alloc(0)
-				try {
-					for (;;) {
-						const boundaryIndex = buffer.indexOf(partDelimiter)
-						if (boundaryIndex === -1) {
-							const safeLength = Math.max(0, buffer.length - (partDelimiter.length - 1))
-							if (safeLength > 0) {
-								const chunk = buffer.subarray(0, safeLength)
-								size += chunk.length
-								if (size > limits.file)
-									throw new MultipartError('limit', 'multipart file exceeds size limit')
-								if (head.length < 16)
-									head = Buffer.concat([head, chunk.subarray(0, 16 - head.length)])
-								await handle.write(chunk)
-								buffer = buffer.subarray(safeLength)
-							}
-							if (!(await pull()))
-								throw new MultipartError('malformed', 'unterminated multipart file part')
-							continue
-						}
-						const chunk = buffer.subarray(0, boundaryIndex)
-						size += chunk.length
-						if (size > limits.file)
-							throw new MultipartError('limit', 'multipart file exceeds size limit')
-						if (head.length < 16) head = Buffer.concat([head, chunk.subarray(0, 16 - head.length)])
-						await handle.write(chunk)
-						buffer = buffer.subarray(boundaryIndex + 2)
-						break
-					}
-				} finally {
-					await handle.close()
-				}
-				if (filename === '' && size === 0) {
-					// Browser empty-optional-file-input convention: an
-					// unselected <input type="file"> still submits a part
-					// with an empty filename and zero-byte body — a no-op,
-					// never counted against the files limit or the allow-list.
-					await unlink(path)
-					staged.splice(staged.indexOf(path), 1)
-				} else {
-					if (filename === '') {
-						fileCount += 1
-						if (fileCount > limits.files)
-							throw new MultipartError('limit', 'too many multipart files')
-					}
-					const detected = detectMIME(head)
-					const declared = contentType ?? DEFAULT_CONTENT_TYPE
-					const validated = detected !== undefined && detected === declared
-					if (allowed !== undefined) {
-						const acceptable = detected !== undefined && allowed.includes(detected)
-						if (!acceptable)
-							throw new MultipartError('rejected', 'multipart file failed type validation')
-					}
-					if (isDangerousKey(name)) {
-						await unlink(path)
-						staged.splice(staged.indexOf(path), 1)
-					} else {
-						const record = createUploadedFile({
-							field: name,
-							name: filename,
-							size,
-							mime: detected ?? declared,
-							validated,
-							status: 'staged',
-							path,
-						})
-						const existing = files[name]
-						if (existing === undefined) files[name] = [record]
-						else existing.push(record)
-					}
-				}
-			} else {
-				fieldCount += 1
-				if (fieldCount > limits.fields)
-					throw new MultipartError('limit', 'too many multipart fields')
-				let value = Buffer.alloc(0)
-				for (;;) {
-					const boundaryIndex = buffer.indexOf(partDelimiter)
-					if (boundaryIndex === -1) {
-						const safeLength = Math.max(0, buffer.length - (partDelimiter.length - 1))
-						if (safeLength > 0) {
-							value = Buffer.concat([value, buffer.subarray(0, safeLength)])
-							if (value.length > limits.field)
-								throw new MultipartError('limit', 'multipart field exceeds size limit')
-							buffer = buffer.subarray(safeLength)
-						}
-						if (!(await pull()))
-							throw new MultipartError('malformed', 'unterminated multipart field part')
-						continue
-					}
-					value = Buffer.concat([value, buffer.subarray(0, boundaryIndex)])
-					if (value.length > limits.field)
-						throw new MultipartError('limit', 'multipart field exceeds size limit')
-					buffer = buffer.subarray(boundaryIndex + 2)
-					break
-				}
-				if (!isDangerousKey(name)) fields[name] = value.toString('utf8')
-			}
-
-			while (buffer.length < openMarker.length)
-				if (!(await pull()))
-					throw new MultipartError('malformed', 'unterminated multipart boundary')
-			buffer = buffer.subarray(openMarker.length)
-		}
-	} catch (error) {
-		await cleanup()
-		await reader.cancel().catch(() => {})
-		throw error
-	} finally {
-		request.signal.removeEventListener('abort', onAbort)
-		if (!ended) await reader.cancel().catch(() => {})
-	}
-
-	return { files: Object.freeze(files), fields: Object.freeze(fields) }
+	return new MultipartParser(
+		request.body,
+		request.signal,
+		boundary,
+		limits,
+		allowed,
+		directory,
+	).parse()
 }
 
 /**

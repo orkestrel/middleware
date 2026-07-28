@@ -908,8 +908,12 @@ describe('capstone: real socket + Dispatcher + canonical onion', () => {
 
 		const handle = await startServer(async (message, response) => {
 			const request = buildRouterRequest(message)
+			const ip = message.socket.remoteAddress
 			const state: CapstoneState = {
-				connection: { ip: message.socket.remoteAddress ?? undefined, encrypted: false },
+				connection: {
+					...(ip !== undefined ? { ip } : {}),
+					encrypted: false,
+				},
 			}
 			const context = createTestContext(request, state)
 			const result = await composed(request, context)

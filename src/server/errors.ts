@@ -41,7 +41,7 @@ export class MultipartError extends Error {
 		super(message)
 		this.status = MULTIPART_REASON_STATUS[reason]
 		this.reason = reason
-		this.context = context
+		if (context !== undefined) this.context = context
 		Object.defineProperty(this, Symbol.for('@orkestrel/middleware.MultipartError'), {
 			value: true,
 		})

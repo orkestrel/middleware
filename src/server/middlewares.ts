@@ -1,11 +1,10 @@
 import type { MultipartState } from '@src/core'
 import type { MultipartOptions, NodeCompressionOptions, StaticOptions } from './types.js'
+import type { Stats } from 'node:fs'
 import type { FileHandle } from 'node:fs/promises'
 import { DEFAULT_COMPRESSION_THRESHOLD, compressResponse } from '@src/core'
 import { open, realpath, stat } from 'node:fs/promises'
-import { extname, join, relative, resolve } from 'node:path'
-import { deflate as zlibDeflate, gzip as zlibGzip } from 'node:zlib'
-import { promisify } from 'node:util'
+import { join, relative, resolve } from 'node:path'
 import type { Encoding, MiddlewareHandler } from '@orkestrel/server'
 import { HTTPError, matchesETag, parseRange } from '@orkestrel/server'
 import { isFiniteNumber, isFunction, isString } from '@orkestrel/contract'
@@ -13,11 +12,12 @@ import { DEFAULT_STATIC_FALLBACK_EXCLUDE, DEFAULT_STATIC_INDEX } from './constan
 import { isMultipartError } from './errors.js'
 import {
 	computeFileETag,
+	compressNodeBytes,
 	isContainedPath,
 	isDotfilePath,
-	isUnderPath,
 	lookupContentType,
 	parseMultipartRequest,
+	resolveStaticFallbackPath,
 	resolveStaticPath,
 	streamFile,
 	unlinkStagedFiles,
@@ -79,10 +79,6 @@ export function createStatic<TState>(options: StaticOptions): MiddlewareHandler<
 				: { exclude: options.fallback.exclude ?? DEFAULT_STATIC_FALLBACK_EXCLUDE }
 
 	let canonicalRootPromise: Promise<string> | undefined
-	function canonicalRoot(): Promise<string> {
-		if (canonicalRootPromise === undefined) canonicalRootPromise = realpath(root)
-		return canonicalRootPromise
-	}
 
 	return async (request, context, next) => {
 		if (context.method !== 'GET' && context.method !== 'HEAD') return next()
@@ -96,13 +92,15 @@ export function createStatic<TState>(options: StaticOptions): MiddlewareHandler<
 			if (dotfiles === 'ignore') return next()
 		}
 
-		let resolvedPath: string
+		let resolvedPath = target
+		let fallbackNeeded = false
 		try {
-			const [rootReal, targetReal] = await Promise.all([canonicalRoot(), realpath(target)])
+			if (canonicalRootPromise === undefined) canonicalRootPromise = realpath(root)
+			const [rootReal, targetReal] = await Promise.all([canonicalRootPromise, realpath(target)])
 			if (!isContainedPath(targetReal, rootReal)) return next()
 			resolvedPath = targetReal
 		} catch {
-			return trySpaFallback()
+			fallbackNeeded = true
 		}
 
 		// Directory-detection only — routing decision, not the served file's
@@ -110,41 +108,93 @@ export function createStatic<TState>(options: StaticOptions): MiddlewareHandler<
 		// from a single `fstat` on an opened handle below, closing the
 		// stat-to-stream TOCTOU (a file replaced between "check" and "serve"
 		// can no longer yield a 200 with stale headers over swapped bytes).
-		let directoryInfo: Awaited<ReturnType<typeof stat>>
-		try {
-			directoryInfo = await stat(resolvedPath)
-		} catch {
-			return trySpaFallback()
-		}
-
-		if (directoryInfo.isDirectory()) {
-			resolvedPath = join(resolvedPath, index)
+		let directoryInfo: Awaited<ReturnType<typeof stat>> | undefined
+		if (!fallbackNeeded) {
 			try {
-				const [rootReal, indexReal] = await Promise.all([canonicalRoot(), realpath(resolvedPath)])
-				if (!isContainedPath(indexReal, rootReal)) return trySpaFallback()
-				resolvedPath = indexReal
+				directoryInfo = await stat(resolvedPath)
 			} catch {
-				return trySpaFallback()
+				fallbackNeeded = true
 			}
 		}
 
-		let handle: FileHandle
-		try {
-			handle = await open(resolvedPath, 'r')
-		} catch {
-			return trySpaFallback()
+		if (directoryInfo?.isDirectory()) {
+			resolvedPath = join(resolvedPath, index)
+			try {
+				if (canonicalRootPromise === undefined) canonicalRootPromise = realpath(root)
+				const [rootReal, indexReal] = await Promise.all([
+					canonicalRootPromise,
+					realpath(resolvedPath),
+				])
+				if (isContainedPath(indexReal, rootReal)) resolvedPath = indexReal
+				else fallbackNeeded = true
+			} catch {
+				fallbackNeeded = true
+			}
 		}
-		let info: Awaited<ReturnType<FileHandle['stat']>>
-		try {
-			info = await handle.stat()
-		} catch {
+
+		let handle: FileHandle | undefined
+		let info: Stats | undefined
+		if (!fallbackNeeded) {
+			try {
+				handle = await open(resolvedPath, 'r')
+			} catch {
+				fallbackNeeded = true
+			}
+		}
+		if (handle !== undefined) {
+			try {
+				info = await handle.stat()
+			} catch {
+				await handle.close()
+				handle = undefined
+				fallbackNeeded = true
+			}
+		}
+		if (handle !== undefined && info !== undefined && !info.isFile()) {
 			await handle.close()
-			return trySpaFallback()
+			handle = undefined
+			info = undefined
+			fallbackNeeded = true
 		}
-		if (!info.isFile()) {
-			await handle.close()
-			return trySpaFallback()
+
+		if (fallbackNeeded) {
+			const shellPath = resolveStaticFallbackPath(
+				root,
+				index,
+				fallback?.exclude ?? DEFAULT_STATIC_FALLBACK_EXCLUDE,
+				context.method,
+				context.url.pathname,
+				request.headers.get('accept') ?? '',
+			)
+			if (fallback === undefined || shellPath === undefined) return next()
+			let shellReal: string
+			try {
+				if (canonicalRootPromise === undefined) canonicalRootPromise = realpath(root)
+				const [rootReal, candidate] = await Promise.all([canonicalRootPromise, realpath(shellPath)])
+				if (!isContainedPath(candidate, rootReal)) return next()
+				shellReal = candidate
+			} catch {
+				return next()
+			}
+			let shellHandle: FileHandle
+			try {
+				shellHandle = await open(shellReal, 'r')
+			} catch {
+				return next()
+			}
+			try {
+				const body = streamFile(shellHandle)
+				return new Response(body, {
+					status: 200,
+					headers: new Headers({ 'content-type': lookupContentType(shellReal) }),
+				})
+			} catch (error) {
+				await shellHandle.close().catch(() => {})
+				throw error
+			}
 		}
+
+		if (handle === undefined || info === undefined) return next()
 
 		let streaming = false
 		try {
@@ -192,35 +242,6 @@ export function createStatic<TState>(options: StaticOptions): MiddlewareHandler<
 			if (!streaming) await handle.close().catch(() => {})
 			throw error
 		}
-
-		function trySpaFallback(): Response | Promise<Response> {
-			if (fallback === undefined) return next()
-			if (context.method !== 'GET') return next()
-			if (extname(context.url.pathname) !== '') return next()
-			const accept = request.headers.get('accept') ?? ''
-			if (!accept.includes('text/html') && !accept.includes('*/*')) return next()
-			if (isUnderPath(context.url.pathname, fallback.exclude)) return next()
-			const shellPath = join(root, index)
-			return Promise.all([canonicalRoot(), realpath(shellPath)])
-				.then(([rootReal, shellReal]) => {
-					if (!isContainedPath(shellReal, rootReal)) return next()
-					return open(shellReal, 'r').then((shellHandle) => {
-						let shellStreaming = false
-						try {
-							const body = streamFile(shellHandle)
-							shellStreaming = true
-							return new Response(body, {
-								status: 200,
-								headers: new Headers({ 'content-type': lookupContentType(shellReal) }),
-							})
-						} catch (error) {
-							if (!shellStreaming) shellHandle.close().catch(() => {})
-							throw error
-						}
-					})
-				})
-				.catch(() => next())
-		}
 	}
 }
 
@@ -267,7 +288,7 @@ export function createMultipart<TState extends MultipartState>(
 			throw error
 		}
 		if (body === undefined) return next()
-		context.state.multipart = body
+		Object.assign(context.state, { multipart: body })
 		try {
 			return await next()
 		} catch (error) {
@@ -317,17 +338,13 @@ export function createCompression<TState>(
 	const threshold = options?.threshold ?? DEFAULT_COMPRESSION_THRESHOLD
 	const filter = options?.filter
 	const encodings: readonly Encoding[] = ['gzip', 'deflate']
-	const gzipAsync = promisify(zlibGzip)
-	const deflateAsync = promisify(zlibDeflate)
-
 	return async (request, context, next) => {
 		const response = await next()
 		return compressResponse(request, context, response, {
 			threshold,
-			filter,
+			...(filter !== undefined ? { filter } : {}),
 			encodings,
-			compress: async (bytes, encoding) =>
-				encoding === 'gzip' ? gzipAsync(bytes) : deflateAsync(bytes),
+			compress: compressNodeBytes,
 		})
 	}
 }

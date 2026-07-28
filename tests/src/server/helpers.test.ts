@@ -1,10 +1,12 @@
 import { join, resolve as resolvePath } from 'node:path'
 import { open, readFile, readdir, stat, writeFile } from 'node:fs/promises'
 import { randomUUID } from 'node:crypto'
+import { gunzipSync, inflateSync } from 'node:zlib'
 import { describe, expect, it } from 'vitest'
 import { isMultipartFile } from '@src/core'
 import {
 	computeFileETag,
+	compressNodeBytes,
 	createUploadedFile,
 	detectMIME,
 	isContainedPath,
@@ -13,12 +15,16 @@ import {
 	isReservedDeviceName,
 	isUnderPath,
 	lookupContentType,
+	matchesBytes,
+	MULTIPART_MAX_HEADER_BLOCK,
+	MULTIPART_MAX_PREAMBLE,
 	moveUploadedFile,
 	multipartBoundary,
 	parseMultipartRequest,
 	parsePartHeaders,
 	readUploadedFile,
 	resolveDefaultDirectory,
+	resolveStaticFallbackPath,
 	resolveStaticPath,
 	streamFile,
 	streamUploadedFile,
@@ -31,6 +37,7 @@ import {
 	buildMultipartRequest,
 	buildTempDirectory,
 } from '../../setupServer.js'
+import type { MultipartPartInput } from '../../setupServer.js'
 
 // ── resolveStaticPath — the traversal matrix ────────────────────────────────
 
@@ -121,6 +128,31 @@ describe('isUnderPath', () => {
 
 	it('does not match an unrelated path', () => {
 		expect(isUnderPath('/other', '/api')).toBe(false)
+	})
+})
+
+describe('resolveStaticFallbackPath', () => {
+	const root = resolvePath('/srv/public')
+
+	it('resolves the fixed shell for an eligible navigation', () => {
+		expect(
+			resolveStaticFallbackPath(root, 'index.html', '/api', 'GET', '/dashboard', 'text/html'),
+		).toBe(join(root, 'index.html'))
+	})
+
+	it('rejects non-navigation methods, extensions, excluded paths, and accept values', () => {
+		expect(
+			resolveStaticFallbackPath(root, 'index.html', '/api', 'HEAD', '/dashboard', 'text/html'),
+		).toBeUndefined()
+		expect(
+			resolveStaticFallbackPath(root, 'index.html', '/api', 'GET', '/app.js', 'text/html'),
+		).toBeUndefined()
+		expect(
+			resolveStaticFallbackPath(root, 'index.html', '/api', 'GET', '/api/users', 'text/html'),
+		).toBeUndefined()
+		expect(
+			resolveStaticFallbackPath(root, 'index.html', '/api', 'GET', '/dashboard', 'image/png'),
+		).toBeUndefined()
 	})
 })
 
@@ -251,6 +283,29 @@ describe('detectMIME', () => {
 	it('is total on empty/short input', () => {
 		expect(detectMIME(new Uint8Array(0))).toBeUndefined()
 		expect(detectMIME(Uint8Array.from([0x89]))).toBeUndefined()
+	})
+})
+
+describe('matchesBytes', () => {
+	it('matches a complete signature at zero or an explicit offset', () => {
+		const bytes = Uint8Array.from([1, 2, 3, 4, 5])
+		expect(matchesBytes(bytes, [1, 2, 3])).toBe(true)
+		expect(matchesBytes(bytes, [3, 4], 2)).toBe(true)
+	})
+
+	it('rejects mismatches and truncated signatures', () => {
+		expect(matchesBytes(Uint8Array.from([1, 2]), [1, 3])).toBe(false)
+		expect(matchesBytes(Uint8Array.from([1, 2]), [1, 2, 3])).toBe(false)
+	})
+})
+
+describe('compressNodeBytes', () => {
+	it('compresses bytes with both guaranteed zlib codings', async () => {
+		const bytes = new TextEncoder().encode('compress me'.repeat(100))
+		const gzip = await compressNodeBytes(bytes, 'gzip')
+		const deflate = await compressNodeBytes(bytes, 'deflate')
+		expect(gunzipSync(gzip).toString()).toBe('compress me'.repeat(100))
+		expect(inflateSync(deflate).toString()).toBe('compress me'.repeat(100))
 	})
 })
 
@@ -580,6 +635,29 @@ describe('parseMultipartRequest', () => {
 		expect(rejectedDuringFeed).toBe(true)
 	})
 
+	it('rejects an oversized same-chunk preamble while accepting the exact limit', async () => {
+		const boundary = 'same-chunk-preamble'
+		const acceptedBody = `${'x'.repeat(MULTIPART_MAX_PREAMBLE)}--${boundary}\r\nContent-Disposition: form-data; name="a"\r\n\r\nvalue\r\n--${boundary}--\r\n`
+		const accepted = new Request('http://test.local/x', {
+			method: 'POST',
+			headers: { 'content-type': `multipart/form-data; boundary=${boundary}` },
+			body: acceptedBody,
+		})
+		await expect(parseMultipartRequest(accepted)).resolves.toMatchObject({
+			fields: { a: 'value' },
+		})
+
+		const rejectedBody = `${'x'.repeat(MULTIPART_MAX_PREAMBLE + 1)}--${boundary}--\r\n`
+		const rejected = new Request('http://test.local/x', {
+			method: 'POST',
+			headers: { 'content-type': `multipart/form-data; boundary=${boundary}` },
+			body: rejectedBody,
+		})
+		await expect(parseMultipartRequest(rejected)).rejects.toSatisfy(
+			(error: unknown) => isMultipartError(error) && error.reason === 'malformed',
+		)
+	})
+
 	it('reader cancellation: a mid-stream limit breach cancels the underlying reader', async () => {
 		const { request, cancelled } = buildCancelTrackingMultipartRequest([
 			{ kind: 'file', name: 'avatar', filename: 'big.bin', bytes: new Uint8Array(1000) },
@@ -635,6 +713,54 @@ describe('parseMultipartRequest', () => {
 			const request = new Request('http://test.local/upload', init)
 			await expect(parseMultipartRequest(request, { directory: directory.path })).rejects.toSatisfy(
 				(error: unknown) => isMultipartError(error),
+			)
+			expect(await readdir(directory.path)).toHaveLength(0)
+		} finally {
+			await directory.cleanup()
+		}
+	})
+
+	it('wakes a pending reader on abort, rejects malformed, and cleans staged bytes', async () => {
+		const directory = await buildTempDirectory()
+		try {
+			const boundary = 'pending-abort'
+			const initial = new TextEncoder().encode(
+				`--${boundary}\r\nContent-Disposition: form-data; name="avatar"; filename="a.bin"\r\nContent-Type: application/octet-stream\r\n\r\n${'x'.repeat(256)}`,
+			)
+			const waiting = new AbortController()
+			let pulls = 0
+			const stream = new ReadableStream<Uint8Array>(
+				{
+					pull(streamController) {
+						pulls += 1
+						if (pulls === 1) {
+							streamController.enqueue(initial)
+							return
+						}
+						waiting.abort()
+						return new Promise(() => {})
+					},
+				},
+				{ highWaterMark: 0 },
+			)
+			const controller = new AbortController()
+			const init: RequestInit & { readonly duplex: 'half' } = {
+				method: 'POST',
+				headers: { 'content-type': `multipart/form-data; boundary=${boundary}` },
+				body: stream,
+				signal: controller.signal,
+				duplex: 'half',
+			}
+			const request = new Request('http://test.local/upload', init)
+			const parsing = parseMultipartRequest(request, { directory: directory.path })
+			if (!waiting.signal.aborted)
+				await new Promise<void>((resolve) =>
+					waiting.signal.addEventListener('abort', () => resolve(), { once: true }),
+				)
+			expect(await readdir(directory.path)).toHaveLength(1)
+			controller.abort()
+			await expect(parsing).rejects.toSatisfy(
+				(error: unknown) => isMultipartError(error) && error.reason === 'malformed',
 			)
 			expect(await readdir(directory.path)).toHaveLength(0)
 		} finally {
@@ -759,7 +885,9 @@ describe('parseMultipartRequest', () => {
 	})
 
 	it('accepts a body exactly AT the total-size limit (the full wire byte count, including boundary framing)', async () => {
-		const parts = [{ kind: 'field' as const, name: 'a', value: 'x'.repeat(10) }]
+		const parts: readonly MultipartPartInput[] = [
+			{ kind: 'field', name: 'a', value: 'x'.repeat(10) },
+		]
 		const boundary = 'total-limit-bnd'
 		const { body, contentType } = buildMultipartBody(parts, boundary)
 		const request = new Request('http://test.local/upload', {
@@ -810,11 +938,6 @@ describe('parseMultipartRequest', () => {
 	})
 
 	it('malformed matrix: oversized header block with no blank line ever arriving', async () => {
-		// The 16KB header-block cap is checked only while still SEEKING the
-		// terminating blank line (`\r\n\r\n`) — a request whose full body
-		// (headers + terminator) arrives in one read never re-checks size once
-		// the terminator is already found. To honestly trip the cap, the
-		// blank line must never appear at all.
 		const boundary = 'bnd3'
 		const oversizedHeaderLine = `X-Custom: ${'a'.repeat(20_000)}`
 		const body = `--${boundary}\r\nContent-Disposition: form-data; name="a"\r\n${oversizedHeaderLine}`
@@ -824,6 +947,32 @@ describe('parseMultipartRequest', () => {
 			body,
 		})
 		await expect(parseMultipartRequest(request)).rejects.toSatisfy(
+			(error: unknown) => isMultipartError(error) && error.reason === 'malformed',
+		)
+	})
+
+	it('rejects an oversized same-chunk header while accepting the exact limit', async () => {
+		const boundary = 'same-chunk-header'
+		const prefix = 'Content-Disposition: form-data; name="a"\r\nX-Custom: '
+		const exactHeader = `${prefix}${'x'.repeat(MULTIPART_MAX_HEADER_BLOCK - prefix.length)}`
+		const acceptedBody = `--${boundary}\r\n${exactHeader}\r\n\r\nvalue\r\n--${boundary}--\r\n`
+		const accepted = new Request('http://test.local/x', {
+			method: 'POST',
+			headers: { 'content-type': `multipart/form-data; boundary=${boundary}` },
+			body: acceptedBody,
+		})
+		await expect(parseMultipartRequest(accepted)).resolves.toMatchObject({
+			fields: { a: 'value' },
+		})
+
+		const oversizedHeader = `${exactHeader}x`
+		const rejectedBody = `--${boundary}\r\n${oversizedHeader}\r\n\r\nvalue\r\n--${boundary}--\r\n`
+		const rejected = new Request('http://test.local/x', {
+			method: 'POST',
+			headers: { 'content-type': `multipart/form-data; boundary=${boundary}` },
+			body: rejectedBody,
+		})
+		await expect(parseMultipartRequest(rejected)).rejects.toSatisfy(
 			(error: unknown) => isMultipartError(error) && error.reason === 'malformed',
 		)
 	})

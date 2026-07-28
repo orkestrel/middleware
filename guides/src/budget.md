@@ -11,7 +11,7 @@
 Create a cost handle, `start()` it, and race its `signal` against work; `consume(value)` to charge the tally as work spends:
 
 ```ts
-import { createBudget } from '@src/core'
+import { createBudget } from '@orkestrel/budget'
 
 const budget = createBudget<number>({ max: 10_000, consume: (cost) => cost })
 budget.start()
@@ -26,10 +26,11 @@ budget.consume(7_000) // crosses 10_000 — fires `signal`
 
 ### Factories
 
-| API                 | Kind     | Summary                                                                                                             |
-| ------------------- | -------- | ------------------------------------------------------------------------------------------------------------------- |
-| `createBudget`      | function | Create a `BudgetInterface<T>` for `max` with a `consume` extractor, optionally a trace `id` and a parent `signal`.  |
-| `createTokenBudget` | function | Create a `BudgetInterface<TokenUsage>` charging a chosen `scope` field (`completion` default / `total` / `prompt`). |
+| API                   | Kind     | Summary                                                                                                             |
+| --------------------- | -------- | ------------------------------------------------------------------------------------------------------------------- |
+| `createBudget`        | function | Create a `BudgetInterface<T>` for `max` with a `consume` extractor, optionally a trace `id` and a parent `signal`.  |
+| `createTokenConsumer` | function | Create a unary consumer that charges one selected `TokenUsage` field.                                               |
+| `createTokenBudget`   | function | Create a `BudgetInterface<TokenUsage>` charging a chosen `scope` field (`completion` default / `total` / `prompt`). |
 
 ### Entities
 
@@ -85,7 +86,7 @@ These invariants hold across `src/core` ↔ `budget.md`:
 The dominant use: bound how much work may spend by racing it against the budget `signal`.
 
 ```ts
-import { createBudget } from '@src/core'
+import { createBudget } from '@orkestrel/budget'
 
 const budget = createBudget<number>({ max: 1_000_000, consume: (bytes) => bytes })
 budget.start()
@@ -103,7 +104,7 @@ for await (const chunk of stream) {
 The headline use the primitive exists for: a token budget consumed per provider call, its `signal` folded into the loop's abort alongside an external cancel and a deadline — `AbortSignal.any` over all three bounds, whichever trips first.
 
 ```ts
-import { createTokenBudget } from '@src/core'
+import { createTokenBudget } from '@orkestrel/budget'
 
 const cancel = new AbortController() // external cancel
 const deadline = AbortSignal.timeout(60_000) // wall-clock deadline
@@ -124,7 +125,7 @@ while (!bound.aborted) {
 `start()` re-arms the per-request `signal` while the cumulative spend carries forward — a session-long budget that bounds each request and is born exhausted once the lifetime ceiling is reached.
 
 ```ts
-import { createTokenBudget } from '@src/core'
+import { createTokenBudget } from '@orkestrel/budget'
 
 const budget = createTokenBudget({ max: 1_000_000, scope: 'total' })
 for (const request of requests) {
@@ -139,7 +140,7 @@ for (const request of requests) {
 `clear()` zeroes the tally and re-arms a fresh signal, so a spent budget can open a new window from scratch — e.g. an agent loop that compacts context and continues.
 
 ```ts
-import { createBudget } from '@src/core'
+import { createBudget } from '@orkestrel/budget'
 
 const budget = createBudget<number>({ max: 1_000, consume: (n) => n })
 budget.start()
@@ -161,7 +162,7 @@ budget.consume(200) // spends against the new window
 
 - [`tests/guides/parity.test.ts`](../../tests/guides/src/parity.test.ts) — the `## Surface` ↔ `src/core/budgets` bijection (value + type exports) and the `BudgetInterface` ↔ `Budget` method bijection.
 - [`tests/src/core/Budget.test.ts`](../../tests/src/core/Budget.test.ts) — `consume` accumulates and `consumed` / `remaining` / `exhausted` track each step; `signal` fires exactly when `consumed` reaches `max` (not before); a single overshooting `consume` trips it once; consuming past `max` is idempotent (no double-abort); `start()` re-arms a fresh non-aborted signal without resetting `consumed`, and arms an immediately-aborted signal when already exhausted (the re-arm guard); a sub-ceiling `start()` can later trip the fresh signal; `clear()` resets the tally to `0` and re-arms a fresh non-aborted signal (the §10 reset), after which `consume` can refill the same ceiling; parent linking (a parent abort fires `signal` independent of consumption; exhaustion still fires when the parent never aborts; an already-aborted parent makes `signal` born aborted with the parent reason); composition with an `Abort` via `AbortSignal.any` (whichever of cancel / ceiling trips first fires the combined signal); the parent-link composite holds no super-linear listener accumulation across `start()` cycles; `max: 0` boundaries (exhausted on first `consume` / `start()`); the exhaustion abort reason is the default `AbortError`; custom `consume` extraction and a `TokenUsage` field round-trip; and `id` defaulting / uniqueness.
-- [`tests/src/core/factories.test.ts`](../../tests/src/core/factories.test.ts) — `createBudget` returns a working `BudgetInterface` that accumulates and exhausts, honors `id` and a parent `signal`; `createTokenBudget` charges the right `scope` field (`completion` default, `total`, `prompt`) and honors `id` / parent `signal`.
+- [`tests/src/core/factories.test.ts`](../../tests/src/core/factories.test.ts) — `createBudget` returns a working `BudgetInterface` that accumulates and exhausts, honors `id` and a parent `signal`; `createTokenConsumer` selects the requested `TokenUsage` field; `createTokenBudget` charges the right `scope` field (`completion` default, `total`, `prompt`) and honors `id` / parent `signal`.
 
 ## See also
 

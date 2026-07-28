@@ -250,6 +250,32 @@ export function detectEncodings(candidates: readonly Encoding[]): readonly Encod
 }
 
 /**
+ * Compress bytes with the host-independent `CompressionStream` primitive.
+ *
+ * @param bytes - The uncompressed response bytes
+ * @param encoding - The negotiated actionable coding
+ * @returns The compressed bytes, or the original bytes when the platform
+ * stream unexpectedly has no readable body
+ *
+ * @example
+ * ```ts
+ * const bytes = new TextEncoder().encode('compress me')
+ * const compressed = await compressBytes(bytes, 'gzip')
+ * ```
+ */
+export async function compressBytes(
+	bytes: Uint8Array<ArrayBuffer>,
+	encoding: Exclude<Encoding, 'identity'>,
+): Promise<Uint8Array<ArrayBuffer>> {
+	const source = new Response(bytes).body
+	if (source === null) return bytes
+	const compressed = await new Response(
+		source.pipeThrough(new CompressionStream(encoding)),
+	).arrayBuffer()
+	return new Uint8Array(compressed)
+}
+
+/**
  * Whether a response is eligible for the compression/ETag buffering pipeline
  * (ruling J) — the shared cheap-skip predicate both batteries apply before
  * ever touching `response.arrayBuffer()`.
@@ -561,7 +587,7 @@ export function isPreflight(method: string, headers: Headers): boolean {
  * ```
  */
 export function buildClientInfo(ip: string | undefined): ClientInfo {
-	return { ip }
+	return { ...(ip !== undefined ? { ip } : {}) }
 }
 
 /**

@@ -58,7 +58,12 @@ export class DatabaseSessionStore<
 	async get(id: string, now: number): Promise<S | undefined> {
 		const row = await this.#table.get(id)
 		if (row === undefined) return undefined
-		if (sessionExpired(row, now, { ttl: this.#ttl, lifetime: this.#lifetime })) {
+		if (
+			sessionExpired(row, now, {
+				...(this.#ttl !== undefined ? { ttl: this.#ttl } : {}),
+				...(this.#lifetime !== undefined ? { lifetime: this.#lifetime } : {}),
+			})
+		) {
 			await this.#table.remove(id)
 			return undefined
 		}

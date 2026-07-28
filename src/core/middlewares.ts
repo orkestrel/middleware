@@ -23,7 +23,7 @@ import type {
 	TelemetryOptions,
 } from './types.js'
 import type { BudgetInterface } from '@orkestrel/budget'
-import type { Encoding, MiddlewareContext, MiddlewareHandler } from '@orkestrel/server'
+import type { MiddlewareHandler } from '@orkestrel/server'
 import { isBoolean, isFiniteNumber, isFunction, isRecord, isString } from '@orkestrel/contract'
 import { linkSignal } from '@orkestrel/abort'
 import { createBudget } from '@orkestrel/budget'
@@ -71,6 +71,7 @@ import {
 	buildRateLimitField,
 	buildRateLimitPolicyField,
 	buildRetryAfter,
+	compressBytes,
 	compressResponse,
 	detectEncodings,
 	equalsConstantTime,
@@ -199,20 +200,14 @@ export function createCompression<TState>(options?: CompressionOptions): Middlew
 	const threshold = options?.threshold ?? DEFAULT_COMPRESSION_THRESHOLD
 	const encodings = detectEncodings(options?.encodings ?? DEFAULT_COMPRESSION_ENCODINGS)
 	const filter = options?.filter
-	const compress = async (
-		bytes: Uint8Array<ArrayBuffer>,
-		encoding: Exclude<Encoding, 'identity'>,
-	): Promise<Uint8Array<ArrayBuffer>> => {
-		const source = new Response(bytes).body
-		if (source === null) return bytes
-		const compressed = await new Response(
-			source.pipeThrough(new CompressionStream(encoding)),
-		).arrayBuffer()
-		return new Uint8Array(compressed)
-	}
 	return async (request, context, next) => {
 		const response = await next()
-		return compressResponse(request, context, response, { threshold, filter, encodings, compress })
+		return compressResponse(request, context, response, {
+			threshold,
+			...(filter !== undefined ? { filter } : {}),
+			encodings,
+			compress: compressBytes,
+		})
 	}
 }
 
@@ -293,7 +288,7 @@ export function createSecurity<TState extends IdentifierState>(
 			const incoming = request.headers.get(DEFAULT_IDENTIFIER_HEADER)
 			identifier =
 				trust && incoming !== null && isValidRequestId(incoming) ? incoming : crypto.randomUUID()
-			context.state.identifier = identifier
+			Object.assign(context.state, { identifier })
 		}
 		const response = await next()
 		response.headers.set('x-content-type-options', 'nosniff')
@@ -455,7 +450,7 @@ export function createForwarded<TState extends ClientState & ConnectionState>(
 		const header = request.headers.get('x-forwarded-for') ?? undefined
 		const resolved = resolveForwardedFor(header, trust)
 		const ip = resolved ?? context.state.connection?.ip
-		context.state.client = buildClientInfo(ip)
+		Object.assign(context.state, { client: buildClientInfo(ip) })
 		return next()
 	}
 }
@@ -537,7 +532,7 @@ export function createBearer<TState extends BearerState>(
 		}
 		const verified = await verifyToken(candidate, secret)
 		if (verified === undefined) throw new HTTPError(401, 'invalid token')
-		context.state.token = verified
+		Object.assign(context.state, { token: verified })
 		return next()
 	}
 }
@@ -582,23 +577,14 @@ export function createLimiter<TState extends BearerState & ClientState & Connect
 	const max = options.max
 	const window = options.window
 	const capacity = options.capacity ?? DEFAULT_LIMITER_CAPACITY
-	const deriveKey =
-		options.key ?? ((context: MiddlewareContext<TState>) => resolveKey(context.state))
+	const deriveKey = options.key
 	const message = options.message ?? DEFAULT_LIMITER_MESSAGE
 	const clock = options.clock ?? Date.now
 	const policy = options.policy ?? false
 	const evict = options.evict
-	const notify = (evictedKey: string): void => {
-		if (evict === undefined) return
-		try {
-			evict(evictedKey)
-		} catch {
-			// swallowed — a broken evict callback can never fail the request
-		}
-	}
 	const buckets = new Map<string, { budget: BudgetInterface<number>; resetAt: number }>()
 	return async (request, context, next) => {
-		const key = deriveKey(context)
+		const key = deriveKey === undefined ? resolveKey(context.state) : deriveKey(context)
 		const now = clock()
 		let bucket = buckets.get(key)
 		if (bucket === undefined) {
@@ -606,11 +592,17 @@ export function createLimiter<TState extends BearerState & ClientState & Connect
 				const oldest = buckets.keys().next().value
 				if (oldest !== undefined) {
 					buckets.delete(oldest)
-					notify(oldest)
+					if (evict !== undefined) {
+						try {
+							evict(oldest)
+						} catch {
+							// swallowed — a broken evict callback can never fail the request
+						}
+					}
 				}
 			}
 			bucket = {
-				budget: createBudget<number>({ max, consume: (value) => value }),
+				budget: createBudget<number>({ max, consume: Number }),
 				resetAt: now + window,
 			}
 			buckets.set(key, bucket)
@@ -661,7 +653,7 @@ export function createLimiter<TState extends BearerState & ClientState & Connect
 export function createBody<TState extends BodyState = BodyState>(): MiddlewareHandler<TState> {
 	return async (request, context, next) => {
 		const body = await context.body()
-		context.state.body = body
+		if (body !== undefined) Object.assign(context.state, { body })
 		const contentType = request.headers.get('content-type')
 		if (
 			contentType !== null &&
@@ -726,13 +718,12 @@ export function createSession<
 	const store: SessionStoreInterface<SessionInterface> =
 		options.store ??
 		new MemorySessionStore<SessionInterface>({
-			ttl: options.ttl,
-			lifetime: options.lifetime,
-			capacity: options.capacity,
-			evict: options.evict,
+			...(options.ttl !== undefined ? { ttl: options.ttl } : {}),
+			...(options.lifetime !== undefined ? { lifetime: options.lifetime } : {}),
+			...(options.capacity !== undefined ? { capacity: options.capacity } : {}),
+			...(options.evict !== undefined ? { evict: options.evict } : {}),
 		})
-	const create: (id: string) => SessionInterface =
-		options.create ?? ((id: string) => new Session(id))
+	const create = options.create
 	const mint = options.mint
 	const requireSession = options.require ?? false
 	const ends = options.ends ?? false
@@ -753,7 +744,7 @@ export function createSession<
 			const shouldMint = mint !== undefined ? await mint(context) : true
 			if (shouldMint) {
 				const id = crypto.randomUUID()
-				session = create(id)
+				session = create === undefined ? new Session(id) : create(id)
 				minted = true
 			} else if (requireSession) {
 				throw new HTTPError(404, 'session required')
@@ -768,7 +759,8 @@ export function createSession<
 			const control: SessionControlInterface = {
 				regenerate() {
 					if (destroyed) return
-					const newSession = create(crypto.randomUUID())
+					const newSession =
+						create === undefined ? new Session(crypto.randomUUID()) : create(crypto.randomUUID())
 					transferSessionData(activeSession, newSession)
 					regenerated = newSession
 				},
@@ -777,8 +769,7 @@ export function createSession<
 					regenerated = undefined
 				},
 			}
-			context.state.session = activeSession
-			context.state.control = control
+			Object.assign(context.state, { session: activeSession, control })
 		}
 
 		const response = await next()
@@ -842,7 +833,7 @@ export function createCSRF<TState extends CSRFState & SessionState & ConnectionS
 		if (safe.includes(context.method)) {
 			const bound = context.state.session?.id ?? crypto.randomUUID()
 			const token = await signToken(bound, { secret })
-			context.state.csrf = token
+			Object.assign(context.state, { csrf: token })
 			const response = await next()
 			const secure = resolveSecure(undefined, context.state.connection?.encrypted ?? false)
 			await writeSignedCookie(response.headers, cookieName, token, secret, {

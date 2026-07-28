@@ -4,6 +4,7 @@ import {
 	buildRateLimitField,
 	buildRateLimitPolicyField,
 	buildRetryAfter,
+	compressBytes,
 	compressResponse,
 	detectEncodings,
 	equalsConstantTime,
@@ -209,6 +210,15 @@ describe('detectEncodings', () => {
 	it('never probes identity and never throws on an empty candidate list', () => {
 		expect(detectEncodings([])).toEqual([])
 		expect(detectEncodings(['identity'])).toEqual([])
+	})
+})
+
+describe('compressBytes', () => {
+	it('compresses bytes with the selected CompressionStream coding', async () => {
+		const bytes = new TextEncoder().encode('compress me'.repeat(100))
+		const compressed = await compressBytes(bytes, 'gzip')
+		expect(compressed.byteLength).toBeLessThan(bytes.byteLength)
+		expect(await decompress(compressed, 'gzip')).toBe('compress me'.repeat(100))
 	})
 })
 
@@ -423,7 +433,7 @@ describe('buildClientInfo', () => {
 	})
 
 	it('wraps an undefined IP the same way', () => {
-		expect(buildClientInfo(undefined)).toEqual({ ip: undefined })
+		expect(buildClientInfo(undefined)).toEqual({})
 	})
 })
 

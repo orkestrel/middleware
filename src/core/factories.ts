@@ -10,7 +10,7 @@ import type {
 import type { Session } from './Session.js'
 import type { Guard } from '@orkestrel/contract'
 import type { TableInterface } from '@orkestrel/database'
-import { integerShape, isString, jsonShape, stringShape } from '@orkestrel/contract'
+import { isString } from '@orkestrel/contract'
 import { clearCookie, readSignedCookie, resolveSecure, writeSignedCookie } from '@orkestrel/server'
 import { DEFAULT_SESSION_COOKIE, DEFAULT_SESSION_HEADER } from './constants.js'
 import { DatabaseSessionStore } from './stores/DatabaseSessionStore.js'
@@ -114,31 +114,6 @@ export function createMemorySessionStore<S>(
 	options?: MemorySessionStoreOptions,
 ): SessionStoreInterface<S> {
 	return new MemorySessionStore<S>(options)
-}
-
-/**
- * The `@orkestrel/database` column shape for a {@link SessionRow} table — pass
- * as-is to `createDatabase({ tables: { sessions: sessionColumns } })` so an
- * app declaring a durable session table never hand-writes the shape.
- *
- * @remarks
- * `lastSeen`/`createdAt` are `integerShape({ min: 0 })` — the table VALIDATES
- * them as integers, so `DatabaseSessionStore`'s `now` clock must yield
- * integer milliseconds (`Date.now()`, the implicit default `createSession`
- * clock). A fractional clock (`performance.now()`) fails the write with a
- * validation error; `MemorySessionStore` carries no such column shape and
- * accepts a fractional clock without complaint.
- *
- * @example
- * ```ts
- * const db = createDatabase({ driver, tables: { sessions: sessionColumns } })
- * ```
- */
-export const sessionColumns = {
-	id: stringShape(),
-	session: jsonShape(),
-	lastSeen: integerShape({ min: 0 }),
-	createdAt: integerShape({ min: 0 }),
 }
 
 /**
