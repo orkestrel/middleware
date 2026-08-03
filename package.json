@@ -1,6 +1,6 @@
 {
 	"name": "@orkestrel/middleware",
-	"version": "0.0.7",
+	"version": "0.0.8",
 	"description": "Batteries for the @orkestrel/server middleware seam — boundary, telemetry, compression, security, CORS, rate limiting, sessions, CSRF, static files, and multipart uploads as typed factories. Part of the @orkestrel line.",
 	"keywords": [
 		"compression",
@@ -90,9 +90,9 @@
 		"@microsoft/api-extractor": "^7.58.12",
 		"@orkestrel/database": "^0.0.7",
 		"@orkestrel/guide": "^0.0.8",
-		"@orkestrel/router": "^0.0.7",
-		"@orkestrel/scaffold": "^0.0.16",
-		"@orkestrel/server": "^0.0.8",
+		"@orkestrel/router": "^0.0.8",
+		"@orkestrel/scaffold": "^0.0.18",
+		"@orkestrel/server": "^0.0.9",
 		"@types/node": "^26.1.2",
 		"@vitest/browser-playwright": "^4.1.10",
 		"oxfmt": "^0.61.0",
@@ -103,8 +103,8 @@
 		"vitest": "^4.1.10"
 	},
 	"peerDependencies": {
-		"@orkestrel/database": "^0.0.7",
-		"@orkestrel/server": "^0.0.8"
+		"@orkestrel/database": ">=0.0.7",
+		"@orkestrel/server": ">=0.0.9"
 	},
 	"peerDependenciesMeta": {
 		"@orkestrel/database": {
