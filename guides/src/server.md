@@ -80,6 +80,7 @@ Cross-face and substrate usage appear under [Patterns](#patterns).
 | API                     | Kind     | Summary                                                                                                                                     |
 | ----------------------- | -------- | ------------------------------------------------------------------------------------------------------------------------------------------- |
 | `compose`               | function | Compose an ordered middleware chain around a `terminal` handler (the frozen seam).                                                          |
+| `wrapMiddleware`        | function | Wrap one middleware layer around its downstream handler while enforcing the one-call `next` invariant.                                      |
 | `parseCookies`          | function | Parse a raw `Cookie:` header into a `name → value` lookup.                                                                                  |
 | `isCookieName`          | function | Whether a string is a valid RFC 6265 cookie name (no whitespace).                                                                           |
 | `decodeCookieValue`     | function | Decode a cookie value, falling back to raw text on malformed escapes.                                                                       |
@@ -113,6 +114,7 @@ Cross-face and substrate usage appear under [Patterns](#patterns).
 | `ipv6Network`           | function | Compute the `/64` network of a full IPv6 address, or `undefined`.                                                                           |
 | `clientRateKey`         | function | Collapse a client IP into its rate-limit bucket key (IPv6 `/64`, IPv4 unchanged).                                                           |
 | `serializeEvent`        | function | Serialize one `SSEMessage` to the SSE wire.                                                                                                 |
+| `enqueueStreamText`     | function | Enqueue encoded text into an open byte stream, safely ignoring closed or unstarted streams.                                                 |
 | `openStream`            | function | Open a generic Server-Sent-Events stream over a `ReadableStream` `Response`.                                                                |
 | `isDangerousKey`        | function | Whether a key is a prototype-pollution vector (`__proto__`/`constructor`/`prototype`).                                                      |
 | `scrubPrototype`        | function | Recursively strip prototype-pollution keys from a parsed value in place.                                                                    |
@@ -122,6 +124,7 @@ Cross-face and substrate usage appear under [Patterns](#patterns).
 | `readBody`              | function | Collect + decode a `Request` body — the pipeline behind `context.body()`.                                                                   |
 | `isHTTPError`           | function | Narrow an unknown caught value to an `HTTPError` (including subclasses) — recognized across package copies via a structural brand fallback. |
 | `isAddressInfo`         | function | Whether a `node:net` address is the structured `AddressInfo` shape.                                                                         |
+| `probePort`             | function | Bind and close one throwaway TCP server to resolve an available port.                                                                       |
 | `discoverPort`          | function | Find a free TCP port — try a `preferred` one first, else an ephemeral port.                                                                 |
 
 ### Entities
@@ -157,7 +160,7 @@ Cross-face and substrate usage appear under [Patterns](#patterns).
 | `ServerEventMap`          | type      | `{ start; request; upgrade; error; stop; drain; response }` — the `Server`'s AGENTS §13 event map. `error`'s second element and `report`'s second parameter are an OPTIONAL `{ method, url }` — present for a request-pipeline fault, `undefined` for an upgrade-path fault (no fetch `Request` exists there). `response` fires with `{ method, pathname, status, ms }` for every request reaching the middleware pipeline (success or outer-boundary error path) — not for one rejected at the inner `buildRequest` boundary (plain `400`, no parsed `Request` to derive facts from). |
 | `UpgradeHandler`          | type      | `(request, socket, head) => boolean` — a raw protocol-upgrade claimant.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                |
 | `ConnectionStateFunction` | type      | `(connection: ConnectionInfo) => TState` — derives a request's `TState`.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               |
-| `ServerOptions`           | interface | `{ dispatcher; state; middleware?; host?; port?; drain?; limit?; expose?; report?; timeouts?; on?; error? }` — `report?: (error, request?) => void`, `request` present only for a request-pipeline fault.                                                                                                                                                                                                                                                                                                                                                                              |
+| `ServerOptions`           | interface | `{ dispatcher; state; middleware?; host?; port?; drain?; limit?; expose?; report?; timeouts?; sockets?; on?; error? }` — `timeouts.start` bounds listener startup; `sockets.{connections,headers,requests}` maps to node's `maxConnections` / `maxHeadersCount` / `maxRequestsPerSocket`; `report?: (error, request?) => void`, `request` present only for a request-pipeline fault.                                                                                                                                                                                                   |
 | `ServerInterface`         | interface | `id` / `status` / `port` / `dispatcher` / `emitter` data members + `use` / `upgrade` / `start` / `stop` / `destroy`.                                                                                                                                                                                                                                                                                                                                                                                                                                                                   |
 
 The `value`/`q` members of `AcceptEntry`, the `response`/`closed` members of
@@ -191,16 +194,17 @@ invokes the winner, or answers `406`.
 
 `use` mounts middleware (§9.2 batch — one handler or an array); `upgrade`
 registers a raw protocol-upgrade claimant; `start` binds the listener and
-resolves the actually-bound port; `stop` gracefully drains then closes;
-`destroy` is the terminal, idempotent teardown.
+resolves the actually-bound port while accepting an optional caller
+`AbortSignal`; `stop` gracefully drains then closes; `destroy` is the
+terminal, idempotent teardown.
 
-| Method    | Returns           | Behavior                                                                                    |
-| --------- | ----------------- | ------------------------------------------------------------------------------------------- |
-| `use`     | `void`            | Mount one middleware, or many (§9.2 batch), appended outer-to-inner in call order.          |
-| `upgrade` | `void`            | Register an `UpgradeHandler` claimant (fan-out in registration order).                      |
-| `start`   | `Promise<number>` | Bind the configured `host`/`port` (or an ephemeral one) and resolve the bound port.         |
-| `stop`    | `Promise<void>`   | Refuse new connections, fire the stop signal, drain up to the deadline, then close.         |
-| `destroy` | `Promise<void>`   | The terminal, idempotent teardown — closes any live listener and tears down the `#emitter`. |
+| Method    | Returns           | Behavior                                                                                                                       |
+| --------- | ----------------- | ------------------------------------------------------------------------------------------------------------------------------ |
+| `use`     | `void`            | Mount one middleware, or many (§9.2 batch), appended outer-to-inner in call order.                                             |
+| `upgrade` | `void`            | Register an `UpgradeHandler` claimant (fan-out in registration order).                                                         |
+| `start`   | `Promise<number>` | Bind the configured `host`/`port` (or an ephemeral one), cancellable by an optional `AbortSignal`, and resolve the bound port. |
+| `stop`    | `Promise<void>`   | Refuse new connections, fire the stop signal, drain up to the deadline, then close.                                            |
+| `destroy` | `Promise<void>`   | The terminal, idempotent teardown — closes any live listener and tears down the `#emitter`.                                    |
 
 ## Contract
 
@@ -221,13 +225,21 @@ stopping → stopped`; `start()` from `listening`/`starting`/`stopping`
    with nothing to tear down; `EADDRINUSE` rejects `start()` outright — no
    silent ephemeral fallback (use `discoverPort` up front for a guaranteed-free
    port).
-4. **Graceful drain is event-driven, never a busy-loop.** `stop()` fires the
+4. **Startup is bounded and caller-cancellable.** `start(signal?)` observes
+   caller cancellation only while binding; `timeouts.start` independently
+   bounds the bind (`0` permits no startup window). Cancellation or deadline
+   expiry closes the partial listener, clears the startup deadline, resets
+   the entity to `idle`, and rejects; expiry rejects with a `DOMException`
+   named `TimeoutError`, while caller cancellation rejects with that signal's
+   `reason`. A later `start()` is therefore permitted. Aborting the caller
+   signal after a successful start does not stop a live server.
+5. **Graceful drain is event-driven, never a busy-loop.** `stop()` fires the
    stop signal, arms a `@orkestrel/timeout` deadline, and PARKS on the
    in-flight counter reaching zero OR the deadline firing (a wake-park, not
    polling); it then emits `drain` with the still-pending count and closes —
    dropping idle keep-alive sockets always, force-closing every open socket
    only when the deadline fired with work still pending (or on `destroy()`).
-5. **The built-in boundary is lifecycle machinery, not policy — one seam
+6. **The built-in boundary is lifecycle machinery, not policy — one seam
    that spans setup AND dispatch.** The `Server` wraps the WHOLE per-request
    lifecycle in two nested phases of the same boundary. The innermost phase
    covers only `buildRequest`: a malformed request (e.g. an unparsable `Host`)
@@ -251,7 +263,7 @@ stopping → stopped`; `start()` from `listening`/`starting`/`stopping`
    that reached the middleware pipeline, exactly once, regardless of outcome.
    A request rejected at the inner `buildRequest` boundary above is the one
    exception: it emits no `response` at all.
-6. **Upgrade fan-out is isolated, first-claimer-wins.** Registered
+7. **Upgrade fan-out is isolated, first-claimer-wins.** Registered
    `UpgradeHandler`s run in registration order; the first to return `true`
    CLAIMS the socket and stops the fan-out; a handler that THROWS is treated as
    declined (the throw surfaces on `error` with NO request context — `error`'s
@@ -259,7 +271,7 @@ stopping → stopped`; `start()` from `listening`/`starting`/`stopping`
    `Request` exists there, only a raw `IncomingMessage` — and never crashes
    the process) and the fan-out continues; an upgrade nothing claims destroys
    the socket so it never leaks a dangling connection.
-7. **Body read exactly once, capped, zip-bomb-safe, scrubbed.**
+8. **Body read exactly once, capped, zip-bomb-safe, scrubbed.**
    `MiddlewareContext.body()` is lazy and CACHED, so a body-parsing middleware
    and the eventual handler both reading it consume the underlying stream
    exactly once; `readBody` caps the wire size (`ContentTooLargeError`/413 over
@@ -269,7 +281,7 @@ stopping → stopped`; `start()` from `listening`/`starting`/`stopping`
    bomb, since `DecompressionStream` has no `maxOutputLength`), and scrubs
    `__proto__`/`constructor`/`prototype` keys from a parsed JSON body
    (`scrubPrototype`) before it is ever handed to application code.
-8. **Cookie + token jewels preserved.** `parseCookies` rejects a
+9. **Cookie + token jewels preserved.** `parseCookies` rejects a
    whitespace-padded name so a `'  __Host-x'` never reconciles into a
    protected `__Host-` name; `serializeCookie` THROWS on a `Domain`/`Path`
    injection attempt rather than silently dropping it; a `sameSite: 'None'`
@@ -281,44 +293,50 @@ stopping → stopped`; `start()` from `listening`/`starting`/`stopping`
    signed payload; a `TokenSecret` rotation list signs with the FIRST secret
    and verifies against ANY; comparison is constant-time via
    `crypto.subtle.verify` (the old `safeCompare` is retired, not ported).
-9. **Seam semantics: returning onion.** Each `MiddlewareHandler` receives a
-   `next` that, called, runs the downstream chain and resolves its `Response`;
-   NOT calling it short-circuits with the middleware's own `Response`; a
-   SECOND call to the same `next` within one invocation REJECTS (the
-   double-`next` guard) — a middleware can transform the request
-   (`next(newRequest)`), transform the response (mutate after `await next()`),
-   or short-circuit, but never fork the chain.
-10. **The bag IS the router's state.** `compose`'s `terminal` is
+10. **Seam semantics: returning onion.** Each `MiddlewareHandler` receives a
+    `next` that, called, runs the downstream chain and resolves its `Response`;
+    NOT calling it short-circuits with the middleware's own `Response`; a
+    SECOND call to the same `next` within one invocation REJECTS (the
+    double-`next` guard) — a middleware can transform the request
+    (`next(newRequest)`), transform the response (mutate after `await next()`),
+    or short-circuit, but never fork the chain.
+11. **The bag IS the router's state.** `compose`'s `terminal` is
     `(request, context) => dispatcher.handle(request, context.state)` — the
     exact object every middleware wrote into `context.state` is what a route
     handler reads as `RouteContext.state`. No second plumbing.
-11. **Connection facts are injected once, at the adapter boundary.**
+12. **Connection facts are injected once, at the adapter boundary.**
     `ConnectionInfo` (`ip`, `encrypted`) is built per-request from the raw
     socket and handed to `ServerOptions.state` — `X-Forwarded-For` is NEVER
     implicitly trusted; a deployment behind a trusted proxy derives its own
     client key explicitly in `state` or in middleware.
-12. **The stop signal is observable inside a handler.** The `Request`'s
+13. **The stop signal is observable inside a handler.** The `Request`'s
     `signal` (already tied to client disconnect by the router's
     `buildRequest`) is LINKED, via `@orkestrel/abort`'s `linkSignal`, to the
     server's per-run stop signal — so a handler awaiting `request.signal`
     observes EITHER the client disconnecting OR the server calling `stop()`,
     closing the old design's latent gap.
-13. **Enterprise timeout knobs, Slowloris-guarded.** `timeouts.request` /
+14. **Enterprise timeout knobs, Slowloris-guarded.** `timeouts.request` /
     `timeouts.headers` / `timeouts.keepalive` map onto `node:http`'s
     `requestTimeout` / `headersTimeout` / `keepAliveTimeout`; construction
     THROWS a `TypeError` when `headers` exceeds `keepalive` (the Slowloris
     footgun) — a guard at the boundary, never on the hot path (AGENTS §14).
-14. **Content negotiation is total and q-value-linear.** `parseAcceptHeader`
+15. **Socket caps map without policy.** `sockets.connections` /
+    `sockets.headers` / `sockets.requests` apply directly to node's
+    `maxConnections` / `maxHeadersCount` / `maxRequestsPerSocket` before bind.
+    Each is optional, so omission preserves node's native default; `0` keeps
+    each native meaning (reject all connections for `connections`, unlimited
+    for `headers` and `requests`).
+16. **Content negotiation is total and q-value-linear.** `parseAcceptHeader`
     is a single pass with no backtracking (ReDoS-safe); a `;q=0` entry is KEPT
     (an explicit rejection a caller must honor, never silently dropped); an
     absent/malformed `Accept` header resolves to the any-range (the first
     offered value/handler) rather than rejecting.
-15. **`expose: false` leaks nothing; `HTTPError` messages always surface.** A
+17. **`expose: false` leaks nothing; `HTTPError` messages always surface.** A
     generic (non-`HTTPError`) throw's message is hidden behind a fixed
     `'Internal Server Error'` string unless `expose` is explicitly `true`; an
     `HTTPError`'s own `message` is ALWAYS client-facing (it is the handler's
     deliberate signal), independent of `expose`.
-16. **`isHTTPError` recognizes an `HTTPError` across package copies, not just
+18. **`isHTTPError` recognizes an `HTTPError` across package copies, not just
     `instanceof`.** A version-skewed or workspace-linked duplicate install of
     this package produces a SECOND, distinct `HTTPError` constructor —
     `instanceof` fails across the two copies even though the thrown value is
@@ -446,6 +464,28 @@ await server.stop() // graceful — waits up to 5s for in-flight requests
 await server.destroy() // idempotent final teardown
 ```
 
+### Bounded startup and socket caps
+
+`timeouts.start` bounds only listener startup; pass an `AbortSignal` to cancel
+that same pending bind from the caller. Socket caps use one grouped option and
+map directly to node's server properties.
+
+```ts
+import { createServer } from '@orkestrel/server'
+import { createDispatcher } from '@orkestrel/router'
+
+const controller = new AbortController()
+const server = createServer({
+	dispatcher: createDispatcher(),
+	state: () => ({}),
+	timeouts: { start: 5_000 },
+	sockets: { connections: 1_000, headers: 100, requests: 1_000 },
+})
+
+// Calling controller.abort() while startup is pending cancels this bind.
+const port = await server.start(controller.signal)
+```
+
 ### Upgrade attach
 
 ```ts
@@ -539,11 +579,12 @@ await decompressRequestBody(gzipped, 'gzip', 1_048_576) // capped decompression 
   `createNegotiator` round-trip + factory return-type assertion, and
   `createServer` round-trip, option threading, and construction guards.
 - [`tests/src/server/Server.test.ts`](../../tests/src/server/Server.test.ts) —
-  the status matrix, restart-fresh-abort, `EADDRINUSE` honesty, host/port
-  binds, ephemeral default, graceful-vs-forced drain, 20-parallel-none-
-  dropped, connection facts threaded into state, `context.body()` caching,
-  boundary mapping (`HTTPError`/other/`expose`), and the stop-signal-reaches-
-  handlers case.
+  the status matrix, restart-fresh-abort, caller-cancelled / timed-out / clean
+  bounded startup, `EADDRINUSE` honesty, host/port binds, ephemeral default,
+  connection / header / per-socket request caps, graceful-vs-forced drain,
+  20-parallel-none-dropped, connection facts threaded into state,
+  `context.body()` caching, boundary mapping (`HTTPError`/other/`expose`), and
+  the stop-signal-reaches-handlers case.
 
 ## See also
 
