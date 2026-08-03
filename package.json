@@ -103,8 +103,8 @@
 		"vitest": "^4.1.10"
 	},
 	"peerDependencies": {
-		"@orkestrel/database": ">=0.0.6 <0.1.0",
-		"@orkestrel/server": ">=0.0.7 <0.1.0"
+		"@orkestrel/database": "^0.0.7",
+		"@orkestrel/server": "^0.0.8"
 	},
 	"peerDependenciesMeta": {
 		"@orkestrel/database": {

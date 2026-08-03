@@ -43,8 +43,8 @@ descriptions never enter agent instruction context.
 | @orkestrel/indexeddb  | 0.0.6   |
 | @orkestrel/interpret  | 0.0.7   |
 | @orkestrel/markdown   | 0.0.7   |
-| @orkestrel/mcp        | 0.0.9   |
-| @orkestrel/middleware | 0.0.6   |
+| @orkestrel/mcp        | 0.0.10  |
+| @orkestrel/middleware | 0.0.7   |
 | @orkestrel/msg        | 0.0.5   |
 | @orkestrel/ndjson     | 0.0.5   |
 | @orkestrel/ollama     | 0.0.8   |
