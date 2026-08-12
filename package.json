@@ -91,7 +91,7 @@
 		"@orkestrel/database": "^0.0.7",
 		"@orkestrel/guide": "^0.0.9",
 		"@orkestrel/router": "^0.0.8",
-		"@orkestrel/scaffold": "^0.0.26",
+		"@orkestrel/scaffold": "^0.0.27",
 		"@orkestrel/server": "^0.0.10",
 		"@types/node": "^26.1.2",
 		"@vitest/browser-playwright": "^4.1.10",
