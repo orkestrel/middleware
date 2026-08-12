@@ -116,7 +116,9 @@ export function createBoundary<TState>(options?: BoundaryOptions): MiddlewareHan
 		throw new TypeError('BoundaryOptions.report must be a function when provided')
 	const expose = options?.expose ?? false
 	const report = options?.report
-	return async (request, context, next) => {
+	// The boundary reads only what `next` throws, so the leading two positions of the
+	// handler signature are conformance-only here.
+	return async (_request, _context, next) => {
 		try {
 			return await next()
 		} catch (error) {
@@ -155,7 +157,8 @@ export function createBoundary<TState>(options?: BoundaryOptions): MiddlewareHan
 export function createTelemetry<TState>(options: TelemetryOptions): MiddlewareHandler<TState> {
 	if (!isFunction(options.record)) throw new TypeError('TelemetryOptions.record must be a function')
 	const record = options.record
-	return async (request, context, next) => {
+	// The entry is built from `context` alone, so the first position is conformance-only.
+	return async (_request, context, next) => {
 		const start = Date.now()
 		let response: Response | undefined
 		try {
@@ -381,7 +384,9 @@ export function createDeadline<TState>(options: DeadlineOptions): MiddlewareHand
 		throw new TypeError('DeadlineOptions.status must be a finite number when provided')
 	const ms = options.ms
 	const status = options.status ?? DEFAULT_DEADLINE_STATUS
-	return async (request, context, next) => {
+	// The deadline links signals off `request` alone, so the second position is
+	// conformance-only.
+	return async (request, _context, next) => {
 		const timeout = createTimeout({ ms })
 		const linked = linkSignal(timeout.signal, request.signal)
 		timeout.start()
@@ -583,7 +588,8 @@ export function createLimiter<TState extends BearerState & ClientState & Connect
 	const policy = options.policy ?? false
 	const evict = options.evict
 	const buckets = new Map<string, { budget: BudgetInterface<number>; resetAt: number }>()
-	return async (request, context, next) => {
+	// The key is derived from `context` alone, so the first position is conformance-only.
+	return async (_request, context, next) => {
 		const key = deriveKey === undefined ? resolveKey(context.state) : deriveKey(context)
 		const now = clock()
 		let bucket = buckets.get(key)

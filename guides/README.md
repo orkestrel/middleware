@@ -18,49 +18,23 @@ directory (AGENTS §22).
 
 ## Dependency reference
 
-[`server.md`](server.md) is a byte-identical mirror of the guide for
-`@orkestrel/server` — this package's peerDependency, the frozen middleware
-seam and substrate it is built over. It documents **that package's** surface
-(`MiddlewareHandler`, `MiddlewareContext`, `compose`, the cookie/token/
-negotiation/conditional/security substrate), not anything sourced in this
-repo; it is kept here so a reader of this package can see the primitives it
-is built from without leaving this guide set.
-
-[`contract.md`](contract.md) is a byte-identical mirror of the guide for
-`@orkestrel/contract` — one of this package's runtime dependencies. It documents
-**that package's** surface (guards, combinators, parsers, and the shape DSL), not
-anything sourced in this repo; it is kept here so a reader of this package can see
-the primitives it is built from without leaving this guide set.
-
-[`budget.md`](budget.md) is a byte-identical mirror of the guide for
-`@orkestrel/budget` — this package's runtime dependency backing the rate
-limiter's per-key tally. It documents **that package's** surface (the
-`Budget` class, `BudgetInterface`, and the cumulative-consumption-against-a-
-ceiling contract), not anything sourced in this repo; it is kept here so a
-reader of this package can see the primitives it is built from without
-leaving this guide set.
-
-[`abort.md`](abort.md) is a byte-identical mirror of the guide for
-`@orkestrel/abort` — this package's runtime dependency. It documents
-**that package's** surface (the `Abort` class, `AbortInterface`, and the
-parent-linking / cascading-cancellation contract), not anything sourced in
-this repo; it is kept here so a reader of this package can see the primitives
-it is built from without leaving this guide set.
-
-[`timeout.md`](timeout.md) is a byte-identical mirror of the guide for
-`@orkestrel/timeout` — this package's runtime dependency backing
-`createDeadline`'s timer. It documents **that package's** surface (the
-`Timeout` class, `TimeoutInterface`, and the start/clear deadline lifecycle),
-not anything sourced in this repo; it is kept here so a reader of this
-package can see the primitives it is built from without leaving this guide
-set.
-
 [`guide.md`](guide.md) is a byte-identical mirror of the guide for
 `@orkestrel/guide` — the devDependency powering this repo's guides-parity test
 suite (`tests/guides.test.ts`). It documents **that package's**
 surface (`Guide` / `Source`, the manifest and comparison helpers), not anything
 sourced in this repo; it is kept here so a reader of the parity suite can see
 the primitives it is built from without leaving this guide set.
+
+[`scaffold.md`](scaffold.md) is a byte-identical mirror of the guide for
+`@orkestrel/scaffold` — the devDependency owning this repo's shared file set,
+configuration, and gate scripts. It documents **that package's** surface, not
+anything sourced in this repo; it is kept here so a reader can see the
+toolchain this repository is generated against without leaving this guide set.
+
+The runtime dependencies `@orkestrel/abort`, `@orkestrel/budget`,
+`@orkestrel/contract`, and `@orkestrel/timeout`, and the `@orkestrel/server`
+peerDependency, are not mirrored here. Read each package's own guide in its
+own repository.
 
 ## See also
 

@@ -728,12 +728,11 @@ const serveApp = createStatic({ root: '/srv/public', fallback: true }) // exclud
 - [`AGENTS.md`](../AGENTS.md) — the rules; §5 the centralized-file
   pattern and `middlewares.ts`'s kind-purity, §14 contract & validation
   architecture, §21 "mechanism, never policy", §22 documentation-as-contracts.
-- [`server.md`](server.md) — `@orkestrel/server`, the frozen seam and
-  substrate every battery in this package is built over.
-- [`contract.md`](contract.md) — `@orkestrel/contract`, the guards backing
-  every construction boundary.
-- [`budget.md`](budget.md) — `@orkestrel/budget`, `createLimiter`'s per-key
-  tally.
-- [`abort.md`](abort.md) / [`timeout.md`](timeout.md) — `@orkestrel/abort` /
-  `@orkestrel/timeout`, `createDeadline`'s signal-linking and timer.
+- `@orkestrel/server` — the frozen seam and substrate every battery in this
+  package is built over. Its guide lives in its own repository, as do the
+  guides for the dependencies below.
+- `@orkestrel/contract` — the guards backing every construction boundary.
+- `@orkestrel/budget` — `createLimiter`'s per-key tally.
+- `@orkestrel/abort` / `@orkestrel/timeout` — `createDeadline`'s
+  signal-linking and timer.
 - [`README.md`](README.md) — the guides index.
