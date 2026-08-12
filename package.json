@@ -83,15 +83,15 @@
 	"dependencies": {
 		"@orkestrel/abort": "^0.0.5",
 		"@orkestrel/budget": "^0.0.5",
-		"@orkestrel/contract": "^0.0.9",
+		"@orkestrel/contract": "^0.0.10",
 		"@orkestrel/timeout": "^0.0.5"
 	},
 	"devDependencies": {
 		"@microsoft/api-extractor": "^7.58.12",
 		"@orkestrel/database": "^0.0.7",
-		"@orkestrel/guide": "^0.0.8",
+		"@orkestrel/guide": "^0.0.9",
 		"@orkestrel/router": "^0.0.8",
-		"@orkestrel/scaffold": "^0.0.18",
+		"@orkestrel/scaffold": "^0.0.25",
 		"@orkestrel/server": "^0.0.10",
 		"@types/node": "^26.1.2",
 		"@vitest/browser-playwright": "^4.1.10",
@@ -103,8 +103,8 @@
 		"vitest": "^4.1.10"
 	},
 	"peerDependencies": {
-		"@orkestrel/database": ">=0.0.7",
-		"@orkestrel/server": ">=0.0.10"
+		"@orkestrel/database": "^0.0.7",
+		"@orkestrel/server": "^0.0.10"
 	},
 	"peerDependenciesMeta": {
 		"@orkestrel/database": {
