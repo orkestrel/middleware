@@ -2,7 +2,7 @@ import type { SessionInterface, SessionRow, SessionStoreInterface } from '../typ
 import type { Guard } from '@orkestrel/contract'
 import type { TableInterface } from '@orkestrel/database'
 import { restoreSession, sessionExpired, snapshotSession } from '../helpers.js'
-import { Session } from '../Session.js'
+import type { Session } from '../Session.js'
 
 /**
  * A durable {@link SessionStoreInterface} over an `@orkestrel/database`

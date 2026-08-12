@@ -13,7 +13,7 @@
 > substrate (cookies, WebCrypto tokens, negotiation, conditionals, security
 > primitives) — this package never re-implements the seam, only composes it
 > into policy (AGENTS §21 "mechanism, never policy"). Source:
-> [`src/core`](../../src/core), [`src/server`](../../src/server). Surfaced
+> [`src/core`](../src/core), [`src/server`](../src/server). Surfaced
 > through the `@orkestrel/middleware` / `@orkestrel/middleware/server`
 > barrels (aliased `@src/core` / `@src/server` inside this repo).
 
@@ -698,34 +698,34 @@ const serveApp = createStatic({ root: '/srv/public', fallback: true }) // exclud
 
 ## Tests
 
-- [`tests/src/core/helpers.test.ts`](../../tests/src/core/helpers.test.ts) —
+- [`tests/src/core/helpers.test.ts`](../tests/src/core/helpers.test.ts) —
   `resolveKey` precedence, `buildRetryAfter`/`buildRateLimitField`/
   `buildRateLimitPolicyField` exact wire strings, `matchesTrustedEntry`/
   `resolveForwardedFor` matrices, `detectEncodings`, `compressBytes`, buffering-eligibility
   predicates, `transferSessionData`, the `isSession`/`isSessionControl`/
   `isMultipartBody` totality guards, `isPreflight`, `buildClientInfo`.
-- [`tests/src/core/Session.test.ts`](../../tests/src/core/Session.test.ts) —
+- [`tests/src/core/Session.test.ts`](../tests/src/core/Session.test.ts) —
   the entity shape (`id`, an independent, mutable `data` Map per instance).
-- [`tests/src/core/stores/MemorySessionStore.test.ts`](../../tests/src/core/stores/MemorySessionStore.test.ts) —
+- [`tests/src/core/stores/MemorySessionStore.test.ts`](../tests/src/core/stores/MemorySessionStore.test.ts) —
   construction guards, get/set/delete, idle + absolute-lifetime eviction,
   `createdAt` stamped once and preserved across re-set.
-- [`tests/src/core/stores/DatabaseSessionStore.test.ts`](../../tests/src/core/stores/DatabaseSessionStore.test.ts) —
+- [`tests/src/core/stores/DatabaseSessionStore.test.ts`](../tests/src/core/stores/DatabaseSessionStore.test.ts) —
   get/set/delete over a real `@orkestrel/database` memory-driver table, idle +
   absolute-lifetime eviction (including the underlying row's removal),
   `createdAt` stamped once and preserved across re-set, guard rejection.
-- [`tests/src/core/factories.test.ts`](../../tests/src/core/factories.test.ts) —
+- [`tests/src/core/factories.test.ts`](../tests/src/core/factories.test.ts) —
   `createCookieTransport`/`createHeaderTransport` round-trips over real
   `Request`/`Response`, `createMemorySessionStore` shallow mirror.
-- [`tests/src/core/middlewares.test.ts`](../../tests/src/core/middlewares.test.ts) —
+- [`tests/src/core/middlewares.test.ts`](../tests/src/core/middlewares.test.ts) —
   every battery's defaults, options, skip conditions, and §6 invariants;
   the canonical onion composed end-to-end.
-- [`tests/src/server/helpers.test.ts`](../../tests/src/server/helpers.test.ts) —
+- [`tests/src/server/helpers.test.ts`](../tests/src/server/helpers.test.ts) —
   traversal and SPA-fallback resolution, byte-signature matching, node zlib
   compression, multipart parsing/cleanup, and uploaded-file operations.
 
 ## See also
 
-- [`AGENTS.md`](../../AGENTS.md) — the rules; §5 the centralized-file
+- [`AGENTS.md`](../AGENTS.md) — the rules; §5 the centralized-file
   pattern and `middlewares.ts`'s kind-purity, §14 contract & validation
   architecture, §21 "mechanism, never policy", §22 documentation-as-contracts.
 - [`server.md`](server.md) — `@orkestrel/server`, the frozen seam and
@@ -736,4 +736,4 @@ const serveApp = createStatic({ root: '/srv/public', fallback: true }) // exclud
   tally.
 - [`abort.md`](abort.md) / [`timeout.md`](timeout.md) — `@orkestrel/abort` /
   `@orkestrel/timeout`, `createDeadline`'s signal-linking and timer.
-- [`README.md`](../README.md) — the guides index.
+- [`README.md`](README.md) — the guides index.

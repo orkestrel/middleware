@@ -861,11 +861,11 @@ describe('capstone: real socket + Dispatcher + canonical onion', () => {
 	it('one authenticated JSON round-trip fingerprints every layer on the wire, plus a 429 and a CSRF 403', async () => {
 		const secret = 'capstone-secret'
 		const bearerToken = await signToken('capstone-user', { secret })
-		const telemetryEntries: {
+		const telemetryEntries: Array<{
 			readonly method: string
 			readonly pathname: string
 			readonly status: number
-		}[] = []
+		}> = []
 
 		const dispatcher = createDispatcher<CapstoneState>()
 		dispatcher.add({

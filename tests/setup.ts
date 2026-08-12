@@ -87,10 +87,10 @@ export function createEchoTerminal<TState>(
 
 /** A terminal handler that also RECORDS every request/context it was reached with — for asserting the chain reached the terminal, and with what. */
 export interface RecordingTerminalInterface<TState> {
-	readonly calls: readonly {
+	readonly calls: ReadonlyArray<{
 		readonly request: Request
 		readonly context: MiddlewareContext<TState>
-	}[]
+	}>
 	readonly count: number
 	readonly handler: (request: Request, context: MiddlewareContext<TState>) => Promise<Response>
 }
@@ -111,7 +111,7 @@ export interface RecordingTerminalInterface<TState> {
  * ```
  */
 export function createRecordingTerminal<TState>(status = 200): RecordingTerminalInterface<TState> {
-	const calls: { request: Request; context: MiddlewareContext<TState> }[] = []
+	const calls: Array<{ request: Request; context: MiddlewareContext<TState> }> = []
 	return {
 		get calls() {
 			return calls
@@ -128,7 +128,7 @@ export function createRecordingTerminal<TState>(status = 200): RecordingTerminal
 
 /** A recording {@link NextFunction} — a real downstream continuation that records each call's substituted `request` before answering with a fixed `Response`. */
 export interface RecordingNextInterface {
-	readonly calls: readonly (Request | undefined)[]
+	readonly calls: ReadonlyArray<Request | undefined>
 	readonly count: number
 	readonly next: NextFunction
 }
@@ -150,7 +150,7 @@ export interface RecordingNextInterface {
  * ```
  */
 export function createRecordingNext(response?: Response): RecordingNextInterface {
-	const calls: (Request | undefined)[] = []
+	const calls: Array<Request | undefined> = []
 	return {
 		get calls() {
 			return calls
@@ -184,7 +184,7 @@ export function createRecordingNext(response?: Response): RecordingNextInterface
  * ```
  */
 export function runChain<TState>(
-	middleware: readonly MiddlewareHandler<TState>[],
+	middleware: ReadonlyArray<MiddlewareHandler<TState>>,
 	terminal: (request: Request, context: MiddlewareContext<TState>) => Promise<Response>,
 	request: Request,
 	context: MiddlewareContext<TState>,

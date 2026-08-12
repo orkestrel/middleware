@@ -292,7 +292,7 @@ export function createSecurity<TState extends IdentifierState>(
 		}
 		const response = await next()
 		response.headers.set('x-content-type-options', 'nosniff')
-		const headerTable: readonly (readonly [string, string | undefined])[] = [
+		const headerTable: ReadonlyArray<readonly [string, string | undefined]> = [
 			['x-frame-options', resolveSecurityHeader(frame, DEFAULT_FRAME_OPTIONS)],
 			['content-security-policy', resolveSecurityHeader(csp, DEFAULT_CSP)],
 			['referrer-policy', resolveSecurityHeader(referrer, DEFAULT_REFERRER_POLICY)],

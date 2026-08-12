@@ -113,7 +113,8 @@ describe('createBoundary', () => {
 
 describe('createTelemetry', () => {
 	it('records one entry per request with method/pathname/status/duration', async () => {
-		const entries: { method: string; pathname: string; status: number; duration: number }[] = []
+		const entries: Array<{ method: string; pathname: string; status: number; duration: number }> =
+			[]
 		const telemetry = createTelemetry({ record: (entry) => entries.push(entry) })
 		const context = createTestContext(buildRequest('/users?x=1'), {})
 		await runChain([telemetry], createEchoTerminal(201), buildRequest('/users?x=1'), context)
@@ -125,7 +126,7 @@ describe('createTelemetry', () => {
 	})
 
 	it('records status 500 when the downstream throws (no boundary present)', async () => {
-		const entries: { status: number }[] = []
+		const entries: Array<{ status: number }> = []
 		const telemetry = createTelemetry({ record: (entry) => entries.push(entry) })
 		const context = createTestContext(buildRequest('/'), {})
 		await expect(
@@ -137,7 +138,7 @@ describe('createTelemetry', () => {
 	})
 
 	it('records the boundary-mapped status when boundary sits inside telemetry', async () => {
-		const entries: { status: number }[] = []
+		const entries: Array<{ status: number }> = []
 		const telemetry = createTelemetry({ record: (entry) => entries.push(entry) })
 		const boundary = createBoundary()
 		const context = createTestContext(buildRequest('/'), {})
@@ -1234,10 +1235,10 @@ describe('isMultipartBody', () => {
 // ── createSession ─────────────────────────────────────────────────────────
 
 function createTestTransport(): SessionTransport & {
-	readonly written: { readonly response: Response; readonly id: string }[]
+	readonly written: Array<{ readonly response: Response; readonly id: string }>
 	readonly cleared: Response[]
 } {
-	const written: { response: Response; id: string }[] = []
+	const written: Array<{ response: Response; id: string }> = []
 	const cleared: Response[] = []
 	const header = 'x-test-session'
 	return {
