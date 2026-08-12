@@ -1,6 +1,6 @@
 {
 	"name": "@orkestrel/middleware",
-	"version": "0.0.9",
+	"version": "0.0.10",
 	"description": "Batteries for the @orkestrel/server middleware seam — boundary, telemetry, compression, security, CORS, rate limiting, sessions, CSRF, static files, and multipart uploads as typed factories. Part of the @orkestrel line.",
 	"keywords": [
 		"compression",
@@ -81,10 +81,10 @@
 		"prepublishOnly": "npm run format:check && npm run lint:check && npm run check && npm run build && npm test"
 	},
 	"dependencies": {
-		"@orkestrel/abort": "^0.0.5",
-		"@orkestrel/budget": "^0.0.5",
-		"@orkestrel/contract": "^0.0.10",
-		"@orkestrel/timeout": "^0.0.5"
+		"@orkestrel/abort": "^0.0.6",
+		"@orkestrel/budget": "^0.0.6",
+		"@orkestrel/contract": "^0.0.11",
+		"@orkestrel/timeout": "^0.0.6"
 	},
 	"devDependencies": {
 		"@microsoft/api-extractor": "^7.58.12",
