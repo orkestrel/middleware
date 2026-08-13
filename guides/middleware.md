@@ -225,7 +225,12 @@ const handle = compose<State>([boundary, security], async (_request, context) =>
 | `Session`              | class | The default session entity — `id` + a live `data` Map; implements `SessionInterface`.                                                    |
 | `MemorySessionStore`   | class | The default in-process `SessionStoreInterface` — idle + absolute-lifetime eviction.                                                      |
 | `DatabaseSessionStore` | class | A durable `SessionStoreInterface` over an `@orkestrel/database` table — same idle + absolute-lifetime contract as `MemorySessionStore`.  |
-| `MultipartParser`      | class | Internal server-source multipart lifecycle engine composed only by public `parseMultipartRequest`; intentionally absent from the barrel. |
+
+Multipart parsing has no entity row because it exposes no entity. The server source declares a
+multipart lifecycle engine that `parseMultipartRequest` composes internally, and the barrel does not
+export it: a consumer reaches every part of that behaviour through `parseMultipartRequest`, whose
+result is a `MultipartBody`. `tests/guides.test.ts` names the class in its `INTERNAL` list, so the
+omission is asserted rather than assumed, and adding it to the barrel would turn that assertion red.
 
 ### Factories
 
