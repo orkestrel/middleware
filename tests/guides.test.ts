@@ -1,98 +1,93 @@
-// The consumer-side guides-parity drop-in (PROPOSAL §6): runs `@orkestrel/guide`'s
-// checks against this repo's own `guides/README.md` manifest — one row (Middleware)
-// spanning the core/server faces as a multi-dir `GuideModule` (AGENTS §22 — one
-// guide per package).
+// The consumer-side guides-parity drop-in: runs `@orkestrel/guide`'s checks against
+// this repo's own `guides/README.md` manifest. The four constants below are this
+// package's own, and are the only part a sibling package changes.
 
 import { describe, expect, it } from 'vitest'
-import { readdirSync, readFileSync } from 'node:fs'
-import { fileURLToPath } from 'node:url'
-import { join } from 'node:path'
 import {
 	createGuide,
 	createSource,
+	createSourceManager,
 	fenceImports,
 	findMissing,
 	findUnexampled,
+	findUnlisted,
 	isExternalLink,
 	missingSymbols,
 	parseManifest,
 	resolveLink,
 	symbolKey,
 } from '@orkestrel/guide'
+import { readFileSync } from 'node:fs'
+import { requireValue } from '@orkestrel/test'
+import { readInventory } from '@orkestrel/test/server'
 
-const ROOT = fileURLToPath(new URL('../', import.meta.url))
-const WALK_DIRS = ['src', 'guides', 'tests']
-const SELF_SPECIFIERS = [
-	'@orkestrel/middleware',
-	'@orkestrel/middleware/server',
-	'@src/core',
-	'@src/server',
-]
-
-function walk(dir: string, acc: Record<string, string>): void {
-	for (const entry of readdirSync(join(ROOT, dir), { withFileTypes: true })) {
-		const relative = `${dir}/${entry.name}`
-		if (entry.isDirectory()) {
-			walk(relative, acc)
-			continue
-		}
-		if (!entry.name.endsWith('.ts') && !entry.name.endsWith('.md')) continue
-		acc[relative] = readFileSync(join(ROOT, relative), 'utf8')
-	}
-}
-
-const files: Record<string, string> = {}
-for (const dir of WALK_DIRS) walk(dir, files)
-files['AGENTS.md'] = readFileSync(join(ROOT, 'AGENTS.md'), 'utf8')
-
-function readText(relative: string): string {
-	const text = files[relative]
-	if (text === undefined) throw new Error(`Missing file: ${relative}`)
-	return text
-}
-
-const manifest = parseManifest(readText('guides/README.md'), 'guides')
-
-// Cross-face imports are real in this multi-face package (a fence importing
-// `createStatic`/`createMultipart` from `@orkestrel/middleware/server` alongside
-// `createBoundary` from `@orkestrel/middleware`) — so the fence-import check resolves
-// each specifier to ITS OWN face's exports rather than only the current manifest
-// entry's, per the specifier → module map below.
-const SPECIFIER_MODULES: Readonly<Record<string, string>> = {
+/** Every fence language this package's guides are allowed to use. */
+const FENCE_LANGUAGES = Object.freeze(['ts'])
+/** The fence language whose blocks count as worked examples. */
+const EXAMPLE_LANGUAGE = 'ts'
+/** Each import specifier this package's own guides may resolve against. */
+const MODULES = Object.freeze({
 	'@orkestrel/middleware': 'src/core',
 	'@orkestrel/middleware/server': 'src/server',
 	'@src/core': 'src/core',
 	'@src/server': 'src/server',
+})
+/**
+ * Declarations deliberately kept out of the barrel, as `symbolKey` strings.
+ *
+ * A class that one-class-per-file evicted from its single consumer cannot become a
+ * local, so it stays exported without being public. Naming it here is what makes that
+ * intentional rather than forgotten — and the second assertion below fails when a name
+ * here stops being stranded, so the list cannot rot.
+ */
+const INTERNAL: readonly string[] = Object.freeze(['class MultipartParser'])
+
+/** Root-level files this package's guides link to. `readInventory` walks directories only. */
+const ROOT_FILES = Object.freeze(['AGENTS.md'])
+
+const root = new URL('../', import.meta.url)
+const files: Record<string, string> = {
+	...readInventory(root, ['src', 'guides', 'tests'], { extensions: ['.ts', '.md'] }),
 }
-const specifierSources = new Map<string, ReturnType<typeof createSource>>()
-function exportsFor(specifier: string): readonly string[] {
-	const module = SPECIFIER_MODULES[specifier]
-	if (module === undefined) return []
-	let source = specifierSources.get(module)
-	if (source === undefined) {
-		source = createSource({ files, module })
-		specifierSources.set(module, source)
-	}
-	return source.exports().map((symbol) => symbol.name)
-}
+for (const name of ROOT_FILES) files[name] = readFileSync(new URL(name, root), 'utf8')
+const manifest = parseManifest(
+	requireValue(files['guides/README.md'], 'Missing file: guides/README.md'),
+	'guides',
+)
+const sources = createSourceManager({ files, modules: MODULES })
 
 it('manifest lists at least one guide', () => {
 	expect(manifest.length).toBeGreaterThan(0)
 })
 
 for (const entry of manifest) {
-	const guide = createGuide(readText(entry.spec))
+	const guide = createGuide(requireValue(files[entry.spec], `Missing file: ${entry.spec}`))
 	const source = createSource({ files, module: entry.source })
 
 	describe(`${entry.concept}`, () => {
+		it('uses only listed fence languages', () => {
+			expect(findUnlisted(guide.fences(), FENCE_LANGUAGES)).toEqual([])
+		})
+
 		it('extracts a non-empty documented surface', () => {
 			expect(guide.surface().length).toBeGreaterThan(0)
 		})
-		it('documents every source export', () => {
-			expect(missingSymbols(source.exports(), guide.surface())).toEqual([])
+		it('re-exports every direct declaration that is not named internal', () => {
+			const stranded = missingSymbols(source.exports(), source.surface())
+			expect(stranded.filter((key) => !INTERNAL.includes(key))).toEqual([])
 		})
-		it('documents only real exports', () => {
-			expect(missingSymbols(guide.surface(), source.exports())).toEqual([])
+		it('names no symbol internal that the barrel already exports', () => {
+			const stranded = missingSymbols(source.exports(), source.surface())
+			expect(INTERNAL.filter((key) => !stranded.includes(key))).toEqual([])
+		})
+		it('re-exports only direct declarations', () => {
+			expect(missingSymbols(source.surface(), source.exports())).toEqual([])
+		})
+		it('documents every barrel export', () => {
+			expect(missingSymbols(source.surface(), guide.surface())).toEqual([])
+		})
+		it('documents only barrel exports', () => {
+			expect(missingSymbols(guide.surface(), source.surface())).toEqual([])
 		})
 
 		it('exposes no hidden module-scope declarations', () => {
@@ -121,7 +116,10 @@ for (const entry of manifest) {
 		}
 
 		it('documents an example for every Surface function', () => {
-			const fences = guide.patterns()
+			const fences = guide
+				.fences()
+				.filter((fence) => fence.language === EXAMPLE_LANGUAGE)
+				.map((fence) => fence.code)
 			const names = guide
 				.surface()
 				.filter((symbol) => symbol.kind === 'function')
@@ -133,7 +131,10 @@ for (const entry of manifest) {
 			const entity = group.interface.replace(/Interface$/, '')
 			describe(`${group.interface} examples`, () => {
 				it('documents an example for every method', () => {
-					const fences = guide.patterns()
+					const fences = guide
+						.fences()
+						.filter((fence) => fence.language === EXAMPLE_LANGUAGE)
+						.map((fence) => fence.code)
 					const examples =
 						entity === group.interface
 							? source.examples(group.interface)
@@ -144,10 +145,13 @@ for (const entry of manifest) {
 		}
 
 		it('imports only real exports in every ```ts fence', () => {
-			for (const fence of guide.patterns()) {
-				for (const { specifier, names } of fenceImports(fence)) {
-					if (!SELF_SPECIFIERS.includes(specifier)) continue
-					expect(findMissing(names, exportsFor(specifier))).toEqual([])
+			const fences = guide.fences().filter((fence) => fence.language === EXAMPLE_LANGUAGE)
+			for (const fence of fences) {
+				for (const { specifier, names } of fenceImports(fence.code)) {
+					const imported = sources.source(specifier)
+					if (imported === undefined) continue
+					const surface = imported.surface().map((symbol) => symbol.name)
+					expect(findMissing(names, surface)).toEqual([])
 				}
 			}
 		})

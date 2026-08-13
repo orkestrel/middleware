@@ -220,11 +220,11 @@ const handle = compose<State>([boundary, security], async (_request, context) =>
 
 ### Entities
 
-| API                    | Kind  | Summary                                                                                                                                  |
-| ---------------------- | ----- | ---------------------------------------------------------------------------------------------------------------------------------------- |
-| `Session`              | class | The default session entity — `id` + a live `data` Map; implements `SessionInterface`.                                                    |
-| `MemorySessionStore`   | class | The default in-process `SessionStoreInterface` — idle + absolute-lifetime eviction.                                                      |
-| `DatabaseSessionStore` | class | A durable `SessionStoreInterface` over an `@orkestrel/database` table — same idle + absolute-lifetime contract as `MemorySessionStore`.  |
+| API                    | Kind  | Summary                                                                                                                                 |
+| ---------------------- | ----- | --------------------------------------------------------------------------------------------------------------------------------------- |
+| `Session`              | class | The default session entity — `id` + a live `data` Map; implements `SessionInterface`.                                                   |
+| `MemorySessionStore`   | class | The default in-process `SessionStoreInterface` — idle + absolute-lifetime eviction.                                                     |
+| `DatabaseSessionStore` | class | A durable `SessionStoreInterface` over an `@orkestrel/database` table — same idle + absolute-lifetime contract as `MemorySessionStore`. |
 
 Multipart parsing has no entity row because it exposes no entity. The server source declares a
 multipart lifecycle engine that `parseMultipartRequest` composes internally, and the barrel does not
