@@ -1,9 +1,8 @@
 import type { ConnectionState } from '@src/core'
 import type { MultipartState } from '@src/core'
-import { mkdtemp, readdir, rm, writeFile } from 'node:fs/promises'
-import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
+import { createScratch } from '@orkestrel/test/server'
 import {
 	createBearer,
 	createBoundary,
@@ -33,7 +32,6 @@ import {
 	buildMultipartRequest,
 	buildStaticFixture,
 	buildSymlinkFixture,
-	buildTempDirectory,
 	PNG_MAGIC,
 	startServer,
 } from '../../setupServer.js'
@@ -43,9 +41,9 @@ import { buildRequest, createTestContext } from '../../setup.js'
 
 describe('createStatic', () => {
 	it('serves a file with the correct MIME and a cache header', async () => {
-		const fixture = await buildStaticFixture()
+		const fixture = buildStaticFixture()
 		try {
-			const handler = createStatic({ root: fixture.root, cache: 60 })
+			const handler = createStatic({ root: fixture.scratch.path, cache: 60 })
 			const context = createTestContext(buildRequest('/index.html'), {})
 			const response = await handler(
 				buildRequest('/index.html'),
@@ -57,14 +55,14 @@ describe('createStatic', () => {
 			expect(response.headers.get('cache-control')).toBe('max-age=60')
 			expect(await response.text()).toContain('root index')
 		} finally {
-			await fixture.cleanup()
+			fixture.scratch.destroy()
 		}
 	})
 
 	it('serves a nested file', async () => {
-		const fixture = await buildStaticFixture()
+		const fixture = buildStaticFixture()
 		try {
-			const handler = createStatic({ root: fixture.root })
+			const handler = createStatic({ root: fixture.scratch.path })
 			const context = createTestContext(buildRequest('/nested/deep/page.html'), {})
 			const response = await handler(
 				buildRequest('/nested/deep/page.html'),
@@ -74,14 +72,14 @@ describe('createStatic', () => {
 			expect(response.status).toBe(200)
 			expect(await response.text()).toContain('nested page')
 		} finally {
-			await fixture.cleanup()
+			fixture.scratch.destroy()
 		}
 	})
 
 	it('HEAD carries headers with no body', async () => {
-		const fixture = await buildStaticFixture()
+		const fixture = buildStaticFixture()
 		try {
-			const handler = createStatic({ root: fixture.root })
+			const handler = createStatic({ root: fixture.scratch.path })
 			const request = buildRequest('/index.html', { method: 'HEAD' })
 			const context = createTestContext(request, {})
 			Object.defineProperty(context, 'method', { value: 'HEAD' })
@@ -90,14 +88,14 @@ describe('createStatic', () => {
 			expect(response.headers.get('content-length')).toBeDefined()
 			expect(await response.text()).toBe('')
 		} finally {
-			await fixture.cleanup()
+			fixture.scratch.destroy()
 		}
 	})
 
 	it('calls next() on a miss', async () => {
-		const fixture = await buildStaticFixture()
+		const fixture = buildStaticFixture()
 		try {
-			const handler = createStatic({ root: fixture.root })
+			const handler = createStatic({ root: fixture.scratch.path })
 			const context = createTestContext(buildRequest('/nope.html'), {})
 			let called = false
 			const response = await handler(buildRequest('/nope.html'), context, async () => {
@@ -107,14 +105,14 @@ describe('createStatic', () => {
 			expect(called).toBe(true)
 			expect(await response.text()).toBe('miss')
 		} finally {
-			await fixture.cleanup()
+			fixture.scratch.destroy()
 		}
 	})
 
 	it('dotfiles matrix — ignore falls through, deny 403s, allow serves', async () => {
-		const fixture = await buildStaticFixture()
+		const fixture = buildStaticFixture()
 		try {
-			const ignoreHandler = createStatic({ root: fixture.root, dotfiles: 'ignore' })
+			const ignoreHandler = createStatic({ root: fixture.scratch.path, dotfiles: 'ignore' })
 			let nextCalled = false
 			const ignoreResponse = await ignoreHandler(
 				buildRequest('/.env'),
@@ -127,7 +125,7 @@ describe('createStatic', () => {
 			expect(nextCalled).toBe(true)
 			expect(await ignoreResponse.text()).toBe('miss')
 
-			const denyHandler = createStatic({ root: fixture.root, dotfiles: 'deny' })
+			const denyHandler = createStatic({ root: fixture.scratch.path, dotfiles: 'deny' })
 			await expect(
 				denyHandler(
 					buildRequest('/.env'),
@@ -136,7 +134,7 @@ describe('createStatic', () => {
 				),
 			).rejects.toSatisfy((error: unknown) => error instanceof HTTPError && error.status === 403)
 
-			const allowHandler = createStatic({ root: fixture.root, dotfiles: 'allow' })
+			const allowHandler = createStatic({ root: fixture.scratch.path, dotfiles: 'allow' })
 			const allowResponse = await allowHandler(
 				buildRequest('/.env'),
 				createTestContext(buildRequest('/.env'), {}),
@@ -145,14 +143,14 @@ describe('createStatic', () => {
 			expect(allowResponse.status).toBe(200)
 			expect(await allowResponse.text()).toContain('SECRET')
 		} finally {
-			await fixture.cleanup()
+			fixture.scratch.destroy()
 		}
 	})
 
 	it('traversal requests never escape root — 404-or-next, no leaked content', async () => {
-		const fixture = await buildStaticFixture()
+		const fixture = buildStaticFixture()
 		try {
-			const handler = createStatic({ root: fixture.root })
+			const handler = createStatic({ root: fixture.scratch.path })
 			for (const path of [
 				'/../../../etc/passwd',
 				'/%2e%2e/%2e%2e/etc/passwd',
@@ -171,14 +169,14 @@ describe('createStatic', () => {
 				expect(await response.text()).not.toContain('root:')
 			}
 		} finally {
-			await fixture.cleanup()
+			fixture.scratch.destroy()
 		}
 	})
 
 	it('reserved-device path 404s (falls to next) while a console.js-like file serves', async () => {
-		const fixture = await buildStaticFixture()
+		const fixture = buildStaticFixture()
 		try {
-			const handler = createStatic({ root: fixture.root })
+			const handler = createStatic({ root: fixture.scratch.path })
 			let nextCalled = false
 			const reservedResponse = await handler(
 				buildRequest('/NUL.json'),
@@ -199,14 +197,18 @@ describe('createStatic', () => {
 			expect(okResponse.status).toBe(200)
 			expect(await okResponse.text()).toContain('color: red')
 		} finally {
-			await fixture.cleanup()
+			fixture.scratch.destroy()
 		}
 	})
 
 	it('ignored extensionless dotfile falls through to next() rather than being served the SPA shell', async () => {
-		const fixture = await buildStaticFixture()
+		const fixture = buildStaticFixture()
 		try {
-			const handler = createStatic({ root: fixture.root, dotfiles: 'ignore', fallback: true })
+			const handler = createStatic({
+				root: fixture.scratch.path,
+				dotfiles: 'ignore',
+				fallback: true,
+			})
 			const request = new Request('http://test.local/.env', { headers: { accept: 'text/html' } })
 			let nextCalled = false
 			const response = await handler(request, createTestContext(request, {}), async () => {
@@ -217,14 +219,14 @@ describe('createStatic', () => {
 			expect(response.status).toBe(404)
 			expect(await response.text()).not.toContain('root index')
 		} finally {
-			await fixture.cleanup()
+			fixture.scratch.destroy()
 		}
 	})
 
 	it('index + SPA fallback matrix, including exclude', async () => {
-		const fixture = await buildStaticFixture()
+		const fixture = buildStaticFixture()
 		try {
-			const handler = createStatic({ root: fixture.root, fallback: { exclude: '/api' } })
+			const handler = createStatic({ root: fixture.scratch.path, fallback: { exclude: '/api' } })
 			const spaRequest = new Request('http://test.local/app/dashboard', {
 				headers: { accept: 'text/html' },
 			})
@@ -260,14 +262,14 @@ describe('createStatic', () => {
 			expect(apifooResponse.status).toBe(200)
 			expect(await apifooResponse.text()).toContain('root index')
 		} finally {
-			await fixture.cleanup()
+			fixture.scratch.destroy()
 		}
 	})
 
 	it('SPA fallback Accept gate: a non-HTML Accept header falls through to next() instead of the shell', async () => {
-		const fixture = await buildStaticFixture()
+		const fixture = buildStaticFixture()
 		try {
-			const handler = createStatic({ root: fixture.root, fallback: true })
+			const handler = createStatic({ root: fixture.scratch.path, fallback: true })
 			const request = new Request('http://test.local/app/dashboard', {
 				headers: { accept: 'application/json' },
 			})
@@ -280,14 +282,14 @@ describe('createStatic', () => {
 			expect(response.status).toBe(404)
 			expect(await response.text()).not.toContain('root index')
 		} finally {
-			await fixture.cleanup()
+			fixture.scratch.destroy()
 		}
 	})
 
 	it('If-None-Match returns 304', async () => {
-		const fixture = await buildStaticFixture()
+		const fixture = buildStaticFixture()
 		try {
-			const handler = createStatic({ root: fixture.root })
+			const handler = createStatic({ root: fixture.scratch.path })
 			const first = await handler(
 				buildRequest('/index.html'),
 				createTestContext(buildRequest('/index.html'), {}),
@@ -308,14 +310,14 @@ describe('createStatic', () => {
 			expect(response.status).toBe(304)
 			expect(await response.text()).toBe('')
 		} finally {
-			await fixture.cleanup()
+			fixture.scratch.destroy()
 		}
 	})
 
 	it('a non-matching If-None-Match returns 200 with the full body', async () => {
-		const fixture = await buildStaticFixture()
+		const fixture = buildStaticFixture()
 		try {
-			const handler = createStatic({ root: fixture.root })
+			const handler = createStatic({ root: fixture.scratch.path })
 			const conditional = new Request('http://test.local/index.html', {
 				headers: { 'if-none-match': '"not-a-real-etag"' },
 			})
@@ -327,14 +329,14 @@ describe('createStatic', () => {
 			expect(response.status).toBe(200)
 			expect(await response.text()).toContain('root index')
 		} finally {
-			await fixture.cleanup()
+			fixture.scratch.destroy()
 		}
 	})
 
 	it('etag:false omits the ETag header entirely', async () => {
-		const fixture = await buildStaticFixture()
+		const fixture = buildStaticFixture()
 		try {
-			const handler = createStatic({ root: fixture.root, etag: false })
+			const handler = createStatic({ root: fixture.scratch.path, etag: false })
 			const response = await handler(
 				buildRequest('/index.html'),
 				createTestContext(buildRequest('/index.html'), {}),
@@ -344,16 +346,16 @@ describe('createStatic', () => {
 			expect(response.headers.get('etag')).toBeNull()
 			await response.body?.cancel()
 		} finally {
-			await fixture.cleanup()
+			fixture.scratch.destroy()
 		}
 	})
 
 	it.runIf(process.platform !== 'win32')(
 		'symlink escape: an in-root symlink to an OUTSIDE target falls through to next(); an in-root symlink to an in-root target still serves 200',
 		async () => {
-			const symlinkFixture = await buildSymlinkFixture()
+			const symlinkFixture = buildSymlinkFixture()
 			try {
-				const handler = createStatic({ root: symlinkFixture.root })
+				const handler = createStatic({ root: symlinkFixture.scratch.path })
 
 				let nextCalled = false
 				const escapeResponse = await handler(
@@ -376,7 +378,7 @@ describe('createStatic', () => {
 				expect(insideResponse.status).toBe(200)
 				expect(await insideResponse.text()).toContain('inside target')
 			} finally {
-				await symlinkFixture.cleanup()
+				symlinkFixture.destroy()
 			}
 		},
 	)
@@ -384,9 +386,9 @@ describe('createStatic', () => {
 	it.runIf(process.platform !== 'win32')(
 		'directory-index symlink escape: a directory whose index.html symlinks OUTSIDE root is a miss, not served',
 		async () => {
-			const fixture = await buildDirectoryIndexFixture()
+			const fixture = buildDirectoryIndexFixture()
 			try {
-				const handler = createStatic({ root: fixture.root })
+				const handler = createStatic({ root: fixture.scratch.path })
 				let nextCalled = false
 				const response = await handler(
 					buildRequest('/sub/'),
@@ -400,7 +402,7 @@ describe('createStatic', () => {
 				expect(response.status).toBe(404)
 				expect(await response.text()).not.toContain('outside secret')
 			} finally {
-				await fixture.cleanup()
+				fixture.destroy()
 			}
 		},
 	)
@@ -408,14 +410,12 @@ describe('createStatic', () => {
 	it.runIf(process.platform !== 'win32')(
 		'SPA-shell control: the root index.html (no symlink escape) still serves normally through the fallback',
 		async () => {
-			const root = await mkdtemp(join(tmpdir(), 'middleware-spashell-root-'))
+			const scratch = createScratch({
+				prefix: 'middleware-spashell-root-',
+				files: { 'index.html': '<!doctype html><html><body>spa shell</body></html>' },
+			})
 			try {
-				await writeFile(
-					join(root, 'index.html'),
-					'<!doctype html><html><body>spa shell</body></html>',
-				)
-
-				const handler = createStatic({ root, fallback: true })
+				const handler = createStatic({ root: scratch.path, fallback: true })
 				const request = buildRequest('/missing-route', { headers: { accept: 'text/html' } })
 				const response = await handler(
 					request,
@@ -425,15 +425,15 @@ describe('createStatic', () => {
 				expect(response.status).toBe(200)
 				expect(await response.text()).toContain('spa shell')
 			} finally {
-				await rm(root, { recursive: true, force: true })
+				scratch.destroy()
 			}
 		},
 	)
 
 	it('Range: single request returns 206 with the exact byte slice', async () => {
-		const fixture = await buildStaticFixture()
+		const fixture = buildStaticFixture()
 		try {
-			const handler = createStatic({ root: fixture.root })
+			const handler = createStatic({ root: fixture.scratch.path })
 			const rangeRequest = new Request('http://test.local/large.bin', {
 				headers: { range: 'bytes=10-19' },
 			})
@@ -448,14 +448,14 @@ describe('createStatic', () => {
 			expect(bytes).toHaveLength(10)
 			expect(Array.from(bytes)).toEqual(Array(10).fill(0x41))
 		} finally {
-			await fixture.cleanup()
+			fixture.scratch.destroy()
 		}
 	})
 
 	it('Range: suffix and open ranges', async () => {
-		const fixture = await buildStaticFixture()
+		const fixture = buildStaticFixture()
 		try {
-			const handler = createStatic({ root: fixture.root })
+			const handler = createStatic({ root: fixture.scratch.path })
 			const suffixRequest = new Request('http://test.local/large.bin', {
 				headers: { range: 'bytes=-10' },
 			})
@@ -480,14 +480,14 @@ describe('createStatic', () => {
 			expect(openResponse.headers.get('content-range')).toBe('bytes 199990-199999/200000')
 			await openResponse.body?.cancel()
 		} finally {
-			await fixture.cleanup()
+			fixture.scratch.destroy()
 		}
 	})
 
 	it('Range: unsatisfiable returns 416', async () => {
-		const fixture = await buildStaticFixture()
+		const fixture = buildStaticFixture()
 		try {
-			const handler = createStatic({ root: fixture.root })
+			const handler = createStatic({ root: fixture.scratch.path })
 			const request = new Request('http://test.local/large.bin', {
 				headers: { range: 'bytes=999999999-' },
 			})
@@ -499,14 +499,14 @@ describe('createStatic', () => {
 			expect(response.status).toBe(416)
 			expect(response.headers.get('content-range')).toBe('bytes */200000')
 		} finally {
-			await fixture.cleanup()
+			fixture.scratch.destroy()
 		}
 	})
 
 	it('Range: multi-range and malformed refused — served full 200', async () => {
-		const fixture = await buildStaticFixture()
+		const fixture = buildStaticFixture()
 		try {
-			const handler = createStatic({ root: fixture.root })
+			const handler = createStatic({ root: fixture.scratch.path })
 			const multiRequest = new Request('http://test.local/large.bin', {
 				headers: { range: 'bytes=0-9,20-29' },
 			})
@@ -529,7 +529,7 @@ describe('createStatic', () => {
 			expect(malformedResponse.status).toBe(200)
 			await malformedResponse.body?.cancel()
 		} finally {
-			await fixture.cleanup()
+			fixture.scratch.destroy()
 		}
 	})
 })
@@ -538,7 +538,7 @@ describe('createStatic', () => {
 
 describe('createMultipart', () => {
 	it('happy path — files and fields staged under random names, not client filenames', async () => {
-		const directory = await buildTempDirectory()
+		const directory = createScratch({ prefix: 'middleware-multipart-' })
 		try {
 			const handler = createMultipart<MultipartState>({ directory: directory.path })
 			const request = buildMultipartRequest([
@@ -563,15 +563,15 @@ describe('createMultipart', () => {
 			const files = state.multipart?.files.avatar
 			expect(files?.[0]?.name).toBe('a.png')
 			expect(files?.[0]?.path).not.toContain('a.png')
-			const staged = await readdir(directory.path)
+			const staged = directory.names()
 			expect(staged).toHaveLength(1)
 		} finally {
-			await directory.cleanup()
+			directory.destroy()
 		}
 	})
 
 	it('preserves a traversal filename as metadata only', async () => {
-		const directory = await buildTempDirectory()
+		const directory = createScratch({ prefix: 'middleware-multipart-' })
 		try {
 			const handler = createMultipart<MultipartState>({ directory: directory.path })
 			const request = buildMultipartRequest([
@@ -588,12 +588,12 @@ describe('createMultipart', () => {
 			expect(state.multipart?.files.avatar?.[0]?.name).toBe('../../etc/passwd')
 			expect(state.multipart?.files.avatar?.[0]?.path.includes('..')).toBe(false)
 		} finally {
-			await directory.cleanup()
+			directory.destroy()
 		}
 	})
 
 	it('every limit trips as a 413 HTTPError, with temp files GONE', async () => {
-		const directory = await buildTempDirectory()
+		const directory = createScratch({ prefix: 'middleware-multipart-' })
 		try {
 			const handler = createMultipart<MultipartState>({
 				directory: directory.path,
@@ -606,9 +606,9 @@ describe('createMultipart', () => {
 			await expect(handler(request, context, async () => new Response('ok'))).rejects.toSatisfy(
 				(error: unknown) => error instanceof HTTPError && error.status === 413,
 			)
-			expect(await readdir(directory.path)).toHaveLength(0)
+			expect(directory.names()).toHaveLength(0)
 		} finally {
-			await directory.cleanup()
+			directory.destroy()
 		}
 	})
 
@@ -663,7 +663,7 @@ describe('createMultipart', () => {
 	})
 
 	it('__proto__-named file part is skipped, never keyed, and does not crash the handler', async () => {
-		const directory = await buildTempDirectory()
+		const directory = createScratch({ prefix: 'middleware-multipart-' })
 		try {
 			const handler = createMultipart<MultipartState>({ directory: directory.path })
 			const request = buildMultipartRequest([
@@ -686,9 +686,9 @@ describe('createMultipart', () => {
 			expect(Object.prototype.hasOwnProperty.call(state.multipart?.files ?? {}, '__proto__')).toBe(
 				false,
 			)
-			expect(await readdir(directory.path)).toHaveLength(0)
+			expect(directory.names()).toHaveLength(0)
 		} finally {
-			await directory.cleanup()
+			directory.destroy()
 		}
 	})
 
@@ -720,7 +720,7 @@ describe('createMultipart', () => {
 	})
 
 	it('a downstream throw unlinks every still-staged temp file, but a MOVED file survives', async () => {
-		const directory = await buildTempDirectory()
+		const directory = createScratch({ prefix: 'middleware-multipart-' })
 		try {
 			const handler = createMultipart<MultipartState>({ directory: directory.path })
 			const request = buildMultipartRequest([
@@ -761,12 +761,12 @@ describe('createMultipart', () => {
 				}),
 			).rejects.toThrow('downstream failure')
 
-			const remaining = await readdir(directory.path)
+			const remaining = directory.names()
 			// The moved file (renamed to `moved.png`) survives; the still-staged
 			// `discard` file was unlinked by the fail-closed cleanup.
 			expect(remaining).toEqual(['moved.png'])
 		} finally {
-			await directory.cleanup()
+			directory.destroy()
 		}
 	})
 })

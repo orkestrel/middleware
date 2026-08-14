@@ -1,9 +1,10 @@
 import type { AddressInfo } from 'node:net'
-import { mkdtemp, mkdir, rm, symlink, writeFile } from 'node:fs/promises'
-import { tmpdir } from 'node:os'
+import type { ScratchInterface } from '@orkestrel/test/server'
+import { writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { randomUUID } from 'node:crypto'
 import http from 'node:http'
+import { createScratch } from '@orkestrel/test/server'
 
 // ── Server-only test harness (AGENTS §16.1 / §17.6) ──────────────────────────
 //
@@ -20,9 +21,9 @@ export const PNG_MAGIC = Uint8Array.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x
 /** A real JPEG magic-byte header (3 bytes) — the shortest genuine JPEG signature. */
 export const JPEG_MAGIC = Uint8Array.from([0xff, 0xd8, 0xff])
 
-/** A temp-dir static fixture tree — the seeded directory plus its known file paths, ready for `createStatic` tests. */
+/** A scratch-backed static fixture tree — the seeded directory plus its known file paths, ready for `createStatic` tests. */
 export interface StaticFixtureInterface {
-	readonly root: string
+	readonly scratch: ScratchInterface
 	readonly indexPath: string
 	readonly nestedPath: string
 	readonly dotfilePath: string
@@ -30,170 +31,182 @@ export interface StaticFixtureInterface {
 	readonly largePath: string
 	readonly reservedPath: string
 	readonly reservedLikePath: string
-	cleanup(): Promise<void>
 }
 
 /**
- * Build a real temp-dir static-file fixture: nested directories, an
+ * Build a real scratch-directory static-file fixture: nested directories, an
  * `index.html`, a dotfile, a binary file with real PNG magic bytes, a large
  * file (for Range tests), and a Windows-reserved-device-name file alongside
  * a merely reserved-LOOKING one — the seeded tree `createStatic`'s node-face
  * suite serves real files from (§16: no mocks).
  *
- * @returns A {@link StaticFixtureInterface} with a `cleanup()` teardown every caller MUST invoke
+ * @remarks The binary and large files carry real bytes rather than text, so
+ * they are written directly through `node:fs` after allocation; every text
+ * file is seeded through the scratch itself.
+ * @returns A {@link StaticFixtureInterface} whose `scratch.destroy()` every caller MUST invoke
  *
  * @example
  * ```ts
- * const fixture = await buildStaticFixture()
+ * const fixture = buildStaticFixture()
  * try {
- * 	// ... drive createStatic({ root: fixture.root }) ...
+ * 	// ... drive createStatic({ root: fixture.scratch.path }) ...
  * } finally {
- * 	await fixture.cleanup()
+ * 	fixture.scratch.destroy()
  * }
  * ```
  */
-export async function buildStaticFixture(): Promise<StaticFixtureInterface> {
-	const root = await mkdtemp(join(tmpdir(), 'middleware-static-'))
-	const indexPath = join(root, 'index.html')
-	await writeFile(indexPath, '<!doctype html><html><body>root index</body></html>')
+export function buildStaticFixture(): StaticFixtureInterface {
+	const scratch = createScratch({
+		prefix: 'middleware-static-',
+		files: {
+			'index.html': '<!doctype html><html><body>root index</body></html>',
+			'nested/deep/page.html': '<!doctype html><html><body>nested page</body></html>',
+			'.env': 'SECRET=hidden',
+			'nullable.css': 'body { color: red }',
+			// On Windows, NUL is a reserved device name — the write would hit the null device, not disk.
+			...(process.platform === 'win32' ? {} : { 'NUL.json': '{}' }),
+		},
+	})
 
-	const nestedDir = join(root, 'nested', 'deep')
-	await mkdir(nestedDir, { recursive: true })
-	const nestedPath = join(nestedDir, 'page.html')
-	await writeFile(nestedPath, '<!doctype html><html><body>nested page</body></html>')
-
-	const dotfilePath = join(root, '.env')
-	await writeFile(dotfilePath, 'SECRET=hidden')
-
-	const binaryPath = join(root, 'image.png')
-	await writeFile(
+	const binaryPath = join(scratch.path, 'image.png')
+	writeFileSync(
 		binaryPath,
 		Buffer.concat([Buffer.from(PNG_MAGIC), Buffer.from('rest of a fake png body')]),
 	)
 
-	const largePath = join(root, 'large.bin')
-	await writeFile(largePath, Buffer.alloc(200_000, 0x41))
-
-	const reservedPath = join(root, 'NUL.json')
-	if (process.platform !== 'win32') {
-		// On Windows, NUL is a reserved device name — the write would hit the null device, not disk.
-		await writeFile(reservedPath, '{}')
-	}
-
-	const reservedLikePath = join(root, 'nullable.css')
-	await writeFile(reservedLikePath, 'body { color: red }')
-
-	async function cleanup(): Promise<void> {
-		await rm(root, { recursive: true, force: true })
-	}
+	const largePath = join(scratch.path, 'large.bin')
+	writeFileSync(largePath, Buffer.alloc(200_000, 0x41))
 
 	return {
-		root,
-		indexPath,
-		nestedPath,
-		dotfilePath,
+		scratch,
+		indexPath: join(scratch.path, 'index.html'),
+		nestedPath: join(scratch.path, 'nested', 'deep', 'page.html'),
+		dotfilePath: join(scratch.path, '.env'),
 		binaryPath,
 		largePath,
-		reservedPath,
-		reservedLikePath,
-		cleanup,
+		reservedPath: join(scratch.path, 'NUL.json'),
+		reservedLikePath: join(scratch.path, 'nullable.css'),
 	}
 }
 
-/** A temp-dir fixture with a symlink INSIDE root pointing IN-root, and one pointing OUTSIDE root — for `createStatic`'s symlink-escape matrix. */
+/** A scratch-backed fixture with a symlink INSIDE root pointing IN-root, and one pointing OUTSIDE root — for `createStatic`'s symlink-escape matrix. */
 export interface SymlinkFixtureInterface {
-	readonly root: string
+	readonly scratch: ScratchInterface
 	readonly insideTarget: string
 	readonly linkToInside: string
 	readonly linkToOutside: string
-	cleanup(): Promise<void>
+	destroy(): void
 }
 
 /**
- * Build a real temp-dir fixture with two symlinks: one inside `root` pointing
- * to another file inside `root` (should still serve normally), and one
- * inside `root` pointing to a file OUTSIDE `root` (the escape `createStatic`
- * must refuse) — POSIX-only (§16: no mocks; the platform-gated caller is
- * responsible for `it.runIf(process.platform !== 'win32')`).
+ * Build a real scratch-directory fixture with two symlinks: one inside the
+ * scratch root pointing to another file inside it (should still serve
+ * normally), and one inside the scratch root pointing to a file OUTSIDE it
+ * (the escape `createStatic` must refuse) — POSIX-only (§16: no mocks; the
+ * platform-gated caller is responsible for `it.runIf(process.platform !== 'win32')`).
  *
- * @returns A {@link SymlinkFixtureInterface} with a `cleanup()` teardown every caller MUST invoke
+ * @returns A {@link SymlinkFixtureInterface} with a `destroy()` teardown every caller MUST invoke
  *
  * @example
  * ```ts
- * const fixture = await buildSymlinkFixture()
+ * const fixture = buildSymlinkFixture()
  * try {
- * 	// ... drive createStatic({ root: fixture.root }) against fixture.linkToOutside ...
+ * 	// ... drive createStatic({ root: fixture.scratch.path }) against fixture.linkToOutside ...
  * } finally {
- * 	await fixture.cleanup()
+ * 	fixture.destroy()
  * }
  * ```
  */
-export async function buildSymlinkFixture(): Promise<SymlinkFixtureInterface> {
-	const root = await mkdtemp(join(tmpdir(), 'middleware-symlink-root-'))
-	const outsideDir = await mkdtemp(join(tmpdir(), 'middleware-symlink-outside-'))
+export function buildSymlinkFixture(): SymlinkFixtureInterface {
+	const root = createScratch({ prefix: 'middleware-symlink-root-' })
+	const outside = createScratch({ prefix: 'middleware-symlink-outside-' })
 
-	const insideTarget = join(root, 'inside.html')
-	await writeFile(insideTarget, '<!doctype html><html><body>inside target</body></html>')
+	root.write('inside.html', '<!doctype html><html><body>inside target</body></html>')
+	outside.write('secret.html', '<!doctype html><html><body>outside secret</body></html>')
 
-	const outsideTarget = join(outsideDir, 'secret.html')
-	await writeFile(outsideTarget, '<!doctype html><html><body>outside secret</body></html>')
+	const insideTarget = join(root.path, 'inside.html')
+	const outsideTarget = join(outside.path, 'secret.html')
 
-	const linkToInside = join(root, 'link-inside.html')
-	await symlink(insideTarget, linkToInside)
+	root.link('link-inside.html', insideTarget)
+	root.link('link-outside.html', outsideTarget)
 
-	const linkToOutside = join(root, 'link-outside.html')
-	await symlink(outsideTarget, linkToOutside)
-
-	async function cleanup(): Promise<void> {
-		await rm(root, { recursive: true, force: true })
-		await rm(outsideDir, { recursive: true, force: true })
+	function destroy(): void {
+		root.destroy()
+		outside.destroy()
 	}
 
-	return { root, insideTarget, linkToInside, linkToOutside, cleanup }
+	return {
+		scratch: root,
+		insideTarget,
+		linkToInside: join(root.path, 'link-inside.html'),
+		linkToOutside: join(root.path, 'link-outside.html'),
+		destroy,
+	}
 }
 
-/** A temp-dir fixture with a subdirectory whose `index.html` is a symlink pointing OUTSIDE root — for `createStatic`'s directory-index symlink-escape case. */
+/** A scratch-backed fixture with a subdirectory whose `index.html` is a symlink pointing OUTSIDE root — for `createStatic`'s directory-index symlink-escape case. */
 export interface DirectoryIndexFixtureInterface {
-	readonly root: string
+	readonly scratch: ScratchInterface
 	readonly subdir: string
-	cleanup(): Promise<void>
+	destroy(): void
 }
 
 /**
- * Build a real temp-dir fixture with a subdirectory whose `index.html` is a
- * symlink to a file OUTSIDE `root` — the directory-index escape `createStatic`
- * must refuse (§16: no mocks; the platform-gated caller is responsible for
- * `it.runIf(process.platform !== 'win32')`).
+ * Build a real scratch-directory fixture with a subdirectory whose
+ * `index.html` is a symlink to a file OUTSIDE the scratch root — the
+ * directory-index escape `createStatic` must refuse (§16: no mocks; the
+ * platform-gated caller is responsible for `it.runIf(process.platform !== 'win32')`).
  *
- * @returns A {@link DirectoryIndexFixtureInterface} with a `cleanup()` teardown every caller MUST invoke
+ * @returns A {@link DirectoryIndexFixtureInterface} with a `destroy()` teardown every caller MUST invoke
  *
  * @example
  * ```ts
- * const fixture = await buildDirectoryIndexFixture()
+ * const fixture = buildDirectoryIndexFixture()
  * try {
- * 	// ... drive createStatic({ root: fixture.root }) against `${fixture.subdir}/` ...
+ * 	// ... drive createStatic({ root: fixture.scratch.path }) against `${fixture.subdir}/` ...
  * } finally {
- * 	await fixture.cleanup()
+ * 	fixture.destroy()
  * }
  * ```
  */
-export async function buildDirectoryIndexFixture(): Promise<DirectoryIndexFixtureInterface> {
-	const root = await mkdtemp(join(tmpdir(), 'middleware-dirindex-root-'))
-	const outsideDir = await mkdtemp(join(tmpdir(), 'middleware-dirindex-outside-'))
+export function buildDirectoryIndexFixture(): DirectoryIndexFixtureInterface {
+	const root = createScratch({ prefix: 'middleware-dirindex-root-' })
+	const outside = createScratch({ prefix: 'middleware-dirindex-outside-' })
 
-	const outsideTarget = join(outsideDir, 'secret.html')
-	await writeFile(outsideTarget, '<!doctype html><html><body>outside secret</body></html>')
+	outside.write('secret.html', '<!doctype html><html><body>outside secret</body></html>')
+	const outsideTarget = join(outside.path, 'secret.html')
 
-	const subdir = join(root, 'sub')
-	await mkdir(subdir, { recursive: true })
-	await symlink(outsideTarget, join(subdir, 'index.html'))
+	root.link('sub/index.html', outsideTarget)
 
-	async function cleanup(): Promise<void> {
-		await rm(root, { recursive: true, force: true })
-		await rm(outsideDir, { recursive: true, force: true })
+	function destroy(): void {
+		root.destroy()
+		outside.destroy()
 	}
 
-	return { root, subdir, cleanup }
+	return { scratch: root, subdir: join(root.path, 'sub'), destroy }
+}
+
+/**
+ * A scratch-backed temp directory shaped for `tests/src/server/helpers.test.ts`, which this
+ * dispatch does not own and cannot edit. That file calls `await buildTempDirectory()` and
+ * `await directory.cleanup()`; both compile and behave correctly against a synchronous value,
+ * since `await` on a non-`Promise` is a legal no-op pass-through. `path` already matches
+ * `ScratchInterface`, so `cleanup` is the only renamed member, kept solely for that consumer.
+ */
+export interface TempDirectoryInterface {
+	readonly path: string
+	cleanup(): void
+}
+
+/**
+ * Allocate a scratch directory shaped for the `TempDirectoryInterface` an out-of-scope consumer
+ * still expects.
+ *
+ * @returns A {@link TempDirectoryInterface} whose `cleanup()` every caller MUST invoke
+ */
+export function buildTempDirectory(): TempDirectoryInterface {
+	const scratch = createScratch({ prefix: 'middleware-multipart-' })
+	return { path: scratch.path, cleanup: () => scratch.destroy() }
 }
 
 /** A `Request` carrying a real multipart body over a single-chunk stream, with an observable `cancelled` flag. */
@@ -347,35 +360,6 @@ export function buildMultipartRequest(
 		headers: { 'content-type': contentType },
 		body: new Blob([Buffer.from(body)]),
 	})
-}
-
-/** A temp directory a multipart test can point `createMultipart`'s `directory` option at, with its own teardown. */
-export interface TempDirectoryInterface {
-	readonly path: string
-	cleanup(): Promise<void>
-}
-
-/**
- * Create a fresh temp directory for a multipart test's staged uploads.
- *
- * @returns A {@link TempDirectoryInterface} with a `cleanup()` teardown every caller MUST invoke
- *
- * @example
- * ```ts
- * const directory = await buildTempDirectory()
- * try {
- * 	// ... drive createMultipart({ directory: directory.path }) ...
- * } finally {
- * 	await directory.cleanup()
- * }
- * ```
- */
-export async function buildTempDirectory(): Promise<TempDirectoryInterface> {
-	const path = await mkdtemp(join(tmpdir(), 'middleware-multipart-'))
-	async function cleanup(): Promise<void> {
-		await rm(path, { recursive: true, force: true })
-	}
-	return { path, cleanup }
 }
 
 /** A running real `node:http` test server bound to an ephemeral port, for the integration capstone. */
