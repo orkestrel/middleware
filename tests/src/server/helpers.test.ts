@@ -1,8 +1,9 @@
 import { join, resolve as resolvePath } from 'node:path'
-import { open, readFile, readdir, stat, writeFile } from 'node:fs/promises'
+import { open, readFile, stat, writeFile } from 'node:fs/promises'
 import { randomUUID } from 'node:crypto'
 import { gunzipSync, inflateSync } from 'node:zlib'
 import { describe, expect, it } from 'vitest'
+import { createScratch } from '@orkestrel/test/server'
 import { isMultipartFile } from '@src/core'
 import {
 	computeFileETag,
@@ -35,7 +36,6 @@ import {
 	buildCancelTrackingMultipartRequest,
 	buildMultipartBody,
 	buildMultipartRequest,
-	buildTempDirectory,
 } from '../../setupServer.js'
 import type { MultipartPartInput } from '../../setupServer.js'
 
@@ -356,7 +356,7 @@ describe('parseMultipartRequest', () => {
 	})
 
 	it('parses fields and a genuine PNG file, staging under a random name', async () => {
-		const directory = await buildTempDirectory()
+		const directory = createScratch({ prefix: 'middleware-multipart-' })
 		try {
 			const request = buildMultipartRequest([
 				{ kind: 'field', name: 'title', value: 'hello' },
@@ -384,12 +384,12 @@ describe('parseMultipartRequest', () => {
 			const staged = await readFile(file.path)
 			expect(staged.subarray(0, 8)).toEqual(Buffer.from(PNG_MAGIC))
 		} finally {
-			await directory.cleanup()
+			directory.destroy()
 		}
 	})
 
 	it('preserves a traversal filename as metadata only, never as a path component', async () => {
-		const directory = await buildTempDirectory()
+		const directory = createScratch({ prefix: 'middleware-multipart-' })
 		try {
 			const request = buildMultipartRequest([
 				{
@@ -406,7 +406,7 @@ describe('parseMultipartRequest', () => {
 			expect(files?.[0]?.name).toBe('../../etc/passwd')
 			expect(files?.[0]?.path.includes('..')).toBe(false)
 		} finally {
-			await directory.cleanup()
+			directory.destroy()
 		}
 	})
 
@@ -423,7 +423,7 @@ describe('parseMultipartRequest', () => {
 	})
 
 	it('skips a dangerous file field-name (__proto__) without crashing, and leaves no orphaned temp file', async () => {
-		const directory = await buildTempDirectory()
+		const directory = createScratch({ prefix: 'middleware-multipart-' })
 		try {
 			const request = buildMultipartRequest([
 				{
@@ -439,9 +439,9 @@ describe('parseMultipartRequest', () => {
 			expect(Object.prototype.hasOwnProperty.call(body?.files ?? {}, '__proto__')).toBe(false)
 			const probe: Record<string, unknown> = {}
 			expect(probe.polluted).toBeUndefined()
-			expect(await readdir(directory.path)).toHaveLength(0)
+			expect(directory.names()).toHaveLength(0)
 		} finally {
-			await directory.cleanup()
+			directory.destroy()
 		}
 	})
 
@@ -527,7 +527,7 @@ describe('parseMultipartRequest', () => {
 	})
 
 	it('empty-filename part (unselected optional file input) is a silent no-op — not staged, not keyed, not counted', async () => {
-		const directory = await buildTempDirectory()
+		const directory = createScratch({ prefix: 'middleware-multipart-' })
 		try {
 			const request = buildMultipartRequest([
 				{ kind: 'field', name: 'title', value: 'hello' },
@@ -546,9 +546,9 @@ describe('parseMultipartRequest', () => {
 			expect(body?.fields.title).toBe('hello')
 			expect(body?.files.other?.[0]?.name).toBe('b.png')
 			// Only the non-empty file part is staged on disk.
-			expect(await readdir(directory.path)).toHaveLength(1)
+			expect(directory.names()).toHaveLength(1)
 		} finally {
-			await directory.cleanup()
+			directory.destroy()
 		}
 	})
 
@@ -568,7 +568,7 @@ describe('parseMultipartRequest', () => {
 	})
 
 	it('multiple files under one field name append into an array', async () => {
-		const directory = await buildTempDirectory()
+		const directory = createScratch({ prefix: 'middleware-multipart-' })
 		try {
 			const request = buildMultipartRequest([
 				{
@@ -591,9 +591,9 @@ describe('parseMultipartRequest', () => {
 			expect(files).toHaveLength(2)
 			expect(files?.[0]?.name).toBe('a.png')
 			expect(files?.[1]?.name).toBe('b.jpg')
-			expect(await readdir(directory.path)).toHaveLength(2)
+			expect(directory.names()).toHaveLength(2)
 		} finally {
-			await directory.cleanup()
+			directory.destroy()
 		}
 	})
 
@@ -669,7 +669,7 @@ describe('parseMultipartRequest', () => {
 	})
 
 	it('a request abort mid-upload throws MultipartError and leaves the staging directory empty', async () => {
-		const directory = await buildTempDirectory()
+		const directory = createScratch({ prefix: 'middleware-multipart-' })
 		try {
 			const bigFile = new Uint8Array(4000).fill(0x41)
 			const { body, contentType } = buildMultipartBody([
@@ -714,14 +714,14 @@ describe('parseMultipartRequest', () => {
 			await expect(parseMultipartRequest(request, { directory: directory.path })).rejects.toSatisfy(
 				(error: unknown) => isMultipartError(error),
 			)
-			expect(await readdir(directory.path)).toHaveLength(0)
+			expect(directory.names()).toHaveLength(0)
 		} finally {
-			await directory.cleanup()
+			directory.destroy()
 		}
 	})
 
 	it('wakes a pending reader on abort, rejects malformed, and cleans staged bytes', async () => {
-		const directory = await buildTempDirectory()
+		const directory = createScratch({ prefix: 'middleware-multipart-' })
 		try {
 			const boundary = 'pending-abort'
 			const initial = new TextEncoder().encode(
@@ -757,19 +757,19 @@ describe('parseMultipartRequest', () => {
 				await new Promise<void>((resolve) =>
 					waiting.signal.addEventListener('abort', () => resolve(), { once: true }),
 				)
-			expect(await readdir(directory.path)).toHaveLength(1)
+			expect(directory.names()).toHaveLength(1)
 			controller.abort()
 			await expect(parsing).rejects.toSatisfy(
 				(error: unknown) => isMultipartError(error) && error.reason === 'malformed',
 			)
-			expect(await readdir(directory.path)).toHaveLength(0)
+			expect(directory.names()).toHaveLength(0)
 		} finally {
-			await directory.cleanup()
+			directory.destroy()
 		}
 	})
 
 	it('trips the file-size limit mid-stream and cleans staged files', async () => {
-		const directory = await buildTempDirectory()
+		const directory = createScratch({ prefix: 'middleware-multipart-' })
 		try {
 			const request = buildMultipartRequest([
 				{ kind: 'file', name: 'avatar', filename: 'big.bin', bytes: new Uint8Array(1000) },
@@ -777,14 +777,14 @@ describe('parseMultipartRequest', () => {
 			await expect(
 				parseMultipartRequest(request, { limits: { file: 10 }, directory: directory.path }),
 			).rejects.toSatisfy((error: unknown) => isMultipartError(error) && error.reason === 'limit')
-			expect(await readdir(directory.path)).toHaveLength(0)
+			expect(directory.names()).toHaveLength(0)
 		} finally {
-			await directory.cleanup()
+			directory.destroy()
 		}
 	})
 
 	it('accepts a file exactly AT the file-size limit', async () => {
-		const directory = await buildTempDirectory()
+		const directory = createScratch({ prefix: 'middleware-multipart-' })
 		try {
 			const request = buildMultipartRequest([
 				{ kind: 'file', name: 'avatar', filename: 'big.bin', bytes: new Uint8Array(10) },
@@ -795,7 +795,7 @@ describe('parseMultipartRequest', () => {
 			})
 			expect(body?.files.avatar?.[0]?.size).toBe(10)
 		} finally {
-			await directory.cleanup()
+			directory.destroy()
 		}
 	})
 
@@ -830,7 +830,7 @@ describe('parseMultipartRequest', () => {
 	})
 
 	it('accepts exactly the file-count limit worth of files', async () => {
-		const directory = await buildTempDirectory()
+		const directory = createScratch({ prefix: 'middleware-multipart-' })
 		try {
 			const request = buildMultipartRequest([
 				{ kind: 'file', name: 'a', filename: 'a.txt', bytes: new TextEncoder().encode('x') },
@@ -841,12 +841,12 @@ describe('parseMultipartRequest', () => {
 			})
 			expect(body?.files.a?.[0]?.name).toBe('a.txt')
 		} finally {
-			await directory.cleanup()
+			directory.destroy()
 		}
 	})
 
 	it('an empty-filename part arriving AFTER the files limit was already met does not spuriously trip the limit', async () => {
-		const directory = await buildTempDirectory()
+		const directory = createScratch({ prefix: 'middleware-multipart-' })
 		try {
 			const request = buildMultipartRequest([
 				{ kind: 'file', name: 'a', filename: 'a.txt', bytes: new TextEncoder().encode('x') },
@@ -858,9 +858,9 @@ describe('parseMultipartRequest', () => {
 			})
 			expect(body?.files.a?.[0]?.name).toBe('a.txt')
 			expect(body?.files.unused).toBeUndefined()
-			expect(await readdir(directory.path)).toHaveLength(1)
+			expect(directory.names()).toHaveLength(1)
 		} finally {
-			await directory.cleanup()
+			directory.destroy()
 		}
 	})
 
@@ -982,7 +982,7 @@ describe('parseMultipartRequest', () => {
 
 describe('streamFile', () => {
 	it('streams the full file contents byte-for-byte', async () => {
-		const directory = await buildTempDirectory()
+		const directory = createScratch({ prefix: 'middleware-multipart-' })
 		try {
 			const filePath = join(directory.path, 'content.bin')
 			const expected = Buffer.alloc(50_000, 0x5a)
@@ -996,12 +996,12 @@ describe('streamFile', () => {
 			}
 			expect(Buffer.concat(chunks)).toEqual(expected)
 		} finally {
-			await directory.cleanup()
+			directory.destroy()
 		}
 	})
 
 	it('is PULL-driven — reads exactly one chunk per reader.read(), not the whole file up front', async () => {
-		const directory = await buildTempDirectory()
+		const directory = createScratch({ prefix: 'middleware-multipart-' })
 		try {
 			const filePath = join(directory.path, 'content.bin')
 			await writeFile(filePath, Buffer.alloc(100_000, 0x41))
@@ -1013,12 +1013,12 @@ describe('streamFile', () => {
 			expect(first.value?.byteLength).toBeLessThan(100_000)
 			await reader.cancel()
 		} finally {
-			await directory.cleanup()
+			directory.destroy()
 		}
 	})
 
 	it('respects an inclusive byte range', async () => {
-		const directory = await buildTempDirectory()
+		const directory = createScratch({ prefix: 'middleware-multipart-' })
 		try {
 			const filePath = join(directory.path, 'content.bin')
 			await writeFile(filePath, Buffer.from('0123456789'))
@@ -1031,7 +1031,7 @@ describe('streamFile', () => {
 			}
 			expect(Buffer.concat(chunks).toString('utf8')).toBe('2345')
 		} finally {
-			await directory.cleanup()
+			directory.destroy()
 		}
 	})
 
@@ -1041,7 +1041,7 @@ describe('streamFile', () => {
 	})
 
 	it('cancelling the stream releases the underlying file descriptor', async () => {
-		const directory = await buildTempDirectory()
+		const directory = createScratch({ prefix: 'middleware-multipart-' })
 		try {
 			const filePath = join(directory.path, 'content.bin')
 			await writeFile(filePath, Buffer.alloc(200_000, 0x41))
@@ -1061,12 +1061,12 @@ describe('streamFile', () => {
 			}
 			expect(afterOpenReads).toBe(0)
 		} finally {
-			await directory.cleanup()
+			directory.destroy()
 		}
 	})
 
 	it('streams the full file contents byte-for-byte from an open FileHandle', async () => {
-		const directory = await buildTempDirectory()
+		const directory = createScratch({ prefix: 'middleware-multipart-' })
 		try {
 			const filePath = join(directory.path, 'content.bin')
 			const expected = Buffer.alloc(50_000, 0x5a)
@@ -1081,12 +1081,12 @@ describe('streamFile', () => {
 			}
 			expect(Buffer.concat(chunks)).toEqual(expected)
 		} finally {
-			await directory.cleanup()
+			directory.destroy()
 		}
 	})
 
 	it('a fully-consumed FileHandle stream closes the handle (autoClose) — no lingering fd', async () => {
-		const directory = await buildTempDirectory()
+		const directory = createScratch({ prefix: 'middleware-multipart-' })
 		try {
 			const filePath = join(directory.path, 'content.bin')
 			await writeFile(filePath, Buffer.alloc(200_000, 0x41))
@@ -1111,12 +1111,12 @@ describe('streamFile', () => {
 			}
 			expect(closed).toBe(true)
 		} finally {
-			await directory.cleanup()
+			directory.destroy()
 		}
 	})
 
 	it('cancelling a FileHandle stream mid-read closes the handle (autoClose) — no lingering fd', async () => {
-		const directory = await buildTempDirectory()
+		const directory = createScratch({ prefix: 'middleware-multipart-' })
 		try {
 			const filePath = join(directory.path, 'content.bin')
 			await writeFile(filePath, Buffer.alloc(200_000, 0x41))
@@ -1135,7 +1135,7 @@ describe('streamFile', () => {
 			}
 			expect(closed).toBe(true)
 		} finally {
-			await directory.cleanup()
+			directory.destroy()
 		}
 	})
 })
@@ -1144,7 +1144,7 @@ describe('streamFile', () => {
 
 describe('moveUploadedFile', () => {
 	it('moves a staged file to its final destination via rename', async () => {
-		const directory = await buildTempDirectory()
+		const directory = createScratch({ prefix: 'middleware-multipart-' })
 		try {
 			const stagedPath = join(directory.path, randomUUID())
 			await writeFile(stagedPath, Buffer.from(PNG_MAGIC))
@@ -1163,12 +1163,12 @@ describe('moveUploadedFile', () => {
 			expect(moved.path).toBe(destination)
 			await expect(readFile(destination)).resolves.toBeDefined()
 		} finally {
-			await directory.cleanup()
+			directory.destroy()
 		}
 	})
 
 	it('rethrows a non-EXDEV rename error (e.g. a missing destination directory)', async () => {
-		const directory = await buildTempDirectory()
+		const directory = createScratch({ prefix: 'middleware-multipart-' })
 		try {
 			const stagedPath = join(directory.path, randomUUID())
 			await writeFile(stagedPath, Buffer.from(PNG_MAGIC))
@@ -1184,7 +1184,7 @@ describe('moveUploadedFile', () => {
 			const destination = join(directory.path, 'no', 'such', 'dir', 'final.png')
 			await expect(moveUploadedFile(staged, destination)).rejects.toBeDefined()
 		} finally {
-			await directory.cleanup()
+			directory.destroy()
 		}
 	})
 
@@ -1197,7 +1197,7 @@ describe('moveUploadedFile', () => {
 
 describe('unlinkStagedFiles', () => {
 	it('unlinks every still-staged file across multiple fields', async () => {
-		const directory = await buildTempDirectory()
+		const directory = createScratch({ prefix: 'middleware-multipart-' })
 		try {
 			const pathA = join(directory.path, randomUUID())
 			const pathB = join(directory.path, randomUUID())
@@ -1231,14 +1231,14 @@ describe('unlinkStagedFiles', () => {
 				fields: Object.freeze({}),
 			}
 			await unlinkStagedFiles(body)
-			expect(await readdir(directory.path)).toHaveLength(0)
+			expect(directory.names()).toHaveLength(0)
 		} finally {
-			await directory.cleanup()
+			directory.destroy()
 		}
 	})
 
 	it('skips a file whose status is "moved"', async () => {
-		const directory = await buildTempDirectory()
+		const directory = createScratch({ prefix: 'middleware-multipart-' })
 		try {
 			const path = join(directory.path, randomUUID())
 			await writeFile(path, 'a')
@@ -1259,14 +1259,14 @@ describe('unlinkStagedFiles', () => {
 				fields: Object.freeze({}),
 			}
 			await unlinkStagedFiles(body)
-			expect(await readdir(directory.path)).toHaveLength(1)
+			expect(directory.names()).toHaveLength(1)
 		} finally {
-			await directory.cleanup()
+			directory.destroy()
 		}
 	})
 
 	it('swallows an already-missing staged path without throwing', async () => {
-		const directory = await buildTempDirectory()
+		const directory = createScratch({ prefix: 'middleware-multipart-' })
 		try {
 			const path = join(directory.path, randomUUID())
 			const body = {
@@ -1287,7 +1287,7 @@ describe('unlinkStagedFiles', () => {
 			}
 			await expect(unlinkStagedFiles(body)).resolves.toBeUndefined()
 		} finally {
-			await directory.cleanup()
+			directory.destroy()
 		}
 	})
 })
@@ -1296,7 +1296,7 @@ describe('unlinkStagedFiles', () => {
 
 describe('readUploadedFile / streamUploadedFile', () => {
 	it('readUploadedFile round-trips the staged bytes', async () => {
-		const directory = await buildTempDirectory()
+		const directory = createScratch({ prefix: 'middleware-multipart-' })
 		try {
 			const path = join(directory.path, randomUUID())
 			const expected = Buffer.from('hello uploaded file contents')
@@ -1312,12 +1312,12 @@ describe('readUploadedFile / streamUploadedFile', () => {
 			})
 			await expect(readUploadedFile(record)).resolves.toEqual(expected)
 		} finally {
-			await directory.cleanup()
+			directory.destroy()
 		}
 	})
 
 	it('streamUploadedFile streams the same bytes as the on-disk file', async () => {
-		const directory = await buildTempDirectory()
+		const directory = createScratch({ prefix: 'middleware-multipart-' })
 		try {
 			const path = join(directory.path, randomUUID())
 			const expected = Buffer.from('streamed uploaded file contents')
@@ -1340,7 +1340,7 @@ describe('readUploadedFile / streamUploadedFile', () => {
 			}
 			expect(Buffer.concat(chunks)).toEqual(expected)
 		} finally {
-			await directory.cleanup()
+			directory.destroy()
 		}
 	})
 })
@@ -1500,7 +1500,7 @@ describe('staging security', () => {
 	it.runIf(process.platform !== 'win32')(
 		'a staged upload file is written with mode 0o600',
 		async () => {
-			const directory = await buildTempDirectory()
+			const directory = createScratch({ prefix: 'middleware-multipart-' })
 			try {
 				const request = buildMultipartRequest([
 					{
@@ -1518,7 +1518,7 @@ describe('staging security', () => {
 				const info = await stat(path)
 				expect(info.mode & 0o777).toBe(0o600)
 			} finally {
-				await directory.cleanup()
+				directory.destroy()
 			}
 		},
 	)

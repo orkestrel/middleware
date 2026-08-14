@@ -186,29 +186,6 @@ export function buildDirectoryIndexFixture(): DirectoryIndexFixtureInterface {
 	return { scratch: root, subdir: join(root.path, 'sub'), destroy }
 }
 
-/**
- * A scratch-backed temp directory shaped for `tests/src/server/helpers.test.ts`, which this
- * dispatch does not own and cannot edit. That file calls `await buildTempDirectory()` and
- * `await directory.cleanup()`; both compile and behave correctly against a synchronous value,
- * since `await` on a non-`Promise` is a legal no-op pass-through. `path` already matches
- * `ScratchInterface`, so `cleanup` is the only renamed member, kept solely for that consumer.
- */
-export interface TempDirectoryInterface {
-	readonly path: string
-	cleanup(): void
-}
-
-/**
- * Allocate a scratch directory shaped for the `TempDirectoryInterface` an out-of-scope consumer
- * still expects.
- *
- * @returns A {@link TempDirectoryInterface} whose `cleanup()` every caller MUST invoke
- */
-export function buildTempDirectory(): TempDirectoryInterface {
-	const scratch = createScratch({ prefix: 'middleware-multipart-' })
-	return { path: scratch.path, cleanup: () => scratch.destroy() }
-}
-
 /** A `Request` carrying a real multipart body over a single-chunk stream, with an observable `cancelled` flag. */
 export interface CancelTrackingRequestInterface {
 	readonly request: Request
