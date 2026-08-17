@@ -1,9 +1,7 @@
-import type { AddressInfo } from 'node:net'
 import type { ScratchInterface } from '@orkestrel/test/server'
 import { writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { randomUUID } from 'node:crypto'
-import http from 'node:http'
 import { createScratch } from '@orkestrel/test/server'
 
 // ── Server-only test harness (AGENTS §16.1 / §17.6) ──────────────────────────
@@ -336,72 +334,5 @@ export function buildMultipartRequest(
 		method: 'POST',
 		headers: { 'content-type': contentType },
 		body: new Blob([Buffer.from(body)]),
-	})
-}
-
-/** A running real `node:http` test server bound to an ephemeral port, for the integration capstone. */
-export interface TestServerInterface {
-	readonly url: string
-	readonly port: number
-	close(): Promise<void>
-}
-
-/**
- * Determine whether a `net.Server#address()` result is the `AddressInfo`
- * shape (rather than a pipe-name `string` or `null`) — the total narrow
- * {@link startServer} uses to read the bound ephemeral port.
- *
- * @param value - The raw `server.address()` return value
- * @returns `true` when `value` is a non-null `AddressInfo` object
- *
- * @example
- * ```ts
- * isAddressInfo({ address: '127.0.0.1', family: 'IPv4', port: 4000 }) // true
- * isAddressInfo(null) // false
- * ```
- */
-export function isAddressInfo(value: string | AddressInfo | null): value is AddressInfo {
-	return typeof value === 'object' && value !== null
-}
-
-/**
- * Start a real `node:http` server on an ephemeral port for a test — the
- * capstone's real socket (§16: no mocks).
- *
- * @remarks
- * Binds `listener` to `127.0.0.1:0` (OS-assigned free port) and resolves
- * once listening, with `url`/`port` derived from the bound address and a
- * `close()` that tears the server down. Every caller MUST call `close()`
- * to avoid leaking sockets across tests.
- *
- * @param listener - The `node:http` request listener to serve
- * @returns A {@link TestServerInterface} bound and ready to receive requests
- *
- * @example
- * ```ts
- * const server = await startServer((_request, response) => response.end('ok'))
- * const response = await fetch(server.url)
- * await server.close()
- * ```
- */
-export function startServer(listener: http.RequestListener): Promise<TestServerInterface> {
-	return new Promise((resolve, reject) => {
-		const server = http.createServer(listener)
-		server.listen(0, '127.0.0.1', () => {
-			const address = server.address()
-			if (!isAddressInfo(address)) {
-				reject(new Error('test server failed to bind to an ephemeral port'))
-				return
-			}
-			const port = address.port
-			resolve({
-				url: `http://127.0.0.1:${port}`,
-				port,
-				close: () =>
-					new Promise<void>((res) => {
-						server.close(() => res())
-					}),
-			})
-		})
 	})
 }

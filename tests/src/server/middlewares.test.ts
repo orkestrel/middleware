@@ -1,8 +1,9 @@
 import type { ConnectionState } from '@src/core'
 import type { MultipartState } from '@src/core'
 import { join } from 'node:path'
+import http from 'node:http'
 import { describe, expect, it } from 'vitest'
-import { createScratch } from '@orkestrel/test/server'
+import { createLoopback, createScratch } from '@orkestrel/test/server'
 import {
 	createBearer,
 	createBoundary,
@@ -33,7 +34,6 @@ import {
 	buildStaticFixture,
 	buildSymlinkFixture,
 	PNG_MAGIC,
-	startServer,
 } from '../../setupServer.js'
 import { buildRequest, createTestContext } from '../../setup.js'
 
@@ -906,7 +906,7 @@ describe('capstone: real socket + Dispatcher + canonical onion', () => {
 			dispatcher.handle(request, context.state),
 		)
 
-		const handle = await startServer(async (message, response) => {
+		const server = http.createServer(async (message, response) => {
 			const request = buildRouterRequest(message)
 			const ip = message.socket.remoteAddress
 			const state: CapstoneState = {
@@ -919,6 +919,7 @@ describe('capstone: real socket + Dispatcher + canonical onion', () => {
 			const result = await composed(request, context)
 			await sendResponse(result, response)
 		})
+		const handle = await createLoopback(server)
 		try {
 			const base = handle.url
 
@@ -979,7 +980,7 @@ describe('capstone: real socket + Dispatcher + canonical onion', () => {
 			expect(limited.status).toBe(429)
 			expect(limited.headers.get('retry-after')).toBeDefined()
 		} finally {
-			await handle.close()
+			await handle.destroy()
 		}
 	})
 })
