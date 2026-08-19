@@ -1,4 +1,5 @@
 import type { ScratchInterface } from '@orkestrel/test/server'
+import type { Asset, AssetSourceInterface } from '@src/server'
 import { writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { randomUUID } from 'node:crypto'
@@ -18,6 +19,37 @@ export const PNG_MAGIC = Uint8Array.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x
 
 /** A real JPEG magic-byte header (3 bytes) — the shortest genuine JPEG signature. */
 export const JPEG_MAGIC = Uint8Array.from([0xff, 0xd8, 0xff])
+
+/** A map-backed in-memory asset source with a readonly record of requested keys. */
+export interface AssetSourceFixtureInterface {
+	readonly source: AssetSourceInterface
+	readonly paths: readonly string[]
+}
+
+/**
+ * Build an inert in-memory asset source for `createAssets` tests.
+ *
+ * @param assets - The exact key-to-asset records the source exposes
+ * @param fallback - Optional asset returned for every key absent from `assets`
+ * @returns The source and a snapshotting record of keys passed to `read`
+ */
+export function createAssetSource(
+	assets: ReadonlyMap<string, Asset>,
+	fallback?: Asset,
+): AssetSourceFixtureInterface {
+	const paths: string[] = []
+	return {
+		get paths() {
+			return [...paths]
+		},
+		source: {
+			read(path) {
+				paths.push(path)
+				return assets.get(path) ?? fallback
+			},
+		},
+	}
+}
 
 /** A scratch-backed static fixture tree — the seeded directory plus its known file paths, ready for `createStatic` tests. */
 export interface StaticFixtureInterface {

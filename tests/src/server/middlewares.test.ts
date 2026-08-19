@@ -2,6 +2,7 @@ import type { ConnectionState } from '@src/core'
 import type { MultipartState } from '@src/core'
 import { join } from 'node:path'
 import http from 'node:http'
+import { brotliCompressSync } from 'node:zlib'
 import { describe, expect, it } from 'vitest'
 import { createLoopback, createScratch } from '@orkestrel/test/server'
 import {
@@ -19,6 +20,7 @@ import {
 	isMultipartBody,
 } from '@src/core'
 import {
+	createAssets,
 	createCompression,
 	createMultipart,
 	createStatic,
@@ -33,9 +35,190 @@ import {
 	buildMultipartRequest,
 	buildStaticFixture,
 	buildSymlinkFixture,
+	createAssetSource,
 	PNG_MAGIC,
 } from '../../setupServer.js'
 import { buildRequest, createTestContext } from '../../setup.js'
+
+// ── createAssets ─────────────────────────────────────────────────────────────
+
+describe('createAssets', () => {
+	it('serves and owns an identity root asset with media and validator headers', async () => {
+		const bytes = new TextEncoder().encode('<!doctype html><title>Embedded</title>')
+		const source = createAssetSource(new Map([['index.html', { body: bytes }]]))
+		const handler = createAssets({ source: source.source })
+		const request = buildRequest('/')
+		const response = await handler(
+			request,
+			createTestContext(request, {}),
+			async () => new Response('miss'),
+		)
+		expect(response.status).toBe(200)
+		expect(response.headers.get('content-type')).toBe('text/html; charset=utf-8')
+		expect(response.headers.get('content-encoding')).toBeNull()
+		expect(response.headers.get('vary')).toBe('accept-encoding')
+		expect(response.headers.get('etag')).not.toBeNull()
+		expect(response.headers.get('content-length')).toBe(String(bytes.byteLength))
+		expect(await response.text()).toBe('<!doctype html><title>Embedded</title>')
+
+		bytes.fill(0)
+		const repeated = await handler(
+			request,
+			createTestContext(request, {}),
+			async () => new Response('miss'),
+		)
+		expect(await repeated.text()).toBe('<!doctype html><title>Embedded</title>')
+		expect(source.paths).toEqual(['index.html'])
+
+		const rangeRequest = buildRequest('/', { headers: { range: 'bytes=0-3' } })
+		const ranged = await handler(
+			rangeRequest,
+			createTestContext(rangeRequest, {}),
+			async () => new Response('miss'),
+		)
+		expect(ranged.status).toBe(200)
+		expect(await ranged.text()).toBe('<!doctype html><title>Embedded</title>')
+
+		const missingRequest = buildRequest('/missing.js')
+		const missing = await handler(
+			missingRequest,
+			createTestContext(missingRequest, {}),
+			async () => new Response('miss'),
+		)
+		expect(await missing.text()).toBe('miss')
+		expect(source.paths).toEqual(['index.html', 'missing.js'])
+	})
+
+	it('negotiates one Brotli asset against identity without changing its ETag', async () => {
+		const plain = new TextEncoder().encode('globalThis.embedded = true')
+		const compressed = Uint8Array.from(brotliCompressSync(plain))
+		const source = createAssetSource(
+			new Map([['operator.js', { body: compressed, encoding: 'br' }]]),
+		)
+		const handler = createAssets({ source: source.source })
+		const identityRequest = buildRequest('/operator.js', {
+			headers: { 'accept-encoding': 'identity' },
+		})
+		const identity = await handler(
+			identityRequest,
+			createTestContext(identityRequest, {}),
+			async () => new Response('miss'),
+		)
+		expect(identity.headers.get('content-encoding')).toBeNull()
+		expect(await identity.text()).toBe('globalThis.embedded = true')
+
+		const brotliRequest = buildRequest('/operator.js', {
+			headers: { 'accept-encoding': 'gzip;q=1, br;q=0.8' },
+		})
+		const brotli = await handler(
+			brotliRequest,
+			createTestContext(brotliRequest, {}),
+			async () => new Response('miss'),
+		)
+		expect(brotli.headers.get('content-encoding')).toBe('br')
+		expect(brotli.headers.get('content-type')).toBe('text/javascript; charset=utf-8')
+		expect(brotli.headers.get('etag')).toBe(identity.headers.get('etag'))
+		expect(new Uint8Array(await brotli.arrayBuffer())).toEqual(compressed)
+
+		const refusedRequest = buildRequest('/operator.js', {
+			headers: { 'accept-encoding': 'br;q=0, *;q=1' },
+		})
+		const refused = await handler(
+			refusedRequest,
+			createTestContext(refusedRequest, {}),
+			async () => new Response('miss'),
+		)
+		expect(refused.headers.get('content-encoding')).toBeNull()
+		expect(await refused.text()).toBe('globalThis.embedded = true')
+		expect(source.paths).toEqual(['operator.js'])
+	})
+
+	it('uses the selected representation for HEAD and returns shared validators on 304', async () => {
+		const plain = new TextEncoder().encode('const embedded = true')
+		const compressed = Uint8Array.from(brotliCompressSync(plain))
+		const source = createAssetSource(
+			new Map([['operator.js', { body: compressed, encoding: 'br' }]]),
+		)
+		const handler = createAssets({ source: source.source })
+		const firstRequest = buildRequest('/operator.js')
+		const first = await handler(
+			firstRequest,
+			createTestContext(firstRequest, {}),
+			async () => new Response('miss'),
+		)
+		const etag = first.headers.get('etag')
+		if (etag === null) throw new Error('expected an asset ETag')
+
+		const headRequest = buildRequest('/operator.js', {
+			method: 'HEAD',
+			headers: { 'accept-encoding': 'br' },
+		})
+		const head = await handler(
+			headRequest,
+			createTestContext(headRequest, {}),
+			async () => new Response('miss'),
+		)
+		expect(head.status).toBe(200)
+		expect(head.headers.get('content-encoding')).toBe('br')
+		expect(head.headers.get('content-length')).toBe(String(compressed.byteLength))
+		expect(await head.text()).toBe('')
+
+		const cachedRequest = buildRequest('/operator.js', {
+			headers: { 'accept-encoding': 'br', 'if-none-match': etag },
+		})
+		const cached = await handler(
+			cachedRequest,
+			createTestContext(cachedRequest, {}),
+			async () => new Response('miss'),
+		)
+		expect(cached.status).toBe(304)
+		expect(cached.headers.get('content-encoding')).toBe('br')
+		expect(cached.headers.get('etag')).toBe(etag)
+		expect(cached.headers.get('content-length')).toBeNull()
+	})
+
+	it('decodes valid keys and refuses malformed, climbing, empty, backslash, and dotfile keys', async () => {
+		const asset = { body: new TextEncoder().encode('asset') }
+		const source = createAssetSource(new Map([['nested/app shell.js', asset]]), asset)
+		const handler = createAssets({ source: source.source })
+		const validRequest = buildRequest('/nested/app%20shell.js')
+		const valid = await handler(
+			validRequest,
+			createTestContext(validRequest, {}),
+			async () => new Response('miss'),
+		)
+		expect(await valid.text()).toBe('asset')
+		expect(source.paths).toEqual(['nested/app shell.js'])
+
+		for (const path of [
+			'/%zz',
+			'/safe%2F..%2Fsecret.js',
+			'/safe%2F.%2Fsecret.js',
+			'/safe%5Csecret.js',
+			'/nested//secret.js',
+			'/.secret',
+			'/nested/.secret/file.js',
+		]) {
+			const request = buildRequest(path)
+			const response = await handler(
+				request,
+				createTestContext(request, {}),
+				async () => new Response('miss'),
+			)
+			expect(await response.text()).toBe('miss')
+		}
+		expect(source.paths).toEqual(['nested/app shell.js'])
+
+		const postRequest = buildRequest('/operator.js', { method: 'POST' })
+		const post = await handler(
+			postRequest,
+			createTestContext(postRequest, {}),
+			async () => new Response('miss'),
+		)
+		expect(await post.text()).toBe('miss')
+		expect(source.paths).toEqual(['nested/app shell.js'])
+	})
+})
 
 // ── createStatic ─────────────────────────────────────────────────────────────
 

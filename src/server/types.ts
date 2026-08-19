@@ -2,13 +2,52 @@ import type { MultipartFile } from '@src/core'
 
 // ============================================================================
 //  @orkestrel/middleware/server — node-face type surface (AGENTS §5 source of
-//  truth). Options for the two node-bound batteries (createStatic,
-//  createMultipart) plus the multipart post-parse companion shapes. The
-//  request-time multipart state slice (`MultipartState`) and the parsed
-//  `MultipartBody`/`MultipartFile` shapes are OWNED by the pure core face
-//  (`@src/core`) — imported here, never redeclared, so a consumer can
-//  narrow `context.state` without depending on this node-bound face.
+//  truth). Options and source values for in-memory assets, filesystem static
+//  files, and multipart uploads. The request-time multipart state slice
+//  (`MultipartState`) and parsed `MultipartBody`/`MultipartFile` shapes are
+//  OWNED by the pure core face and re-exported from the server barrel.
 // ============================================================================
+
+/**
+ * One in-memory asset representation returned by an {@link AssetSourceInterface}.
+ *
+ * @remarks
+ * - `body` — the representation bytes. `createAssets` copies them before use.
+ * - `encoding` — `'br'` when `body` is Brotli-compressed. Omission means the
+ *   bytes are the identity representation.
+ */
+export interface Asset {
+	readonly body: ArrayBuffer | Uint8Array
+	readonly encoding?: 'br'
+}
+
+/**
+ * Read in-memory assets by decoded, browser-build-relative path.
+ *
+ * @remarks
+ * A successful result is cached by `createAssets`; later source changes do
+ * not alter that path's response. A miss may be read again on a later request.
+ */
+export interface AssetSourceInterface {
+	/**
+	 * Read one asset representation.
+	 *
+	 * @param path - The validated relative asset path
+	 * @returns The asset, or `undefined` when the path is absent
+	 */
+	read(path: string): Asset | undefined
+}
+
+/**
+ * Options for `createAssets` — in-memory identity/Brotli asset serving.
+ *
+ * @param options - See fields below
+ * @remarks
+ * - `source` — the required in-memory asset reader.
+ */
+export interface AssetOptions {
+	readonly source: AssetSourceInterface
+}
 
 /**
  * Options for `createStatic` — node `fs`-backed static file serving.

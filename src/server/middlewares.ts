@@ -1,13 +1,32 @@
 import type { MultipartState } from '@src/core'
-import type { MultipartOptions, NodeCompressionOptions, StaticOptions } from './types.js'
+import type {
+	AssetOptions,
+	MultipartOptions,
+	NodeCompressionOptions,
+	StaticOptions,
+} from './types.js'
 import type { Stats } from 'node:fs'
 import type { FileHandle } from 'node:fs/promises'
 import { DEFAULT_COMPRESSION_THRESHOLD, compressResponse } from '@src/core'
 import { open, realpath, stat } from 'node:fs/promises'
 import { join, relative, resolve } from 'node:path'
+import { brotliDecompressSync } from 'node:zlib'
 import type { Encoding, MiddlewareHandler } from '@orkestrel/server'
-import { HTTPError, matchesETag, parseRange } from '@orkestrel/server'
-import { isFiniteNumber, isFunction, isString } from '@orkestrel/contract'
+import {
+	computeBodyETag,
+	HTTPError,
+	matchesETag,
+	negotiateEncoding,
+	parseRange,
+} from '@orkestrel/server'
+import {
+	isArrayBuffer,
+	isFiniteNumber,
+	isFunction,
+	isObject,
+	isString,
+	isUint8Array,
+} from '@orkestrel/contract'
 import { DEFAULT_STATIC_FALLBACK_EXCLUDE, DEFAULT_STATIC_INDEX } from './constants.js'
 import { isMultipartError } from './errors.js'
 import {
@@ -25,12 +44,128 @@ import {
 
 // ============================================================================
 //  @orkestrel/middleware/server — node-face battery factories (AGENTS §5
-//  middlewares.ts). createStatic (node:fs static file serving) and
-//  createMultipart (node:fs/os/crypto streaming multipart uploads) — the two
-//  genuinely node-bound batteries — plus createCompression, the node-`zlib`
+//  middlewares.ts). createAssets (in-memory asset serving), createStatic
+//  (node:fs static file serving), and createMultipart (node:fs/os/crypto
+//  streaming multipart uploads) — the three node-bound batteries — plus
+//  createCompression, the node-`zlib`
 //  guaranteed-availability sibling of the core face's `CompressionStream`-
 //  feature-detected battery (separate package entry point, ruling H).
 // ============================================================================
+
+/**
+ * Serve validated in-memory assets with identity/Brotli negotiation.
+ *
+ * @remarks
+ * Only `GET` and `HEAD` are served. `/` resolves to `index.html`. Every other
+ * key is decoded once, must remain relative, and refuses empty, dot, climbing,
+ * backslash, and dotfile segments before the source is read. Successful source
+ * values are copied and cached by key. A Brotli value is decompressed once for
+ * the identity representation; both representations share an ETag computed
+ * from those identity bytes. Responses always vary on `Accept-Encoding`.
+ * Range requests are intentionally served as full responses because an asset
+ * source exposes complete in-memory representations rather than file handles.
+ *
+ * @typeParam TState - The consumer's opaque per-request state type
+ * @param options - See {@link AssetOptions}
+ * @returns A `MiddlewareHandler<TState>`
+ * @throws {TypeError} When `options.source` does not implement
+ * {@link AssetSourceInterface}, or when it returns malformed asset data
+ * @throws {Error} When a source marks bytes as Brotli but they cannot be decompressed
+ *
+ * @example
+ * ```ts
+ * import { createAssets } from '@orkestrel/middleware/server'
+ *
+ * const assets = createAssets({
+ * 	source: {
+ * 		read: (path) =>
+ * 			path === 'index.html'
+ * 				? { body: new TextEncoder().encode('home') }
+ * 				: undefined,
+ * 	},
+ * })
+ * ```
+ */
+export function createAssets<TState>(options: AssetOptions): MiddlewareHandler<TState> {
+	if (!isObject(options?.source) || !('read' in options.source) || !isFunction(options.source.read))
+		throw new TypeError('AssetOptions.source must implement AssetSourceInterface')
+	const identities = new Map<string, Uint8Array<ArrayBuffer>>()
+	const brotlis = new Map<string, Uint8Array<ArrayBuffer>>()
+	const tags = new Map<string, Promise<string>>()
+
+	return async (request, context, next) => {
+		if (context.method !== 'GET' && context.method !== 'HEAD') return next()
+		let pathname: string
+		try {
+			pathname = decodeURIComponent(context.url.pathname)
+		} catch {
+			return next()
+		}
+		const key = pathname === '/' ? DEFAULT_STATIC_INDEX : pathname.slice(1)
+		if (
+			key.length === 0 ||
+			key.includes('\\') ||
+			key
+				.split('/')
+				.some((segment) => segment.length === 0 || segment === '.' || segment === '..') ||
+			isDotfilePath(key)
+		)
+			return next()
+
+		let identity = identities.get(key)
+		let brotli = brotlis.get(key)
+		if (identity === undefined) {
+			const asset = options.source.read(key)
+			if (asset === undefined) return next()
+			if (!isObject(asset)) throw new TypeError('AssetSourceInterface.read must return an Asset')
+			const body = asset.body
+			const encoding = asset.encoding
+			if (
+				(!isArrayBuffer(body) && !isUint8Array(body)) ||
+				(encoding !== undefined && encoding !== 'br')
+			)
+				throw new TypeError('AssetSourceInterface.read must return an Asset')
+			const content = isArrayBuffer(body)
+				? Uint8Array.from(new Uint8Array(body))
+				: Uint8Array.from(body)
+			if (encoding === 'br') {
+				brotli = content
+				identity = Uint8Array.from(brotliDecompressSync(content))
+				brotlis.set(key, brotli)
+			} else {
+				identity = content
+			}
+			identities.set(key, identity)
+		}
+
+		let pending = tags.get(key)
+		if (pending === undefined) {
+			pending = computeBodyETag(identity)
+			tags.set(key, pending)
+		}
+		const etag = await pending
+		let body = identity
+		let encoding: 'br' | undefined
+		if (
+			brotli !== undefined &&
+			negotiateEncoding(request.headers.get('accept-encoding') ?? '', ['br']) === 'br'
+		) {
+			body = brotli
+			encoding = 'br'
+		}
+		const headers = new Headers({
+			'content-type': lookupContentType(key),
+			etag,
+			vary: 'accept-encoding',
+		})
+		if (encoding !== undefined) headers.set('content-encoding', encoding)
+		const cached = request.headers.get('if-none-match')
+		if (cached !== null && matchesETag(cached, etag))
+			return new Response(null, { status: 304, headers })
+		headers.set('content-length', String(body.byteLength))
+		return new Response(context.method === 'HEAD' ? undefined : body, { headers })
+	}
+}
 
 /**
  * Serve static files from `options.root` over `node:fs` — the node-bound

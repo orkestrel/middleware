@@ -6,8 +6,9 @@
 > (boundary, telemetry, compression, security headers, CORS, deadlines,
 > trusted-proxy client facts, ETag, bearer auth, rate limiting, body
 > parsing, sessions, CSRF) plus the session/transport/store seam — and the
-> node-bound face (`@orkestrel/middleware/server`) — static file serving and
-> streaming multipart uploads, plus a `node:zlib`-guaranteed compression
+> node-bound face (`@orkestrel/middleware/server`) — in-memory asset serving,
+> static file serving, and streaming multipart uploads, plus a
+> `node:zlib`-guaranteed compression
 > sibling. Every battery is built over the frozen `@orkestrel/server`
 > middleware seam (`MiddlewareHandler`, `MiddlewareContext`, `compose`) and
 > substrate (cookies, WebCrypto tokens, negotiation, conditionals, security
@@ -61,6 +62,7 @@ const handle = compose<State>([boundary, security], async (_request, context) =>
 
 | API                 | Kind     | Summary                                                                              |
 | ------------------- | -------- | ------------------------------------------------------------------------------------ |
+| `createAssets`      | function | Serve validated in-memory identity/Brotli assets with shared ETags.                  |
 | `createStatic`      | function | Serve static files from `options.root` over `node:fs`, with Range/ETag/SPA fallback. |
 | `createMultipart`   | function | Stream-parse `multipart/form-data` into `context.state.multipart`.                   |
 | `createCompression` | function | The `node:zlib`-backed compression sibling (gzip/deflate, no feature-detection).     |
@@ -102,6 +104,9 @@ const handle = compose<State>([boundary, security], async (_request, context) =>
 | `MultipartFile`             | interface | `{ field; name; size; mime; validated; status; path }` — one staged upload.                             |
 | `MultipartBody`             | interface | `{ files; fields }` — the parsed multipart request body.                                                |
 | `MultipartState`            | interface | `{ readonly multipart?: MultipartBody }` — the state slice `createMultipart` stashes.                   |
+| `Asset`                     | interface | `{ body; encoding? }` — one identity or Brotli in-memory representation.                                |
+| `AssetSourceInterface`      | interface | `read` — resolve one validated relative asset key.                                                      |
+| `AssetOptions`              | interface | `{ source }` — options for `createAssets`.                                                              |
 | `StaticOptions`             | interface | `{ root; prefix?; index?; dotfiles?; cache?; etag?; fallback? }`.                                       |
 | `MultipartLimits`           | interface | `{ file?; files?; field?; fields?; total? }` — per-category mid-stream caps.                            |
 | `MultipartOptions`          | interface | `{ limits?; allowed?; directory? }` — options for `createMultipart`.                                    |
@@ -250,9 +255,20 @@ omission is asserted rather than assumed, and adding it to the barrel would turn
 
 ## Methods
 
-The public methods of `SessionControlInterface`, `SessionStoreInterface`, and
-`SessionTransport` — the three behavioral seams `createSession` composes
+The public methods of `AssetSourceInterface`, `SessionControlInterface`,
+`SessionStoreInterface`, and `SessionTransport` — the behavioral seams the
+middleware factories compose
 (their `readonly` data members, where any exist, stay Surface rows above).
+
+#### `AssetSourceInterface`
+
+The in-memory lookup seam. `createAssets` validates a request key before it
+calls `read`, copies each successful result, and caches that key for the
+factory's lifetime. A miss may be read again later.
+
+| Method | Returns              | Behavior                                                       |
+| ------ | -------------------- | -------------------------------------------------------------- |
+| `read` | `Asset \| undefined` | Return one identity/Brotli asset for a validated relative key. |
 
 #### `SessionControlInterface`
 
@@ -298,8 +314,9 @@ These invariants hold across `src/core` / `src/server` ↔ `middleware.md`.
    source directory, and every export appears as a Surface row — exhaustive,
    both directions (AGENTS §22).
 2. **DOC ↔ SOURCE method bijection.** The `## Methods` tables list exactly
-   `SessionControlInterface`'s, `SessionStoreInterface`'s, and
-   `SessionTransport`'s public methods — exhaustive, both directions (AGENTS
+   `AssetSourceInterface`'s, `SessionControlInterface`'s,
+   `SessionStoreInterface`'s, and `SessionTransport`'s public methods —
+   exhaustive, both directions (AGENTS
    §22).
 
 ### The ordering doctrine (PROPOSAL §5)
@@ -409,7 +426,14 @@ prevents:
     multi-range or malformed `Range` header serves the FULL body (`200`),
     never a partial guess; the SPA fallback shell path is a fixed,
     non-user-controlled join — never re-run through the traversal resolver.
-22. **Multipart.** A declared `Content-Type` whose SNIFFED (magic-byte)
+22. **Assets.** `createAssets` decodes a browser-relative key and refuses
+    malformed escapes, backslashes, empty segments, `.`/`..`, and dotfiles
+    before it calls `AssetSourceInterface.read`. A successful value is copied
+    and cached. A Brotli value is decompressed once; Brotli and identity share
+    the identity body's `computeBodyETag` validator and vary on
+    `Accept-Encoding`. Gzip is not offered. `Range` is ignored and serves the
+    selected complete representation as `200`.
+23. **Multipart.** A declared `Content-Type` whose SNIFFED (magic-byte)
     bytes disagree is rejected `415`, as is a signature-less declared type
     on an `allowed` list (sniffing cannot validate it — a list can never
     honestly allow it); staged temp filenames are `randomUUID()`, never
@@ -424,11 +448,11 @@ prevents:
     process-owned `mkdtemp` directory under `os.tmpdir()` locked to mode
     `0o700`, with each staged file opened at mode `0o600` (both overridable
     via `options.directory`).
-23. **Boundary.** `expose: false` leaks nothing (a non-`HTTPError` throw's
+24. **Boundary.** `expose: false` leaks nothing (a non-`HTTPError` throw's
     message never reaches the body); an `HTTPError`'s own `message` ALWAYS
     surfaces (it is the handler's deliberate signal); a `report` sink's own
     throw is swallowed and can never alter the response.
-24. **`only`/`except` are NOT a security boundary.** Both match
+25. **`only`/`except` are NOT a security boundary.** Both match
     `context.url.pathname` EXACTLY — a trailing slash (`/login/` vs `/login`),
     a case variant, or a percent-encoded path silently falls outside an
     `only()`-scoped path set, and a security battery scoped that way goes
@@ -653,6 +677,28 @@ import { resolveMultipartLimits } from '@orkestrel/middleware/server'
 resolveMultipartLimits({ file: 1_048_576 }) // fills in every other default cap
 ```
 
+### Assets: in-memory source
+
+```ts
+import type { AssetSourceInterface } from '@orkestrel/middleware/server'
+import { createAssets } from '@orkestrel/middleware/server'
+
+const source: AssetSourceInterface = {
+	read(path) {
+		return path === 'index.html'
+			? { body: new TextEncoder().encode('<!doctype html><title>App</title>') }
+			: undefined
+	},
+}
+
+const serveAssets = createAssets({ source })
+```
+
+Return `{ body, encoding: 'br' }` when `body` contains Brotli bytes.
+`createAssets` keeps those bytes for Brotli clients and caches one identity
+decompression for every other client. Both responses share an identity-body
+ETag. Gzip is not offered.
+
 ### Static: SPA fallback
 
 ```ts
@@ -727,6 +773,10 @@ const serveApp = createStatic({ root: '/srv/public', fallback: true }) // exclud
 - [`tests/src/server/helpers.test.ts`](../tests/src/server/helpers.test.ts) —
   traversal and SPA-fallback resolution, byte-signature matching, node zlib
   compression, multipart parsing/cleanup, and uploaded-file operations.
+- [`tests/src/server/middlewares.test.ts`](../tests/src/server/middlewares.test.ts) —
+  in-memory asset ownership, key refusal, identity/Brotli negotiation,
+  conditional and HEAD responses, filesystem static serving, multipart
+  middleware, and the server-face composition.
 
 ## See also
 
