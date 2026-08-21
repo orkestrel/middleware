@@ -10,6 +10,7 @@ import type {
 } from '@src/core'
 import type { ConnectionState } from '@src/core'
 import { describe, expect, it } from 'vitest'
+import { waitForDelay } from '@orkestrel/test'
 import {
 	createBearer,
 	createBody,
@@ -523,12 +524,12 @@ describe('createDeadline', () => {
 		let sawAborted = false
 		const response = await deadline(buildRequest('/'), context, async (substituted) => {
 			const request = substituted ?? buildRequest('/')
-			await new Promise((resolve) => setTimeout(resolve, 100))
+			await waitForDelay(100)
 			sawAborted = request.signal.aborted
 			return new Response('too slow')
 		})
 		expect(response.status).toBe(503)
-		await new Promise((resolve) => setTimeout(resolve, 150))
+		await waitForDelay(150)
 		expect(sawAborted).toBe(true)
 	})
 
@@ -536,7 +537,7 @@ describe('createDeadline', () => {
 		const deadline = createDeadline<Record<string, never>>({ ms: 20, status: 504 })
 		const context = createTestContext(buildRequest('/'), {})
 		const response = await deadline(buildRequest('/'), context, async () => {
-			await new Promise((resolve) => setTimeout(resolve, 100))
+			await waitForDelay(100)
 			return new Response('too slow')
 		})
 		expect(response.status).toBe(504)
@@ -559,11 +560,11 @@ describe('createDeadline', () => {
 		process.on('unhandledRejection', onUnhandled)
 		try {
 			const response = await deadline(buildRequest('/'), context, async () => {
-				await new Promise((resolve) => setTimeout(resolve, 20))
+				await waitForDelay(20)
 				throw new Error('downstream failed after deadline')
 			})
 			expect(response.status).toBe(503)
-			await new Promise((resolve) => setTimeout(resolve, 60))
+			await waitForDelay(60)
 			expect(seen).toHaveLength(0)
 		} finally {
 			process.off('unhandledRejection', onUnhandled)
@@ -826,7 +827,7 @@ describe('createBearer', () => {
 
 	it('an expired token throws HTTPError 401', async () => {
 		const token = await signToken('user-1', { secret: SECRET, ttl: 1 })
-		await new Promise((resolve) => setTimeout(resolve, 20))
+		await waitForDelay(20)
 		const bearer = createBearer<BearerState>({ secret: SECRET })
 		const request = buildRequest('/', { headers: { authorization: `Bearer ${token}` } })
 		const context = createTestContext(request, {})

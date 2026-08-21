@@ -3,6 +3,7 @@ import { open, readFile, stat, writeFile } from 'node:fs/promises'
 import { randomUUID } from 'node:crypto'
 import { gunzipSync, inflateSync } from 'node:zlib'
 import { describe, expect, it } from 'vitest'
+import { waitForDelay } from '@orkestrel/test'
 import { createScratch } from '@orkestrel/test/server'
 import { isMultipartFile } from '@src/core'
 import {
@@ -685,7 +686,7 @@ describe('parseMultipartRequest', () => {
 						streamController.close()
 						return
 					}
-					await new Promise((resolve) => setTimeout(resolve, 5))
+					await waitForDelay(5)
 					// Fire the abort only after at least one file chunk has already
 					// been staged (offset > chunkSize guarantees a prior enqueue was
 					// consumed and written to disk by the multipart parser).
