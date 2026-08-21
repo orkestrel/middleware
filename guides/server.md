@@ -46,6 +46,7 @@ const server = createServer<State>({
 	middleware: [withRequestId],
 })
 const port = await server.start()
+server.address // { address, family, port } for the bound listener
 await server.stop()
 ```
 
@@ -161,11 +162,11 @@ Cross-face and substrate usage appear under [Patterns](#patterns).
 | `UpgradeHandler`          | type      | `(request, socket, head) => boolean` — a raw protocol-upgrade claimant. A claimed socket is tracked until it closes, so `stop()` can drain and then cut it.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        |
 | `ConnectionStateFunction` | type      | `(connection: ConnectionInfo) => TState` — derives a request's `TState`.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                           |
 | `ServerOptions`           | interface | `{ dispatcher; state; middleware?; host?; port?; drain?; limit?; expose?; report?; timeouts?; sockets?; on?; error? }` — `timeouts.start` bounds listener startup; `sockets.{connections,headers,requests}` maps to node's `maxConnections` / `maxHeadersCount` / `maxRequestsPerSocket`; `report?: (error, request?) => void`, `request` present only for a request-pipeline fault.                                                                                                                                                                                                                                                                                                                                                                                                                               |
-| `ServerInterface`         | interface | `id` / `status` / `port` / `dispatcher` / `emitter` data members + `use` / `upgrade` / `start` / `stop` / `destroy`.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               |
+| `ServerInterface`         | interface | `id` / `status` / `port` / `address` / `dispatcher` / `emitter` data members + `use` / `upgrade` / `start` / `stop` / `destroy`. `address` is the bound node `AddressInfo` while the listener is active and `undefined` otherwise.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 |
 
 The `value`/`q` members of `AcceptEntry`, the `response`/`closed` members of
-`StreamInterface`, and the `id` / `status` / `port` / `dispatcher` / `emitter`
-members of `ServerInterface` are all `readonly` data members (Surface rows,
+`StreamInterface`, and the `id` / `status` / `port` / `address` / `dispatcher` /
+`emitter` members of `ServerInterface` are all `readonly` data members (Surface rows,
 above) — the call-signature methods of `NegotiatorInterface`,
 `StreamInterface`, and `ServerInterface` are documented under
 [Methods](#methods).
@@ -243,11 +244,13 @@ These invariants hold across `src/server` ↔ `server.md`.
    `NegotiatorInterface`'s and `ServerInterface`'s public methods — exhaustive,
    both directions — and `Negotiator` / `Server` expose the same public
    methods, no more (AGENTS §22).
-3. **Status machine + restart-fresh-abort.** `idle → starting → listening →
+3. **Status machine + bound address + restart-fresh-abort.** `idle → starting → listening →
 stopping → stopped`; `start()` from `listening`/`starting`/`stopping`
    rejects; each `start()` mints a FRESH stop signal, so a restarted server is
-   never born aborted; `stop()`/`destroy()` are idempotent no-ops from a state
-   with nothing to tear down; `EADDRINUSE` rejects `start()` outright — no
+   never born aborted; `address` is the real bound `AddressInfo` after a
+   successful start and `undefined` before start and after stop or destroy;
+   `stop()`/`destroy()` are idempotent no-ops from a state with nothing to tear
+   down; `EADDRINUSE` rejects `start()` outright — no
    silent ephemeral fallback (use `discoverPort` up front for a guaranteed-free
    port).
 4. **Startup is bounded and caller-cancellable.** `start(signal?)` observes
