@@ -3,7 +3,7 @@ import { open, readFile, stat, writeFile } from 'node:fs/promises'
 import { randomUUID } from 'node:crypto'
 import { gunzipSync, inflateSync } from 'node:zlib'
 import { describe, expect, it } from 'vitest'
-import { waitForDelay } from '@orkestrel/test'
+import { waitForCondition, waitForDelay } from '@orkestrel/test'
 import { createScratch } from '@orkestrel/test/server'
 import { isMultipartFile } from '@src/core'
 import {
@@ -37,6 +37,8 @@ import {
 	buildCancelTrackingMultipartRequest,
 	buildMultipartBody,
 	buildMultipartRequest,
+	countActiveFileRequests,
+	detectClosedHandle,
 } from '../../setupServer.js'
 import type { MultipartPartInput } from '../../setupServer.js'
 
@@ -1048,19 +1050,13 @@ describe('streamFile', () => {
 			await writeFile(filePath, Buffer.alloc(200_000, 0x41))
 			const reader = streamFile(filePath).getReader()
 			await reader.read()
-			const duringOpenReads = process
-				.getActiveResourcesInfo()
-				.filter((resource) => resource === 'FSReqCallback').length
-			expect(duringOpenReads).toBeGreaterThan(0)
+			expect(countActiveFileRequests()).toBeGreaterThan(0)
 			await reader.cancel()
-			let afterOpenReads = duringOpenReads
-			for (let attempt = 0; attempt < 20 && afterOpenReads > 0; attempt += 1) {
-				await new Promise((resolve) => setTimeout(resolve, 5))
-				afterOpenReads = process
-					.getActiveResourcesInfo()
-					.filter((resource) => resource === 'FSReqCallback').length
-			}
-			expect(afterOpenReads).toBe(0)
+			await waitForCondition(
+				'the cancelled file stream releases every active file request',
+				() => countActiveFileRequests() === 0,
+			)
+			expect(countActiveFileRequests()).toBe(0)
 		} finally {
 			directory.destroy()
 		}
@@ -1097,20 +1093,10 @@ describe('streamFile', () => {
 				const { done } = await reader.read()
 				if (done) break
 			}
-			// A closed FileHandle rejects any further operation with EBADF —
-			// the only observable, race-free proof the fd was released
-			// (FSReqCallback resource counts do not track FileHandle-backed
-			// streams the way they track path-backed ones).
-			let closed = false
-			for (let attempt = 0; attempt < 20 && !closed; attempt += 1) {
-				try {
-					await handle.stat()
-				} catch (error) {
-					closed = error instanceof Error && 'code' in error && error.code === 'EBADF'
-				}
-				if (!closed) await new Promise((resolve) => setTimeout(resolve, 5))
-			}
-			expect(closed).toBe(true)
+			await waitForCondition('the fully consumed FileHandle stream closes its descriptor', () =>
+				detectClosedHandle(handle),
+			)
+			expect(await detectClosedHandle(handle)).toBe(true)
 		} finally {
 			directory.destroy()
 		}
@@ -1125,16 +1111,10 @@ describe('streamFile', () => {
 			const reader = streamFile(handle).getReader()
 			await reader.read()
 			await reader.cancel()
-			let closed = false
-			for (let attempt = 0; attempt < 20 && !closed; attempt += 1) {
-				try {
-					await handle.stat()
-				} catch (error) {
-					closed = error instanceof Error && 'code' in error && error.code === 'EBADF'
-				}
-				if (!closed) await new Promise((resolve) => setTimeout(resolve, 5))
-			}
-			expect(closed).toBe(true)
+			await waitForCondition('the cancelled FileHandle stream closes its descriptor', () =>
+				detectClosedHandle(handle),
+			)
+			expect(await detectClosedHandle(handle)).toBe(true)
 		} finally {
 			directory.destroy()
 		}

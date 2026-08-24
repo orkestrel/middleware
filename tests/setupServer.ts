@@ -1,3 +1,4 @@
+import type { FileHandle } from 'node:fs/promises'
 import type { ScratchInterface } from '@orkestrel/test/server'
 import type { Asset, AssetSourceInterface } from '@src/server'
 import { writeFileSync } from 'node:fs'
@@ -214,6 +215,49 @@ export function buildDirectoryIndexFixture(): DirectoryIndexFixtureInterface {
 	}
 
 	return { scratch: root, subdir: join(root.path, 'sub'), destroy }
+}
+
+/**
+ * Counts the file-system requests the host holds open.
+ *
+ * @returns The number of active `FSReqCallback` resources `process.getActiveResourcesInfo()` reports
+ * @remarks A path-backed `streamFile` stream holds one such resource per in-flight read, so this
+ * reading is the observable proof a descriptor-release test waits on. The count comes from the
+ * runtime itself rather than from an instrumented stream, and it covers the whole process, so read
+ * it as a threshold a release drives to zero rather than as one stream's private tally.
+ *
+ * @example
+ * ```ts
+ * await waitForCondition('the stream releases every active file request', () => countActiveFileRequests() === 0)
+ * ```
+ */
+export function countActiveFileRequests(): number {
+	return process.getActiveResourcesInfo().filter((resource) => resource === 'FSReqCallback').length
+}
+
+/**
+ * Detects whether a `FileHandle`'s descriptor is already released.
+ *
+ * @param handle - The handle to read
+ * @returns `true` after the descriptor is released, `false` while `stat()` still succeeds
+ * @throws Any error other than `EBADF`, because a retried wait over a broken reading would conceal it
+ * @remarks A closed `FileHandle` rejects every further operation with `EBADF`, which is the
+ * observable, race-free proof the descriptor was released: `FSReqCallback` resource counts do not
+ * track `FileHandle`-backed streams the way they track path-backed ones.
+ *
+ * @example
+ * ```ts
+ * await waitForCondition('the stream closes its descriptor', () => detectClosedHandle(handle))
+ * ```
+ */
+export async function detectClosedHandle(handle: FileHandle): Promise<boolean> {
+	try {
+		await handle.stat()
+		return false
+	} catch (error) {
+		if (error instanceof Error && 'code' in error && error.code === 'EBADF') return true
+		throw error
+	}
 }
 
 /** A `Request` carrying a real multipart body over a single-chunk stream, with an observable `cancelled` flag. */
