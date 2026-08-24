@@ -95,7 +95,7 @@
 		"@orkestrel/guide": "^0.0.12",
 		"@orkestrel/probe": "^0.0.2",
 		"@orkestrel/router": "^0.0.11",
-		"@orkestrel/scaffold": "^0.0.49",
+		"@orkestrel/scaffold": "^0.0.50",
 		"@orkestrel/server": "^0.0.14",
 		"@orkestrel/test": "^0.0.10",
 		"@types/node": "^26.2.0",
