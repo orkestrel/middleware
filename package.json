@@ -96,7 +96,7 @@
 		"@microsoft/api-extractor": "^7.59.0",
 		"@orkestrel/database": "^0.0.12",
 		"@orkestrel/guide": "^0.0.13",
-		"@orkestrel/probe": "^0.0.4",
+		"@orkestrel/probe": "^0.0.5",
 		"@orkestrel/router": "^0.0.11",
 		"@orkestrel/scaffold": "^0.0.52",
 		"@orkestrel/server": "^0.0.15",
