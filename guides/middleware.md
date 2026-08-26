@@ -677,6 +677,9 @@ import { resolveMultipartLimits } from '@orkestrel/middleware/server'
 resolveMultipartLimits({ file: 1_048_576 }) // fills in every other default cap
 ```
 
+Multipart processing reports no progress. A consumer's request for upload progress is the
+condition under which a reporter callback would join `MultipartOptions`.
+
 ### Assets: in-memory source
 
 ```ts
