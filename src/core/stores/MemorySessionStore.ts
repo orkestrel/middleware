@@ -1,4 +1,4 @@
-import type { MemorySessionStoreOptions, SessionStoreInterface } from '../types.js'
+import type { MemorySessionStoreOptions, SessionEntry, SessionStoreInterface } from '../types.js'
 import { DEFAULT_SESSION_CAPACITY } from '../constants.js'
 import { sessionExpired } from '../helpers.js'
 import { isFiniteNumber, isFunction } from '@orkestrel/contract'
@@ -34,7 +34,7 @@ import { isFiniteNumber, isFunction } from '@orkestrel/contract'
  * ```
  */
 export class MemorySessionStore<S> implements SessionStoreInterface<S> {
-	readonly #entries: Map<string, { session: S; lastSeen: number; readonly createdAt: number }>
+	readonly #entries: Map<string, SessionEntry<S>>
 	readonly #ttl: number | undefined
 	readonly #lifetime: number | undefined
 	readonly #capacity: number
@@ -83,7 +83,7 @@ export class MemorySessionStore<S> implements SessionStoreInterface<S> {
 			this.#notify(id)
 			return undefined
 		}
-		entry.lastSeen = now
+		this.#entries.set(id, { session: entry.session, lastSeen: now, createdAt: entry.createdAt })
 		return entry.session
 	}
 
@@ -100,14 +100,8 @@ export class MemorySessionStore<S> implements SessionStoreInterface<S> {
 	}
 
 	// Whether `entry` has aged past its idle timeout or absolute lifetime as of `now`.
-	#expired(
-		entry: { session: S; lastSeen: number; readonly createdAt: number },
-		now: number,
-	): boolean {
-		return sessionExpired(entry, now, {
-			...(this.#ttl !== undefined ? { ttl: this.#ttl } : {}),
-			...(this.#lifetime !== undefined ? { lifetime: this.#lifetime } : {}),
-		})
+	#expired(entry: SessionEntry<S>, now: number): boolean {
+		return sessionExpired(entry, now, { ttl: this.#ttl, lifetime: this.#lifetime })
 	}
 
 	// Makes room for a brand-new id: prunes expired entries, then evicts the

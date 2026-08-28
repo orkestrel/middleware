@@ -1,4 +1,4 @@
-import type { MultipartState } from '@src/core'
+import type { MultipartBody, MultipartState } from '@src/core'
 import type {
 	AssetOptions,
 	MultipartOptions,
@@ -11,7 +11,7 @@ import { DEFAULT_COMPRESSION_THRESHOLD, compressResponse } from '@src/core'
 import { open, realpath, stat } from 'node:fs/promises'
 import { join, relative, resolve } from 'node:path'
 import { brotliDecompressSync } from 'node:zlib'
-import type { Encoding, MiddlewareHandler } from '@orkestrel/server'
+import type { MiddlewareHandler } from '@orkestrel/server'
 import {
 	computeBodyETag,
 	HTTPError,
@@ -27,7 +27,12 @@ import {
 	isString,
 	isUint8Array,
 } from '@orkestrel/contract'
-import { DEFAULT_STATIC_FALLBACK_EXCLUDE, DEFAULT_STATIC_INDEX } from './constants.js'
+import {
+	DEFAULT_STATIC_DOTFILES,
+	DEFAULT_STATIC_FALLBACK_EXCLUDE,
+	DEFAULT_STATIC_INDEX,
+	NODE_COMPRESSION_ENCODINGS,
+} from './constants.js'
 import { isMultipartError } from './errors.js'
 import {
 	computeFileETag,
@@ -36,21 +41,12 @@ import {
 	isDotfilePath,
 	lookupContentType,
 	parseMultipartRequest,
+	resolveContainedRealPath,
 	resolveStaticFallbackPath,
 	resolveStaticPath,
 	streamFile,
 	unlinkStagedFiles,
 } from './helpers.js'
-
-// ============================================================================
-//  @orkestrel/middleware/server — node-face battery factories (AGENTS §5
-//  middlewares.ts). createAssets (in-memory asset serving), createStatic
-//  (node:fs static file serving), and createMultipart (node:fs/os/crypto
-//  streaming multipart uploads) — the three node-bound batteries — plus
-//  createCompression, the node-`zlib`
-//  guaranteed-availability sibling of the core face's `CompressionStream`-
-//  feature-detected battery (separate package entry point, ruling H).
-// ============================================================================
 
 /**
  * Serve validated in-memory assets with identity/Brotli negotiation.
@@ -169,7 +165,7 @@ export function createAssets<TState>(options: AssetOptions): MiddlewareHandler<T
 
 /**
  * Serve static files from `options.root` over `node:fs` — the node-bound
- * static-file battery (PROPOSAL §4.14).
+ * static-file battery.
  *
  * @remarks
  * Containment is enforced on CANONICAL paths, not merely the lexically
@@ -204,7 +200,7 @@ export function createStatic<TState>(options: StaticOptions): MiddlewareHandler<
 		throw new TypeError('createStatic requires options.root to be a non-empty string')
 	const root = resolve(options.root)
 	const index = options.index ?? DEFAULT_STATIC_INDEX
-	const dotfiles = options.dotfiles ?? 'ignore'
+	const dotfiles = options.dotfiles ?? DEFAULT_STATIC_DOTFILES
 	const useETag = options.etag ?? true
 	const fallback =
 		options.fallback === true
@@ -243,7 +239,7 @@ export function createStatic<TState>(options: StaticOptions): MiddlewareHandler<
 		// from a single `fstat` on an opened handle below, closing the
 		// stat-to-stream TOCTOU (a file replaced between "check" and "serve"
 		// can no longer yield a 200 with stale headers over swapped bytes).
-		let directoryInfo: Awaited<ReturnType<typeof stat>> | undefined
+		let directoryInfo: Stats | undefined
 		if (!fallbackNeeded) {
 			try {
 				directoryInfo = await stat(resolvedPath)
@@ -256,12 +252,10 @@ export function createStatic<TState>(options: StaticOptions): MiddlewareHandler<
 			resolvedPath = join(resolvedPath, index)
 			try {
 				if (canonicalRootPromise === undefined) canonicalRootPromise = realpath(root)
-				const [rootReal, indexReal] = await Promise.all([
-					canonicalRootPromise,
-					realpath(resolvedPath),
-				])
-				if (isContainedPath(indexReal, rootReal)) resolvedPath = indexReal
-				else fallbackNeeded = true
+				const rootReal = await canonicalRootPromise
+				const indexReal = await resolveContainedRealPath(resolvedPath, rootReal)
+				if (indexReal === undefined) fallbackNeeded = true
+				else resolvedPath = indexReal
 			} catch {
 				fallbackNeeded = true
 			}
@@ -305,8 +299,9 @@ export function createStatic<TState>(options: StaticOptions): MiddlewareHandler<
 			let shellReal: string
 			try {
 				if (canonicalRootPromise === undefined) canonicalRootPromise = realpath(root)
-				const [rootReal, candidate] = await Promise.all([canonicalRootPromise, realpath(shellPath)])
-				if (!isContainedPath(candidate, rootReal)) return next()
+				const rootReal = await canonicalRootPromise
+				const candidate = await resolveContainedRealPath(shellPath, rootReal)
+				if (candidate === undefined) return next()
 				shellReal = candidate
 			} catch {
 				return next()
@@ -383,7 +378,7 @@ export function createStatic<TState>(options: StaticOptions): MiddlewareHandler<
 /**
  * Parse a streamed `multipart/form-data` request body and stash its
  * {@link MultipartBody} on `context.state.multipart` — the node-bound
- * streaming multipart battery (PROPOSAL §4.15, ruling C).
+ * streaming multipart battery.
  *
  * @remarks
  * A non-multipart request passes through untouched. Consumes `request.body`
@@ -415,7 +410,7 @@ export function createMultipart<TState extends MultipartState>(
 	options: MultipartOptions = {},
 ): MiddlewareHandler<TState> {
 	return async (request, context, next) => {
-		let body: Awaited<ReturnType<typeof parseMultipartRequest>>
+		let body: MultipartBody | undefined
 		try {
 			body = await parseMultipartRequest(request, options)
 		} catch (error) {
@@ -434,16 +429,15 @@ export function createMultipart<TState extends MultipartState>(
 }
 
 /**
- * Compress response bodies via `node:zlib` — the node-bound sibling of the
- * core face's `CompressionStream`-feature-detected `createCompression`,
+ * Compress response bodies through `node:zlib` — the node-bound sibling of
+ * the core face's `CompressionStream`-feature-detected `createCompression`,
  * guaranteed available on any Node runtime rather than dependent on the
- * WHATWG `CompressionStream` global (PROPOSAL §4.3, ruling J). Ships as a
- * SEPARATE package entry point (`@orkestrel/middleware/server`) from the core
- * face's `createCompression`, so the shared name is unambiguous per
- * consumer import path (ruling H).
+ * WHATWG `CompressionStream` global. Ships as a SEPARATE package entry point
+ * (`@orkestrel/middleware/server`) from the core face's `createCompression`,
+ * so the shared name is unambiguous per consumer import path.
  *
  * @remarks
- * Peer-type limitation (same one U1 recorded on the core face): the shipped
+ * Peer-type limitation, the same one the core face carries: the shipped
  * `@orkestrel/server` `Encoding` union is `'gzip' | 'deflate' | 'identity'`
  * — it does not include `'br'`, so this battery cannot honestly type or
  * negotiate a guaranteed brotli coding despite `node:zlib` shipping
@@ -472,7 +466,7 @@ export function createCompression<TState>(
 		throw new TypeError('NodeCompressionOptions.filter must be a function when provided')
 	const threshold = options?.threshold ?? DEFAULT_COMPRESSION_THRESHOLD
 	const filter = options?.filter
-	const encodings: readonly Encoding[] = ['gzip', 'deflate']
+	const encodings = NODE_COMPRESSION_ENCODINGS
 	return async (request, context, next) => {
 		const response = await next()
 		return compressResponse(request, context, response, {

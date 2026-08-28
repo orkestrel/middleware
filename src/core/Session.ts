@@ -2,9 +2,8 @@ import type { SessionInterface } from './types.js'
 
 /**
  * A server-managed session's default entity — the `create` option's default
- * value factory for `createSession` (ruling G: `Session` ships WITHOUT a
- * `createSession` factory of its own, since that name belongs to the
- * battery).
+ * value for `createSession`. It ships without a `create*` factory of its own,
+ * because the name `createSession` belongs to the battery.
  *
  * @remarks
  * `data` is a live, mutable `Map` a handler reads/writes directly;

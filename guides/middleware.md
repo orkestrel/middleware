@@ -75,6 +75,7 @@ const handle = compose<State>([boundary, security], async (_request, context) =>
 | `TelemetryEntry`            | interface | `{ method; pathname; status; duration }` — one settled-request record.                                  |
 | `TelemetryOptions`          | interface | `{ record }` — options for `createTelemetry`.                                                           |
 | `CompressionOptions`        | interface | `{ threshold?; encodings?; filter? }` — options for `createCompression`.                                |
+| `CompressResponseOptions`   | interface | `{ threshold; filter?; encodings; compress }` — the resolved settings `compressResponse` runs against.  |
 | `SecurityIdentifierOptions` | type      | `{ trust?: boolean } \| false` — `createSecurity`'s `identifier` sub-option.                            |
 | `SecurityOptions`           | interface | `{ frame?; csp?; referrer?; permissions?; coop?; corp?; cluster?; coep?; hsts?; identifier? }`.         |
 | `CorsOptions`               | interface | `{ origin?; methods?; headers? }` — options for `createCors`.                                           |
@@ -98,7 +99,11 @@ const handle = compose<State>([boundary, security], async (_request, context) =>
 | `CookieTransportOptions`    | interface | `{ name?; secret; cookie? }` — options for `createCookieTransport`.                                     |
 | `HeaderTransportOptions`    | interface | `{ header? }` — options for `createHeaderTransport`.                                                    |
 | `MemorySessionStoreOptions` | interface | `{ ttl?; lifetime?; capacity?; evict? }` — options for `createMemorySessionStore`.                      |
+| `SessionLimits`             | interface | `{ ttl?; lifetime? }` — the idle and absolute-lifetime thresholds a store enforces.                     |
+| `SessionCursors`            | interface | `{ lastSeen; createdAt }` — the per-session instants `sessionExpired` measures against.                 |
 | `SessionRow`                | interface | `{ id; session; lastSeen; createdAt }` — one persisted session row `DatabaseSessionStore` reads/writes. |
+| `SessionEntry`              | interface | `{ session; lastSeen; createdAt }` — one in-process entry `MemorySessionStore` holds.                   |
+| `SessionSnapshot`           | interface | `{ id; data }` — a session's serializable projection, the value `snapshotSession` produces.             |
 | `CSRFState`                 | interface | `{ readonly csrf?: string }` — the state slice `createCSRF` stashes.                                    |
 | `CSRFOptions`               | interface | `{ secret; cookie?; header?; field?; safe? }` — options for `createCSRF`.                               |
 | `MultipartFile`             | interface | `{ field; name; size; mime; validated; status; path }` — one staged upload.                             |
@@ -148,8 +153,11 @@ const handle = compose<State>([boundary, security], async (_request, context) =>
 | `DEFAULT_CSRF_FIELD`              | const | Default CSRF submission body field (`'_csrf'`).                                       |
 | `DEFAULT_CSRF_SAFE_METHODS`       | const | Methods that mint instead of verify (`['GET', 'HEAD', 'OPTIONS']`).                   |
 | `MULTIPART_REASON_STATUS`         | const | `MultipartReason` → HTTP status map (`limit`→413, `malformed`→400, `rejected`→415).   |
+| `MULTIPART_ERROR_BRAND`           | const | The registry symbol `MultipartError` carries so `isMultipartError` recognizes it.     |
+| `NODE_COMPRESSION_ENCODINGS`      | const | The codings the node face's `createCompression` offers (`['gzip', 'deflate']`).       |
 | `DEFAULT_STATIC_INDEX`            | const | Default directory-index filename (`'index.html'`).                                    |
 | `DEFAULT_STATIC_FALLBACK_EXCLUDE` | const | Default SPA-fallback excluded prefix (`'/api'`).                                      |
+| `DEFAULT_STATIC_DOTFILES`         | const | Default dotfile-segment policy (`'ignore'`).                                          |
 | `DEFAULT_CONTENT_TYPE`            | const | Fallback `Content-Type` for an unmapped extension.                                    |
 | `DEFAULT_MULTIPART_FILE`          | const | Default max size (bytes) of one uploaded file (`10_485_760`).                         |
 | `DEFAULT_MULTIPART_FILES`         | const | Default max number of file parts (`10`).                                              |
@@ -188,13 +196,20 @@ const handle = compose<State>([boundary, security], async (_request, context) =>
 | `sessionExpired`            | function | Whether a session's idle/absolute-lifetime thresholds have elapsed as of `now`.           |
 | `snapshotSession`           | function | Copy a session's `data` Map into a plain, serializable `{ id; data }` record.             |
 | `restoreSession`            | function | Rebuild a `Session` from an untrusted snapshot value, or `undefined` when malformed.      |
-| `isSession`                 | function | Whether a value implements `SessionInterface`.                                            |
-| `isSessionControl`          | function | Whether a value implements `SessionControlInterface`.                                     |
-| `isMultipartFile`           | function | Whether a value implements `MultipartFile`.                                               |
-| `isMultipartBody`           | function | Whether a value implements `MultipartBody`.                                               |
 | `isPreflight`               | function | Whether a request is a CORS preflight (`OPTIONS` + `Access-Control-Request-Method`).      |
 | `buildClientInfo`           | function | Build a `ClientInfo` from a resolved (or absent) client IP.                               |
 | `equalsConstantTime`        | function | Constant-time string equality (avoids a timing oracle in the CSRF double-submit compare). |
+
+### Validators — core
+
+The total `(unknown) => value is T` guards, each safe against any input:
+
+| API                | Kind     | Summary                                               |
+| ------------------ | -------- | ----------------------------------------------------- |
+| `isSession`        | function | Whether a value implements `SessionInterface`.        |
+| `isSessionControl` | function | Whether a value implements `SessionControlInterface`. |
+| `isMultipartFile`  | function | Whether a value implements `MultipartFile`.           |
+| `isMultipartBody`  | function | Whether a value implements `MultipartBody`.           |
 
 ### Helpers — node
 
@@ -204,6 +219,7 @@ const handle = compose<State>([boundary, security], async (_request, context) =>
 | `isUnderPath`               | function | Segment-boundary under-path test shared by the traversal strip and the SPA `exclude` (URL containment).                        |
 | `resolveStaticFallbackPath` | function | Resolve the fixed SPA shell path only for an eligible navigation miss.                                                         |
 | `isContainedPath`           | function | Separator-correct FILESYSTEM containment test for `fs.realpath` output — `(child, parent)`, opposite order from `isUnderPath`. |
+| `resolveContainedRealPath`  | function | Canonicalize a candidate path and return it only when it lies inside an already-canonical root.                                |
 | `isReservedDeviceName`      | function | Whether a path segment is a Windows reserved device name (CVE-2025-27210).                                                     |
 | `isDotfilePath`             | function | Whether a relative path has a dotfile segment.                                                                                 |
 | `lookupContentType`         | function | Resolve a `Content-Type` from a file's extension.                                                                              |
@@ -248,10 +264,10 @@ omission is asserted rather than assumed, and adding it to the barrel would turn
 
 ### Errors
 
-| API                | Kind     | Summary                                                                           |
-| ------------------ | -------- | --------------------------------------------------------------------------------- |
-| `MultipartError`   | class    | An error `createMultipart` throws — carries a `MultipartReason`-derived `status`. |
-| `isMultipartError` | function | Narrow an unknown caught value to a `MultipartError`.                             |
+| API                | Kind     | Summary                                                                    |
+| ------------------ | -------- | -------------------------------------------------------------------------- |
+| `MultipartError`   | class    | An `HTTPError` subclass `createMultipart` throws — adds the `reason` axis. |
+| `isMultipartError` | function | Narrow an unknown caught value to a `MultipartError`.                      |
 
 ## Methods
 
@@ -433,10 +449,13 @@ prevents:
     the identity body's `computeBodyETag` validator and vary on
     `Accept-Encoding`. Gzip is not offered. `Range` is ignored and serves the
     selected complete representation as `200`.
-23. **Multipart.** A declared `Content-Type` whose SNIFFED (magic-byte)
-    bytes disagree is rejected `415`, as is a signature-less declared type
-    on an `allowed` list (sniffing cannot validate it — a list can never
-    honestly allow it); staged temp filenames are `randomUUID()`, never
+23. **Multipart.** Type rejection applies only when `allowed` is configured:
+    a file whose SNIFFED (magic-byte) bytes detect no type on that list is
+    rejected `415`, and a signature-less file is always rejected because
+    sniffing cannot place it on the list. A declared `Content-Type`
+    disagreeing with the sniffed type is reported as `validated: false` and
+    is never rejected on its own — with no `allowed` list, a disagreement
+    produces a normal response. Staged temp filenames are `randomUUID()`, never
     derived from the client-declared filename (traversal-by-filename is
     impossible by construction); every limit trips MID-STREAM with already-
     staged files cleaned up; a mid-upload client disconnect triggers the

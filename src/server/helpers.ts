@@ -9,7 +9,7 @@ import type {
 import type { FileHandle } from 'node:fs/promises'
 import type { Encoding } from '@orkestrel/server'
 import { createReadStream } from 'node:fs'
-import { copyFile, readFile, rename, unlink } from 'node:fs/promises'
+import { copyFile, readFile, realpath, rename, unlink } from 'node:fs/promises'
 import { extname, isAbsolute, join, normalize, relative, resolve, sep } from 'node:path'
 import { promisify } from 'node:util'
 import { deflate as zlibDeflate, gzip as zlibGzip } from 'node:zlib'
@@ -26,14 +26,6 @@ import {
 } from './constants.js'
 import { MultipartError } from './errors.js'
 import { MultipartParser } from './MultipartParser.js'
-
-// ============================================================================
-//  @orkestrel/middleware/server — node-face pure/near-pure leaves (AGENTS §5
-//  helpers.ts). The static-file traversal guard, the reserved-device-name and
-//  dotfile screens, the extension/MIME lookup, the file ETag formula, the
-//  magic-byte MIME sniffer, the multipart boundary parser, the streaming
-//  multipart state machine, and the post-parse uploaded-file operations.
-// ============================================================================
 
 /**
  * Whether `pathname` is `prefix` itself or lies under it on a SEGMENT
@@ -121,8 +113,8 @@ export function isContainedPath(child: string, parent: string): boolean {
 
 /**
  * Resolve a request pathname to an on-disk path UNDER `root`, or `undefined`
- * when it cannot — the traversal guard, EXACT algorithm and order (PROPOSAL
- * §4.14): strip `prefix` on a segment boundary → `decodeURIComponent` (a
+ * when it cannot — the traversal guard, whose algorithm and order are exact:
+ * strip `prefix` on a segment boundary → `decodeURIComponent` (a
  * malformed escape refuses, never throws) → reject a NUL byte → strip the
  * leading path separator FIRST (so a leading `..` survives `normalize` as a
  * genuine climbing segment) → `normalize` → refuse any Windows reserved-
@@ -163,8 +155,41 @@ export function resolveStaticPath(
 	const segments = normalized.split(/[/\\]+/).filter((segment) => segment.length > 0)
 	for (const segment of segments) if (isReservedDeviceName(segment)) return undefined
 	const resolved = resolve(root, normalized)
-	if (resolved === root || resolved.startsWith(`${root}${sep}`)) return resolved
-	return undefined
+	return isContainedPath(resolved, root) ? resolved : undefined
+}
+
+/**
+ * Canonicalize `candidate` and return it only when it lies inside `rootReal`
+ * — the shared realpath-then-contain step `createStatic` applies to a
+ * directory index and to its SPA shell.
+ *
+ * @remarks
+ * Total: a `realpath` failure (a dangling symlink, a missing file, a
+ * permission refusal) and an escape from `rootReal` both resolve `undefined`,
+ * so a caller that treats those two outcomes identically needs no `try`. A
+ * caller that must tell them apart keeps its own explicit branch instead.
+ *
+ * @param candidate - The on-disk path to canonicalize
+ * @param rootReal - The already-canonical root the result must lie under
+ * @returns The canonical path inside `rootReal`, or `undefined`
+ *
+ * @example
+ * ```ts
+ * await resolveContainedRealPath('/srv/public/index.html', '/srv/public')
+ * // '/srv/public/index.html'
+ * ```
+ */
+export async function resolveContainedRealPath(
+	candidate: string,
+	rootReal: string,
+): Promise<string | undefined> {
+	let real: string
+	try {
+		real = await realpath(candidate)
+	} catch {
+		return undefined
+	}
+	return isContainedPath(real, rootReal) ? real : undefined
 }
 
 /**
@@ -271,9 +296,15 @@ export async function compressNodeBytes(
 
 /**
  * Sniff a MIME type from a file's leading bytes against a small magic-byte
- * table (jpeg, png, gif87a/89a, webp, pdf, zip) — the SNIFF-AUTHORITATIVE
- * signal `createMultipart`'s type validation rests on, never the declared
- * `Content-Type`.
+ * table (jpeg, png, gif87a/89a, webp, pdf, zip).
+ *
+ * @remarks
+ * `createMultipart`'s `allowed` check reads this signal alone and never the
+ * declared `Content-Type`, so a file whose bytes match no signature can never
+ * be placed on an `allowed` list. The record's `mime` field is a different
+ * question: it falls back to the declared `Content-Type` (then to
+ * {@link DEFAULT_CONTENT_TYPE}) when nothing sniffs, and its `validated` flag
+ * reports whether the sniffed and declared types agreed.
  *
  * @param head - The file's first bytes (16 is sufficient for every signature)
  * @returns The detected MIME type, or `undefined` when no signature matches
@@ -428,7 +459,7 @@ export function parsePartHeaders(block: string): PartHeaders {
 
 /**
  * Stream-parse a `multipart/form-data` request into its files and fields —
- * the mid-stream state machine `createMultipart` drives (PROPOSAL §4.15).
+ * the mid-stream state machine `createMultipart` drives.
  *
  * @remarks
  * Reads `request.body` chunk by chunk via its `ReadableStream` reader —

@@ -3,6 +3,7 @@ import type {
 	HeaderTransportOptions,
 	MemorySessionStoreOptions,
 	SessionInterface,
+	SessionLimits,
 	SessionRow,
 	SessionStoreInterface,
 	SessionTransport,
@@ -15,13 +16,6 @@ import { clearCookie, readSignedCookie, resolveSecure, writeSignedCookie } from 
 import { DEFAULT_SESSION_COOKIE, DEFAULT_SESSION_HEADER } from './constants.js'
 import { DatabaseSessionStore } from './stores/DatabaseSessionStore.js'
 import { MemorySessionStore } from './stores/MemorySessionStore.js'
-
-// ============================================================================
-//  @orkestrel/middleware — entity / transport / store factories
-//  (AGENTS §5 factories.ts, kind-pure counterpart to middlewares.ts). Every
-//  companion `createSession`'s option bag composes: the two `SessionTransport`
-//  implementations, and the default `SessionStoreInterface`.
-// ============================================================================
 
 /**
  * Create a signed-cookie {@link SessionTransport} — the session id travels as
@@ -123,8 +117,8 @@ export function createMemorySessionStore<S>(
  *
  * @typeParam S - The session data payload type
  * @param table - The backing `TableInterface<SessionRow>`
- * @param is - A {@link Guard} narrowing a restored snapshot to `S`
- * @param options - The idle `ttl` / absolute `lifetime` thresholds
+ * @param guard - A {@link Guard} narrowing a restored snapshot to `S`
+ * @param options - See {@link SessionLimits}
  * @returns A {@link SessionStoreInterface}
  *
  * @remarks
@@ -139,8 +133,8 @@ export function createMemorySessionStore<S>(
  */
 export function createDatabaseSessionStore<S extends SessionInterface = Session>(
 	table: TableInterface<SessionRow>,
-	is: Guard<S>,
-	options?: { readonly ttl?: number; readonly lifetime?: number },
+	guard: Guard<S>,
+	options?: SessionLimits,
 ): SessionStoreInterface<S> {
-	return new DatabaseSessionStore<S>(table, is, options)
+	return new DatabaseSessionStore<S>(table, guard, options)
 }

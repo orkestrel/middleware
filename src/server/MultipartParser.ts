@@ -103,111 +103,9 @@ export class MultipartParser {
 
 				const partDelimiter = Buffer.from(`\r\n--${this.#boundary}`)
 
-				if (filename !== undefined) {
-					if (filename !== '') {
-						this.#fileCount += 1
-						if (this.#fileCount > this.#limits.files)
-							throw new MultipartError('limit', 'too many multipart files')
-					}
-					const path = join(this.#directory, randomUUID())
-					this.#staged.push(path)
-					const handle = await open(path, 'w', 0o600)
-					let size = 0
-					let head = Buffer.alloc(0)
-					try {
-						for (;;) {
-							const boundaryIndex = this.#buffer.indexOf(partDelimiter)
-							if (boundaryIndex === -1) {
-								const safeLength = Math.max(0, this.#buffer.length - (partDelimiter.length - 1))
-								if (safeLength > 0) {
-									const chunk = this.#buffer.subarray(0, safeLength)
-									size += chunk.length
-									if (size > this.#limits.file)
-										throw new MultipartError('limit', 'multipart file exceeds size limit')
-									if (head.length < 16)
-										head = Buffer.concat([head, chunk.subarray(0, 16 - head.length)])
-									await handle.write(chunk)
-									this.#buffer = this.#buffer.subarray(safeLength)
-								}
-								if (!(await this.#pull()))
-									throw new MultipartError('malformed', 'unterminated multipart file part')
-								continue
-							}
-							const chunk = this.#buffer.subarray(0, boundaryIndex)
-							size += chunk.length
-							if (size > this.#limits.file)
-								throw new MultipartError('limit', 'multipart file exceeds size limit')
-							if (head.length < 16)
-								head = Buffer.concat([head, chunk.subarray(0, 16 - head.length)])
-							await handle.write(chunk)
-							this.#buffer = this.#buffer.subarray(boundaryIndex + 2)
-							break
-						}
-					} finally {
-						await handle.close()
-					}
-					if (filename === '' && size === 0) {
-						await unlink(path)
-						this.#staged.splice(this.#staged.indexOf(path), 1)
-					} else {
-						if (filename === '') {
-							this.#fileCount += 1
-							if (this.#fileCount > this.#limits.files)
-								throw new MultipartError('limit', 'too many multipart files')
-						}
-						const detected = detectMIME(head)
-						const declared = contentType ?? DEFAULT_CONTENT_TYPE
-						const validated = detected !== undefined && detected === declared
-						if (this.#allowed !== undefined) {
-							const acceptable = detected !== undefined && this.#allowed.includes(detected)
-							if (!acceptable)
-								throw new MultipartError('rejected', 'multipart file failed type validation')
-						}
-						if (isDangerousKey(name)) {
-							await unlink(path)
-							this.#staged.splice(this.#staged.indexOf(path), 1)
-						} else {
-							const record = createUploadedFile({
-								field: name,
-								name: filename,
-								size,
-								mime: detected ?? declared,
-								validated,
-								status: 'staged',
-								path,
-							})
-							const existing = this.#files[name]
-							if (existing === undefined) this.#files[name] = [record]
-							else existing.push(record)
-						}
-					}
-				} else {
-					this.#fieldCount += 1
-					if (this.#fieldCount > this.#limits.fields)
-						throw new MultipartError('limit', 'too many multipart fields')
-					let value = Buffer.alloc(0)
-					for (;;) {
-						const boundaryIndex = this.#buffer.indexOf(partDelimiter)
-						if (boundaryIndex === -1) {
-							const safeLength = Math.max(0, this.#buffer.length - (partDelimiter.length - 1))
-							if (safeLength > 0) {
-								value = Buffer.concat([value, this.#buffer.subarray(0, safeLength)])
-								if (value.length > this.#limits.field)
-									throw new MultipartError('limit', 'multipart field exceeds size limit')
-								this.#buffer = this.#buffer.subarray(safeLength)
-							}
-							if (!(await this.#pull()))
-								throw new MultipartError('malformed', 'unterminated multipart field part')
-							continue
-						}
-						value = Buffer.concat([value, this.#buffer.subarray(0, boundaryIndex)])
-						if (value.length > this.#limits.field)
-							throw new MultipartError('limit', 'multipart field exceeds size limit')
-						this.#buffer = this.#buffer.subarray(boundaryIndex + 2)
-						break
-					}
-					if (!isDangerousKey(name)) this.#fields[name] = value.toString('utf8')
-				}
+				if (filename !== undefined)
+					await this.#consumeFile(name, filename, contentType, partDelimiter)
+				else await this.#consumeField(name, partDelimiter)
 
 				while (this.#buffer.length < openMarker.length)
 					if (!(await this.#pull()))
@@ -223,10 +121,128 @@ export class MultipartParser {
 			if (!this.#ended) await this.#reader.cancel().catch(() => {})
 		}
 
+		const files: Record<string, readonly MultipartFile[]> = Object.create(null)
+		for (const [field, records] of Object.entries(this.#files))
+			files[field] = Object.freeze([...records])
+		const fields: Record<string, string> = Object.assign(Object.create(null), this.#fields)
 		return {
-			files: Object.freeze(this.#files),
-			fields: Object.freeze(this.#fields),
+			files: Object.freeze(files),
+			fields: Object.freeze(fields),
 		}
+	}
+
+	// Streams one file part to disk, screens its sniffed type, and keys its
+	// record onto the parsed body.
+	async #consumeFile(
+		name: string,
+		filename: string,
+		contentType: string | undefined,
+		delimiter: Buffer,
+	): Promise<void> {
+		if (filename !== '') {
+			this.#fileCount += 1
+			if (this.#fileCount > this.#limits.files)
+				throw new MultipartError('limit', 'too many multipart files')
+		}
+		const path = join(this.#directory, randomUUID())
+		this.#staged.push(path)
+		const handle = await open(path, 'w', 0o600)
+		let size = 0
+		let head = Buffer.alloc(0)
+		try {
+			await this.#scan(delimiter, 'unterminated multipart file part', async (chunk) => {
+				size += chunk.length
+				if (size > this.#limits.file)
+					throw new MultipartError('limit', 'multipart file exceeds size limit')
+				if (head.length < 16) head = Buffer.concat([head, chunk.subarray(0, 16 - head.length)])
+				await handle.write(chunk)
+			})
+		} finally {
+			await handle.close()
+		}
+		if (filename === '' && size === 0) {
+			await this.#discard(path)
+			return
+		}
+		if (filename === '') {
+			this.#fileCount += 1
+			if (this.#fileCount > this.#limits.files)
+				throw new MultipartError('limit', 'too many multipart files')
+		}
+		const detected = detectMIME(head)
+		const declared = contentType ?? DEFAULT_CONTENT_TYPE
+		const validated = detected !== undefined && detected === declared
+		if (this.#allowed !== undefined) {
+			const acceptable = detected !== undefined && this.#allowed.includes(detected)
+			if (!acceptable) throw new MultipartError('rejected', 'multipart file failed type validation')
+		}
+		if (isDangerousKey(name)) {
+			await this.#discard(path)
+			return
+		}
+		const record = createUploadedFile({
+			field: name,
+			name: filename,
+			size,
+			mime: detected ?? declared,
+			validated,
+			status: 'staged',
+			path,
+		})
+		const existing = this.#files[name]
+		if (existing === undefined) this.#files[name] = [record]
+		else existing.push(record)
+	}
+
+	// Accumulates one text field part and keys it onto the parsed body.
+	async #consumeField(name: string, delimiter: Buffer): Promise<void> {
+		this.#fieldCount += 1
+		if (this.#fieldCount > this.#limits.fields)
+			throw new MultipartError('limit', 'too many multipart fields')
+		let value = Buffer.alloc(0)
+		await this.#scan(delimiter, 'unterminated multipart field part', (chunk) => {
+			value = Buffer.concat([value, chunk])
+			if (value.length > this.#limits.field)
+				throw new MultipartError('limit', 'multipart field exceeds size limit')
+		})
+		if (!isDangerousKey(name)) this.#fields[name] = value.toString('utf8')
+	}
+
+	// Drains one part's bytes into `sink` up to `delimiter`, carrying back the
+	// partial tail that could still be the delimiter's own prefix, and leaves
+	// the buffer positioned past the delimiter's leading CRLF.
+	async #scan(
+		delimiter: Buffer,
+		unterminated: string,
+		sink: (chunk: Buffer) => void | Promise<void>,
+	): Promise<void> {
+		for (;;) {
+			const boundaryIndex = this.#buffer.indexOf(delimiter)
+			if (boundaryIndex === -1) {
+				const safeLength = Math.max(0, this.#buffer.length - (delimiter.length - 1))
+				if (safeLength > 0) {
+					await sink(this.#buffer.subarray(0, safeLength))
+					this.#buffer = this.#buffer.subarray(safeLength)
+				}
+				if (!(await this.#pull())) throw new MultipartError('malformed', unterminated)
+				continue
+			}
+			await sink(this.#buffer.subarray(0, boundaryIndex))
+			this.#buffer = this.#buffer.subarray(boundaryIndex + 2)
+			return
+		}
+	}
+
+	// Unlinks one staged temp file best-effort and drops it from the staged
+	// roster, leaving the roster untouched when the path is not on it.
+	async #discard(path: string): Promise<void> {
+		try {
+			await unlink(path)
+		} catch {
+			// Already gone — cleanup is best-effort.
+		}
+		const index = this.#staged.indexOf(path)
+		if (index !== -1) this.#staged.splice(index, 1)
 	}
 
 	static async #createDirectory(): Promise<string> {

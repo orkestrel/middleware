@@ -1,13 +1,5 @@
 import type { MultipartFile } from '@src/core'
 
-// ============================================================================
-//  @orkestrel/middleware/server — node-face type surface (AGENTS §5 source of
-//  truth). Options and source values for in-memory assets, filesystem static
-//  files, and multipart uploads. The request-time multipart state slice
-//  (`MultipartState`) and parsed `MultipartBody`/`MultipartFile` shapes are
-//  OWNED by the pure core face and re-exported from the server barrel.
-// ============================================================================
-
 /**
  * One in-memory asset representation returned by an {@link AssetSourceInterface}.
  *
@@ -41,7 +33,6 @@ export interface AssetSourceInterface {
 /**
  * Options for `createAssets` — in-memory identity/Brotli asset serving.
  *
- * @param options - See fields below
  * @remarks
  * - `source` — the required in-memory asset reader.
  */
@@ -52,7 +43,6 @@ export interface AssetOptions {
 /**
  * Options for `createStatic` — node `fs`-backed static file serving.
  *
- * @param options - See fields below
  * @remarks
  * - `root` — the directory every request resolves under, resolved once at
  *   construction. REQUIRED.
@@ -61,8 +51,8 @@ export interface AssetOptions {
  * - `index` — the filename served for a directory hit; defaults to
  *   {@link DEFAULT_STATIC_INDEX}.
  * - `dotfiles` — the policy for a path with a dotfile segment: `'ignore'`
- *   (default, falls through to `next()`), `'deny'` (403), or `'allow'`
- *   (serves it).
+ *   (falls through to `next()`), `'deny'` (403), or `'allow'` (serves it);
+ *   defaults to {@link DEFAULT_STATIC_DOTFILES}.
  * - `cache` — `Cache-Control: max-age=<cache>` in seconds, when set.
  * - `etag` — whether to compute and honor a weak file `ETag`; defaults to `true`.
  * - `fallback` — SPA fallback: `false` (default, off), `true` (on, excluding
@@ -106,7 +96,6 @@ export interface MultipartLimits {
  * Options for `createMultipart` — node `fs`/`os`/`crypto`-backed streaming
  * multipart upload parsing.
  *
- * @param options - See fields below
  * @remarks
  * - `limits` — see {@link MultipartLimits}.
  * - `allowed` — a MIME allow-list validated against SNIFFED (not merely
@@ -149,9 +138,12 @@ export type UploadStatus = 'staged' | 'moved'
  * - `name` — the client-declared filename (METADATA ONLY — never used to
  *   build a filesystem path).
  * - `size` — the file's byte size.
- * - `mime` — the SNIFFED (magic-byte-detected) MIME type.
- * - `validated` — `true` when the sniffed type matches the declared
- *   `Content-Type`.
+ * - `mime` — the SNIFFED (magic-byte-detected) MIME type when a signature
+ *   matches; otherwise the part's declared `Content-Type`; otherwise
+ *   {@link DEFAULT_CONTENT_TYPE}. Read `validated` to tell which.
+ * - `validated` — `true` when a signature matched AND the sniffed type equals
+ *   the declared `Content-Type`, so `mime` is the sniffed fact. `false` means
+ *   `mime` may be the client-declared value.
  * - `status` — see {@link UploadStatus}.
  * - `path` — the file's current on-disk path.
  */
@@ -182,7 +174,7 @@ export interface PartHeaders {
  * - `field` — the multipart field name the file was submitted under.
  * - `name` — the client-declared filename (metadata only).
  * - `size` — the file's byte size.
- * - `mime` — the sniffed MIME type.
+ * - `mime` — the sniffed MIME type, or the declared one when nothing sniffed.
  * - `validated` — `true` when the sniffed type matches the declared `Content-Type`.
  * - `status` — see {@link UploadStatus}.
  * - `path` — the file's current on-disk path.
@@ -201,14 +193,14 @@ export interface UploadedFileInput {
  * Options for the node face's `createCompression` — `node:zlib`-backed
  * response compression.
  *
- * @param options - See fields below
  * @remarks
  * - `threshold` — the minimum buffered body size (bytes) worth compressing;
  *   defaults to {@link DEFAULT_COMPRESSION_THRESHOLD}.
  * - `filter` — an additional predicate a response must pass before
- *   compression is attempted; defaults to always-allow. `encodings` is fixed
- *   to `['gzip', 'deflate']` and is not configurable (see the peer `Encoding`
- *   type limitation documented on `createCompression`).
+ *   compression is attempted; defaults to always-allow. The offered codings
+ *   are fixed to {@link NODE_COMPRESSION_ENCODINGS} and are not configurable
+ *   (see the peer `Encoding` type limitation documented on
+ *   `createCompression`).
  */
 export interface NodeCompressionOptions {
 	readonly threshold?: number

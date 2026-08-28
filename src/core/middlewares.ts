@@ -87,14 +87,6 @@ import { MemorySessionStore } from './stores/MemorySessionStore.js'
 import { Session } from './Session.js'
 import { computeBodyETag, matchesETag } from '@orkestrel/server'
 
-// ============================================================================
-//  @orkestrel/middleware — the thirteen pure battery factories
-//  (AGENTS §5 middlewares.ts). Each `create{Noun}` closes over its guarded
-//  option bag and returns a `MiddlewareHandler<TState>` — a behavior, never a
-//  class. See PROPOSAL.md §4 and the orchestrator's seam rulings A–K for the
-//  exact semantics each battery pins.
-// ============================================================================
-
 /**
  * The outermost error-rendering battery — catches a downstream throw and
  * renders it as a `Response`.

@@ -2,25 +2,18 @@ import type {
 	BearerState,
 	ClientInfo,
 	ClientState,
+	CompressResponseOptions,
 	ConnectionState,
-	MultipartBody,
-	MultipartFile,
-	SessionControlInterface,
+	ForwardedOptions,
+	SessionCursors,
 	SessionInterface,
+	SessionLimits,
+	SessionSnapshot,
 } from './types.js'
 import type { Encoding, MiddlewareContext } from '@orkestrel/server'
 import { isRecord, isString } from '@orkestrel/contract'
 import { clientRateKey, isCompressibleType, mergeVary, negotiateEncoding } from '@orkestrel/server'
 import { Session } from './Session.js'
-
-// ============================================================================
-//  @orkestrel/middleware — core pure leaves (AGENTS §5 helpers.ts).
-//  Every function here is a self-contained, referentially-transparent
-//  computation the battery factories in middlewares.ts compose — key
-//  derivation, wire-field builders, the forwarded-header hop walk,
-//  compression feature detection, buffering-eligibility predicates, the
-//  session data-carry, and the total state-slice guards.
-// ============================================================================
 
 /**
  * Derive `createLimiter`'s default rate-limit bucket key from a request's
@@ -53,7 +46,7 @@ export function resolveKey(state: BearerState & ClientState & ConnectionState): 
 
 /**
  * Build the `Retry-After` header value — whole seconds until a window reset,
- * floored at a minimum of `1` (ruling I).
+ * floored at a minimum of `1`.
  *
  * @param resetAt - The window reset instant (same clock unit as `now`)
  * @param now - The current instant
@@ -70,8 +63,8 @@ export function buildRetryAfter(resetAt: number, now: number): string {
 }
 
 /**
- * Build the draft `RateLimit` structured header field (ruling I) — emitted
- * only when `createLimiter`'s `policy` option is `true`.
+ * Build the draft `RateLimit` structured header field — emitted only when
+ * `createLimiter`'s `policy` option is `true`.
  *
  * @param remaining - The requests still admitted this window
  * @param resetAt - The window reset instant (same clock unit as `now`)
@@ -89,8 +82,8 @@ export function buildRateLimitField(remaining: number, resetAt: number, now: num
 }
 
 /**
- * Build the draft `RateLimit-Policy` structured header field (ruling I) —
- * emitted only when `createLimiter`'s `policy` option is `true`.
+ * Build the draft `RateLimit-Policy` structured header field — emitted only
+ * when `createLimiter`'s `policy` option is `true`.
  *
  * @param max - The window's admitted request count
  * @param window - The window length in milliseconds
@@ -179,7 +172,7 @@ export function matchesTrustedEntry(address: string, entry: string): boolean {
  * socket peer).
  *
  * @param header - The raw `X-Forwarded-For` header value (comma-separated hops), if present
- * @param trust - Either a trusted hop COUNT or a `trusted` CIDR/exact roster
+ * @param trust - The {@link ForwardedOptions} form in force — a trusted hop COUNT or a `trusted` CIDR/exact roster
  * @returns The first untrusted hop address, or `undefined` when none qualifies
  *
  * @example
@@ -189,7 +182,7 @@ export function matchesTrustedEntry(address: string, entry: string): boolean {
  */
 export function resolveForwardedFor(
 	header: string | undefined,
-	trust: { readonly proxies: number } | { readonly trusted: readonly string[] },
+	trust: ForwardedOptions,
 ): string | undefined {
 	if (header === undefined) return undefined
 	const hops = header
@@ -216,8 +209,7 @@ export function resolveForwardedFor(
 
 /**
  * Feature-detect which of `candidates` the runtime's `CompressionStream`
- * actually supports — `createCompression`'s construction-time intersection
- * (ruling J).
+ * actually supports — `createCompression`'s construction-time intersection.
  *
  * @remarks
  * Probes each candidate with `new CompressionStream(candidate)` inside a
@@ -277,8 +269,8 @@ export async function compressBytes(
 
 /**
  * Whether a response is eligible for the compression/ETag buffering pipeline
- * (ruling J) — the shared cheap-skip predicate both batteries apply before
- * ever touching `response.arrayBuffer()`.
+ * — the shared cheap-skip predicate both batteries apply before ever touching
+ * `response.arrayBuffer()`.
  *
  * @remarks
  * Skips a `HEAD` request, a `204`/`304` or otherwise bodyless response, an
@@ -313,7 +305,7 @@ export function isBufferingIneligible(
 
 /**
  * Whether a negotiated `Accept-Encoding` outcome is worth acting on —
- * `createCompression`'s negotiation-eligibility half of ruling J's skip list.
+ * `createCompression`'s negotiation-eligibility half of the skip list.
  *
  * @param encoding - The negotiated coding, or `undefined` when negotiation failed
  * @returns `true` when `encoding` names an actionable, non-`identity` coding
@@ -405,7 +397,7 @@ export function rebuildResponse(
  * @param request - The inbound `Request` (read for `Accept-Encoding`)
  * @param context - The `MiddlewareContext` (read for `context.method`)
  * @param response - The downstream `Response` to consider compressing
- * @param options - The threshold, optional filter, offered encodings, and the runtime's `compress` primitive
+ * @param options - See {@link CompressResponseOptions}
  * @returns The original `response` when skipped, or a new compressed `Response`
  *
  * @example
@@ -421,15 +413,7 @@ export async function compressResponse(
 	request: Request,
 	context: MiddlewareContext<unknown>,
 	response: Response,
-	options: {
-		readonly threshold: number
-		readonly filter?: (request: Request, response: Response) => boolean
-		readonly encodings: readonly Encoding[]
-		readonly compress: (
-			bytes: Uint8Array<ArrayBuffer>,
-			encoding: Exclude<Encoding, 'identity'>,
-		) => Promise<Uint8Array<ArrayBuffer>>
-	},
+	options: CompressResponseOptions,
 ): Promise<Response> {
 	if (isBufferingIneligible(context.method, response, 'content-encoding')) return response
 	if (options.filter !== undefined && !options.filter(request, response)) return response
@@ -459,7 +443,7 @@ export async function compressResponse(
 
 /**
  * Copy every entry of one session's `data` into another — the regenerate
- * data-carry `createSession`'s `control.regenerate()` applies (ruling D).
+ * data-carry `createSession`'s `control.regenerate()` applies.
  *
  * @param from - The source session whose `data` is copied
  * @param to - The destination session `data` is copied into
@@ -471,90 +455,6 @@ export async function compressResponse(
  */
 export function transferSessionData(from: SessionInterface, to: SessionInterface): void {
 	for (const [key, value] of from.data) to.data.set(key, value)
-}
-
-/**
- * Determine whether a value implements {@link SessionInterface} — a total
- * structural guard (§14): an `id` string plus a `data` `Map`. Prototype-agnostic
- * — accepts a plain object, a null-prototype object, AND a class instance
- * (a real `Session`), since a restored/stored session is routinely a class
- * instance, not a literal.
- *
- * @param value - The candidate value
- * @returns `true` when `value` is shaped like a {@link SessionInterface}
- *
- * @example
- * ```ts
- * isSession({ id: 'a', data: new Map() }) // true
- * isSession(new Session('a')) // true
- * ```
- */
-export function isSession(value: unknown): value is SessionInterface {
-	if (typeof value !== 'object' || value === null) return false
-	const id: unknown = Reflect.get(value, 'id')
-	const data: unknown = Reflect.get(value, 'data')
-	return isString(id) && data instanceof Map
-}
-
-/**
- * Determine whether a value implements {@link SessionControlInterface} — a
- * total structural guard (§14): callable `regenerate` and `destroy`.
- *
- * @param value - The candidate value
- * @returns `true` when `value` is shaped like a {@link SessionControlInterface}
- *
- * @example
- * ```ts
- * isSessionControl({ regenerate() {}, destroy() {} }) // true
- * ```
- */
-export function isSessionControl(value: unknown): value is SessionControlInterface {
-	if (!isRecord(value)) return false
-	return typeof value.regenerate === 'function' && typeof value.destroy === 'function'
-}
-
-/**
- * Determine whether a value is one staged {@link MultipartFile} record — a
- * total structural guard (§14) checking every required field's shape.
- *
- * @param value - The candidate value
- * @returns `true` when `value` is shaped like a {@link MultipartFile}
- */
-export function isMultipartFile(value: unknown): value is MultipartFile {
-	if (!isRecord(value)) return false
-	return (
-		isString(value.field) &&
-		isString(value.name) &&
-		typeof value.size === 'number' &&
-		isString(value.mime) &&
-		typeof value.validated === 'boolean' &&
-		isString(value.status) &&
-		isString(value.path)
-	)
-}
-
-/**
- * Determine whether a value implements {@link MultipartBody} — a total
- * structural guard (§14): `files` keyed by field name to arrays of
- * {@link MultipartFile}, and a `fields` string record.
- *
- * @param value - The candidate value
- * @returns `true` when `value` is shaped like a {@link MultipartBody}
- *
- * @example
- * ```ts
- * isMultipartBody({ files: {}, fields: { name: 'a' } }) // true
- * ```
- */
-export function isMultipartBody(value: unknown): value is MultipartBody {
-	if (!isRecord(value)) return false
-	if (!isRecord(value.files) || !isRecord(value.fields)) return false
-	for (const entries of Object.values(value.files)) {
-		if (!Array.isArray(entries)) return false
-		for (const entry of entries) if (!isMultipartFile(entry)) return false
-	}
-	for (const fieldValue of Object.values(value.fields)) if (!isString(fieldValue)) return false
-	return true
 }
 
 /**
@@ -623,9 +523,9 @@ export function equalsConstantTime(a: string, b: string): boolean {
  * Whether a session has aged past its idle timeout or absolute lifetime as
  * of `now` — the pure expiry predicate `MemorySessionStore` delegates to.
  *
- * @param cursors - The session's `lastSeen` (idle) and `createdAt` (absolute) instants
+ * @param cursors - See {@link SessionCursors}
  * @param now - The current instant (same clock unit as `cursors`)
- * @param limits - The optional `ttl` (idle) and `lifetime` (absolute) thresholds
+ * @param limits - See {@link SessionLimits}
  * @returns `true` when either configured threshold has elapsed
  *
  * @example
@@ -634,9 +534,9 @@ export function equalsConstantTime(a: string, b: string): boolean {
  * ```
  */
 export function sessionExpired(
-	cursors: { readonly lastSeen: number; readonly createdAt: number },
+	cursors: SessionCursors,
 	now: number,
-	limits: { readonly ttl?: number; readonly lifetime?: number },
+	limits: SessionLimits,
 ): boolean {
 	if (limits.ttl !== undefined && now - cursors.lastSeen >= limits.ttl) return true
 	if (limits.lifetime !== undefined && now - cursors.createdAt >= limits.lifetime) return true
@@ -648,7 +548,8 @@ export function sessionExpired(
  * projection a durable store's `set` writes to disk.
  *
  * @param session - The session to snapshot
- * @returns A plain-object copy of `session.data`, keyed alongside `session.id`
+ * @returns A {@link SessionSnapshot} whose `data` is a plain-object copy of
+ * `session.data`, keyed alongside `session.id`
  *
  * @remarks
  * `data` is built on a null-prototype object (`Object.create(null)`), never
@@ -662,10 +563,7 @@ export function sessionExpired(
  * snapshotSession(session) // { id: 'abc', data: { userId: 'u_1' } }
  * ```
  */
-export function snapshotSession(session: SessionInterface): {
-	readonly id: string
-	readonly data: Record<string, unknown>
-} {
+export function snapshotSession(session: SessionInterface): SessionSnapshot {
 	const data: Record<string, unknown> = Object.create(null)
 	for (const [key, value] of session.data) data[key] = value
 	return { id: session.id, data }

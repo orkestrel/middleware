@@ -1,14 +1,6 @@
 import type { MultipartReason } from './types.js'
-import { MULTIPART_REASON_STATUS } from './constants.js'
-
-// ============================================================================
-//  @orkestrel/middleware/server — MultipartError (AGENTS §5 errors.ts).
-//  Modeled on the peer `@orkestrel/server` HTTPError class shape (status +
-//  message + optional context) — MultipartError additionally carries the
-//  `reason` axis createMultipart's caller narrows on, mapped to its HTTP
-//  status via {@link MULTIPART_REASON_STATUS}: 'limit' → 413, 'malformed' →
-//  400, 'rejected' → 415.
-// ============================================================================
+import { HTTPError } from '@orkestrel/server'
+import { MULTIPART_ERROR_BRAND, MULTIPART_REASON_STATUS } from './constants.js'
 
 /**
  * An error `createMultipart` throws when a streamed multipart request fails
@@ -16,10 +8,13 @@ import { MULTIPART_REASON_STATUS } from './constants.js'
  * bytes are rejected by the configured `allowed` MIME list.
  *
  * @remarks
- * Carries the HTTP `status` derived from `reason` (limit → 413, malformed →
- * 400, rejected → 415) and an optional `context` record. Rendered by
- * `createBoundary` like any other `HTTPError`-shaped throw. Narrow a caught
- * value with {@link isMultipartError}.
+ * Extends the peer `HTTPError`, which already publishes the `status`,
+ * `context`, and brand members every fleet error of this shape carries, and
+ * adds the `reason` axis a caller narrows on. `status` is derived from
+ * `reason` through {@link MULTIPART_REASON_STATUS} (limit → 413, malformed →
+ * 400, rejected → 415), so `createBoundary` — or any other `isHTTPError`-aware
+ * renderer — maps it without knowing this face's error type. Narrow a caught
+ * value to the richer type with {@link isMultipartError}.
  *
  * @example
  * ```ts
@@ -28,23 +23,18 @@ import { MULTIPART_REASON_STATUS } from './constants.js'
  * throw new MultipartError('limit', 'too many files')
  * ```
  */
-export class MultipartError extends Error {
-	readonly status: number
+export class MultipartError extends HTTPError {
 	readonly reason: MultipartReason
-	readonly context?: Readonly<Record<string, unknown>>
+	readonly [MULTIPART_ERROR_BRAND] = true
 
 	constructor(
 		reason: MultipartReason,
 		message: string,
 		context?: Readonly<Record<string, unknown>>,
 	) {
-		super(message)
-		this.status = MULTIPART_REASON_STATUS[reason]
+		super(MULTIPART_REASON_STATUS[reason], message, context)
+		this.name = 'MultipartError'
 		this.reason = reason
-		if (context !== undefined) this.context = context
-		Object.defineProperty(this, Symbol.for('@orkestrel/middleware.MultipartError'), {
-			value: true,
-		})
 	}
 }
 
@@ -53,8 +43,8 @@ export class MultipartError extends Error {
  *
  * @remarks
  * Structural, not `instanceof` — tests that `value` is a non-null object
- * carrying the module-scope brand, a numeric `status`, and a `reason` in the
- * parser's set of reason strings (`'limit' | 'malformed' | 'rejected'`).
+ * carrying {@link MULTIPART_ERROR_BRAND}, a numeric `status`, and a `reason`
+ * in the parser's set of reason strings (`'limit' | 'malformed' | 'rejected'`).
  * Total: never throws, returns `false` for any off-shape input.
  *
  * @param value - The value to test (typically a `catch` binding)
@@ -73,7 +63,7 @@ export class MultipartError extends Error {
  */
 export function isMultipartError(value: unknown): value is MultipartError {
 	if (typeof value !== 'object' || value === null) return false
-	if (!(Symbol.for('@orkestrel/middleware.MultipartError') in value)) return false
+	if (!(MULTIPART_ERROR_BRAND in value)) return false
 	if (!('status' in value) || !('reason' in value)) return false
 	if (typeof value.status !== 'number') return false
 	if (value.reason !== 'limit' && value.reason !== 'malformed' && value.reason !== 'rejected')

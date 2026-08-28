@@ -1,6 +1,7 @@
 export * from './types.js'
 export * from './constants.js'
 export * from './helpers.js'
+export * from './validators.js'
 export * from './shapers.js'
 export * from './Session.js'
 export * from './stores/MemorySessionStore.js'

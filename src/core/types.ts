@@ -6,20 +6,9 @@ import type {
 	TokenSecret,
 } from '@orkestrel/server'
 
-// ============================================================================
-//  @orkestrel/middleware — core type surface (AGENTS §5 source of truth).
-//  Every battery option bag, its state slice (when it stashes one), and the
-//  session/transport/store seams from PROPOSAL.md §4, adapted per the
-//  orchestrator's seam rulings (see the dispatch header). Peer types
-//  (`TokenSecret`, `CookieOptions`, `Encoding`, `MiddlewareContext`,
-//  `MiddlewareHandler`, `HTTPError`, …) are imported from `@orkestrel/server`
-//  and never redeclared here.
-// ============================================================================
-
 /**
  * Options for `createBoundary` — the outermost error-rendering battery.
  *
- * @param options - See fields below
  * @remarks
  * - `expose` — when `true`, a non-`HTTPError` throw's `error.message` is
  *   surfaced in the 500 body instead of a generic message. Defaults to
@@ -54,7 +43,6 @@ export interface TelemetryEntry {
 /**
  * Options for `createTelemetry` — the request timing/access-log seam.
  *
- * @param options - See fields below
  * @remarks
  * - `record` — invoked once per request with the settled {@link
  *   TelemetryEntry}; its own throw is swallowed so a broken sink can never
@@ -67,7 +55,6 @@ export interface TelemetryOptions {
 /**
  * Options for `createCompression` — response-body compression.
  *
- * @param options - See fields below
  * @remarks
  * - `threshold` — the minimum buffered body size (bytes) worth compressing;
  *   defaults to {@link DEFAULT_COMPRESSION_THRESHOLD}.
@@ -85,6 +72,30 @@ export interface CompressionOptions {
 }
 
 /**
+ * The already-resolved settings `compressResponse` runs its shared
+ * negotiate → skip → threshold → compress skeleton against — the shape each
+ * face's `createCompression` builds from its own option bag.
+ *
+ * @remarks
+ * - `threshold` — the minimum body size (bytes) worth compressing.
+ * - `filter` — the per-response opt-out predicate; absent allows every
+ *   response.
+ * - `encodings` — the codings offered, in preference order, already narrowed
+ *   to what this face can actually produce.
+ * - `compress` — the runtime's compression primitive for one negotiated
+ *   coding.
+ */
+export interface CompressResponseOptions {
+	readonly threshold: number
+	readonly filter?: (request: Request, response: Response) => boolean
+	readonly encodings: readonly Encoding[]
+	readonly compress: (
+		bytes: Uint8Array<ArrayBuffer>,
+		encoding: Exclude<Encoding, 'identity'>,
+	) => Promise<Uint8Array<ArrayBuffer>>
+}
+
+/**
  * `createSecurity`'s `identifier` sub-option — request-id minting/echo
  * policy, or `false` to disable the feature entirely.
  *
@@ -98,7 +109,6 @@ export type SecurityIdentifierOptions = { readonly trust?: boolean } | false
 /**
  * Options for `createSecurity` — the security-headers + request-id battery.
  *
- * @param options - See fields below
  * @remarks
  * Every header option is `string | false` (a custom value replaces the
  * default wholesale, `false` omits the header) unless noted; unset uses the
@@ -134,7 +144,6 @@ export interface SecurityOptions {
 /**
  * Options for `createCors` — Cross-Origin Resource Sharing.
  *
- * @param options - See fields below
  * @remarks
  * - `origin` — the allowed origin(s): `'*'` (default), a single origin
  *   string, or an allow-list `readonly string[]` (reflects the request
@@ -152,7 +161,6 @@ export interface CorsOptions {
 /**
  * Options for `createDeadline` — the application-level per-request deadline.
  *
- * @param options - See fields below
  * @remarks
  * - `ms` — the deadline in milliseconds, armed via `@orkestrel/timeout` and
  *   linked to the request's `signal` via `@orkestrel/abort`'s `linkSignal`.
@@ -167,7 +175,6 @@ export interface DeadlineOptions {
 /**
  * Options for `createForwarded` — the trusted-proxy client-IP resolver.
  *
- * @param options - See fields below
  * @remarks
  * Construction requires EXACTLY ONE of the two forms (a `TypeError` guards
  * both-set and neither-set):
@@ -182,7 +189,6 @@ export type ForwardedOptions =
 /**
  * Options for `createETag` — dynamic response ETag + conditional GET.
  *
- * @param options - See fields below
  * @remarks
  * - `weak` — mint a weak `W/"…"` ETag (default `true`) or a strong `"…"` one
  *   (`false`).
@@ -194,7 +200,6 @@ export interface ETagOptions {
 /**
  * Options for `createBearer` — bearer-token authentication.
  *
- * @param options - See fields below
  * @remarks
  * - `secret` — the {@link TokenSecret} `verifyToken` checks the extracted
  *   token against (rotation-aware).
@@ -214,7 +219,6 @@ export interface BearerOptions {
  * Options for `createLimiter` — fixed-window rate limiting.
  *
  * @typeParam TState - The consumer's opaque per-request state type `key` reads
- * @param options - See fields below
  * @remarks
  * - `max` — the number of requests admitted per key per `window`.
  * - `window` — the window length in milliseconds.
@@ -346,7 +350,7 @@ export interface BodyState {
 
 /**
  * The pluggable session persistence seam `createSession`'s `store` option
- * implements — a point-access store (AGENTS §5) keyed by session id.
+ * implements — a point-access store keyed by session id.
  *
  * @typeParam S - The session data payload type
  * @remarks
@@ -354,6 +358,13 @@ export interface BodyState {
  * same seam `createSession`'s `clock` option feeds) so a store can apply its
  * own idle/absolute expiry against the caller's injected time rather than
  * its own wall clock. `delete` of an absent id is a no-op, never throws.
+ *
+ * `get` must resolve a value satisfying {@link isSession} — an `id` string
+ * and a `data` `Map` — or `undefined`. `createSession` dereferences the
+ * resolved value's `id` and `data` without re-checking them, so a store that
+ * resolves an off-shape value corrupts the battery's own state rather than
+ * being refused at the seam. The shipped `DatabaseSessionStore` enforces this
+ * with the caller-supplied guard it is constructed with.
  */
 export interface SessionStoreInterface<S> {
 	get(id: string, now: number): Promise<S | undefined>
@@ -362,15 +373,65 @@ export interface SessionStoreInterface<S> {
 }
 
 /**
+ * The idle and absolute-lifetime thresholds a session store enforces —
+ * `sessionExpired`'s limits argument and both shipped stores' construction
+ * options.
+ *
+ * @remarks
+ * - `ttl` — the idle timeout in milliseconds; absent means no idle expiry.
+ * - `lifetime` — the absolute lifetime in milliseconds from the first `set`;
+ *   absent means no absolute expiry.
+ */
+export interface SessionLimits {
+	readonly ttl?: number | undefined
+	readonly lifetime?: number | undefined
+}
+
+/**
+ * The per-session instants a store stamps and `sessionExpired` measures
+ * against.
+ *
+ * @remarks
+ * - `lastSeen` — the instant of the most recent live read or write.
+ * - `createdAt` — the instant of the first `set`, preserved across every
+ *   later re-`set` of the same id.
+ */
+export interface SessionCursors {
+	readonly lastSeen: number
+	readonly createdAt: number
+}
+
+/**
  * One persisted session row — an opaque snapshot column plus the store-owned
  * idle/absolute-lifetime cursors, the shape a {@link DatabaseSessionStore}'s
  * backing table holds.
  */
-export interface SessionRow {
+export interface SessionRow extends SessionCursors {
 	readonly id: string
 	readonly session: unknown
-	readonly lastSeen: number
-	readonly createdAt: number
+}
+
+/**
+ * One in-process session entry — the payload {@link MemorySessionStore} holds
+ * against an id, alongside the same cursors a persisted row carries.
+ *
+ * @typeParam S - The session data payload type
+ */
+export interface SessionEntry<S> extends SessionCursors {
+	readonly session: S
+}
+
+/**
+ * A session's serializable projection — the value `snapshotSession` produces
+ * and a durable store's `set` writes.
+ *
+ * @remarks
+ * `data` is a null-prototype record so a session key literally named
+ * `__proto__` round-trips as an own enumerable property.
+ */
+export interface SessionSnapshot {
+	readonly id: string
+	readonly data: Readonly<Record<string, unknown>>
 }
 
 /**
@@ -398,7 +459,6 @@ export interface SessionTransport {
  *
  * @typeParam S - The session data payload type `create` produces
  * @typeParam TState - The consumer's opaque per-request state type `mint` reads
- * @param options - See fields below
  * @remarks
  * - `transport` — the {@link SessionTransport} (`createCookieTransport(...)`,
  *   `createHeaderTransport(...)`, or a custom one).
@@ -440,7 +500,6 @@ export interface SessionOptions<S, TState = unknown> {
 /**
  * Options for `createCookieTransport` — the signed-cookie {@link SessionTransport}.
  *
- * @param options - See fields below
  * @remarks
  * - `name` — the cookie name; defaults to {@link DEFAULT_SESSION_COOKIE}.
  * - `secret` — the {@link TokenSecret} the session id is signed with (`signToken`).
@@ -456,7 +515,6 @@ export interface CookieTransportOptions {
 /**
  * Options for `createHeaderTransport` — the bare-header {@link SessionTransport}.
  *
- * @param options - See fields below
  * @remarks
  * - `header` — the header carrying the session id; defaults to
  *   {@link DEFAULT_SESSION_HEADER}.
@@ -468,7 +526,6 @@ export interface HeaderTransportOptions {
 /**
  * Options for `createMemorySessionStore` — the default in-process {@link SessionStoreInterface}.
  *
- * @param options - See fields below
  * @remarks
  * - `ttl` — the idle timeout in milliseconds (lazy eviction on `get`).
  * - `lifetime` — the absolute lifetime in milliseconds from first `set`
@@ -482,9 +539,7 @@ export interface HeaderTransportOptions {
  *   sink only — it must never call back into the store (no re-entrant
  *   `get`/`set`); mutations during eviction are unsupported.
  */
-export interface MemorySessionStoreOptions {
-	readonly ttl?: number
-	readonly lifetime?: number
+export interface MemorySessionStoreOptions extends SessionLimits {
 	readonly capacity?: number
 	readonly evict?: (id: string) => void
 }
@@ -500,7 +555,6 @@ export interface CSRFState {
 /**
  * Options for `createCSRF` — session-bound double-submit CSRF protection.
  *
- * @param options - See fields below
  * @remarks
  * - `secret` — the {@link TokenSecret} the CSRF token is signed with.
  * - `cookie` — the signed-cookie name; defaults to {@link DEFAULT_CSRF_COOKIE}.

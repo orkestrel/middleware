@@ -1,12 +1,5 @@
 import type { Encoding } from '@orkestrel/server'
 
-// ============================================================================
-//  @orkestrel/middleware — battery defaults (AGENTS §5 constants file).
-//  Every default named in PROPOSAL.md §4 and the salvaged spec sheet.
-//  Frozen where the value is a record/array so a consumer can read but never
-//  mutate the shared default.
-// ============================================================================
-
 /** Default minimum buffered body size (bytes) `createCompression` will compress. */
 export const DEFAULT_COMPRESSION_THRESHOLD = 1024
 

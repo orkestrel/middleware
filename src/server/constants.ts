@@ -1,12 +1,5 @@
-import type { MultipartReason } from './types.js'
-
-// ============================================================================
-//  @orkestrel/middleware/server — node-face defaults (AGENTS §5
-//  constants.ts). Not named in the original dispatch's owned-file list, but
-//  added per AGENTS §5 (constants are centralized, never inlined) — the
-//  natural completion of the pattern U1 already established on the core
-//  face. Documented as a builder latitude decision, not a deviation.
-// ============================================================================
+import type { MultipartReason, StaticOptions } from './types.js'
+import type { Encoding } from '@orkestrel/server'
 
 /** The HTTP status `createMultipart` renders for each {@link MultipartReason}. */
 export const MULTIPART_REASON_STATUS: Readonly<Record<MultipartReason, number>> = Object.freeze({
@@ -15,11 +8,31 @@ export const MULTIPART_REASON_STATUS: Readonly<Record<MultipartReason, number>> 
 	rejected: 415,
 })
 
+/**
+ * The `Symbol.for` brand {@link MultipartError} carries so
+ * {@link isMultipartError} recognizes an instance across duplicate copies of
+ * this package — a registry symbol rather than a module-local `Symbol()`,
+ * which would mint an unequal symbol per copy.
+ */
+export const MULTIPART_ERROR_BRAND: unique symbol = Symbol.for(
+	'@orkestrel/middleware.MultipartError',
+)
+
 /** `createStatic`'s default directory-index filename. */
 export const DEFAULT_STATIC_INDEX = 'index.html'
 
 /** `createStatic`'s `fallback: true` default excluded path prefix. */
 export const DEFAULT_STATIC_FALLBACK_EXCLUDE = '/api'
+
+/** `createStatic`'s default policy for a path carrying a dotfile segment. */
+export const DEFAULT_STATIC_DOTFILES: NonNullable<StaticOptions['dotfiles']> = 'ignore'
+
+/**
+ * The content-codings the node face's `createCompression` offers — the two
+ * `node:zlib` guarantees on every Node runtime, so this face never
+ * feature-detects.
+ */
+export const NODE_COMPRESSION_ENCODINGS: readonly Encoding[] = Object.freeze(['gzip', 'deflate'])
 
 /** The MIME type served when a file extension has no known mapping. */
 export const DEFAULT_CONTENT_TYPE = 'application/octet-stream'
