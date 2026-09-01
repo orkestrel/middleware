@@ -143,9 +143,15 @@ describe('resolveStaticFallbackPath', () => {
 		).toBe(join(root, 'index.html'))
 	})
 
-	it('rejects non-navigation methods, extensions, excluded paths, and accept values', () => {
+	it('resolves the same shell for HEAD as for GET, so a navigation probe agrees with its body', () => {
 		expect(
 			resolveStaticFallbackPath(root, 'index.html', '/api', 'HEAD', '/dashboard', 'text/html'),
+		).toBe(join(root, 'index.html'))
+	})
+
+	it('rejects non-navigation methods, extensions, excluded paths, and accept values', () => {
+		expect(
+			resolveStaticFallbackPath(root, 'index.html', '/api', 'POST', '/dashboard', 'text/html'),
 		).toBeUndefined()
 		expect(
 			resolveStaticFallbackPath(root, 'index.html', '/api', 'GET', '/app.js', 'text/html'),

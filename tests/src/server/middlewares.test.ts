@@ -177,6 +177,42 @@ describe('createAssets', () => {
 		expect(cached.headers.get('content-length')).toBeNull()
 	})
 
+	it('retains a successful read for the factory lifetime while an unknown key is read again', async () => {
+		const source = createAssetSource(
+			new Map([['app.js', { body: new TextEncoder().encode('bounded') }]]),
+		)
+		const handler = createAssets({ source: source.source })
+		const first = await handler(
+			buildRequest('/app.js'),
+			createTestContext(buildRequest('/app.js'), {}),
+			async () => new Response('miss'),
+		)
+		expect(await first.text()).toBe('bounded')
+		const second = await handler(
+			buildRequest('/app.js'),
+			createTestContext(buildRequest('/app.js'), {}),
+			async () => new Response('miss'),
+		)
+		expect(await second.text()).toBe('bounded')
+		// The retained entry answers the repeat, so a key `read` has answered
+		// once is never read again — the reason `read` owes a BOUNDED key set.
+		expect(source.paths).toEqual(['app.js'])
+
+		const miss = await handler(
+			buildRequest('/absent.js'),
+			createTestContext(buildRequest('/absent.js'), {}),
+			async () => new Response('miss'),
+		)
+		expect(await miss.text()).toBe('miss')
+		const missAgain = await handler(
+			buildRequest('/absent.js'),
+			createTestContext(buildRequest('/absent.js'), {}),
+			async () => new Response('miss'),
+		)
+		expect(await missAgain.text()).toBe('miss')
+		expect(source.paths).toEqual(['app.js', 'absent.js', 'absent.js'])
+	})
+
 	it('decodes valid keys and refuses malformed, climbing, empty, backslash, and dotfile keys', async () => {
 		const asset = { body: new TextEncoder().encode('asset') }
 		const source = createAssetSource(new Map([['nested/app shell.js', asset]]), asset)
@@ -446,6 +482,126 @@ describe('createStatic', () => {
 			expect(await apifooResponse.text()).toContain('root index')
 		} finally {
 			fixture.scratch.destroy()
+		}
+	})
+
+	it("SPA fallback answers through the shell handle's own fstat headers on GET, HEAD, and revalidation", async () => {
+		const fixture = buildStaticFixture()
+		try {
+			const handler = createStatic({
+				root: fixture.scratch.path,
+				fallback: true,
+				cache: 60,
+				etag: true,
+			})
+			const primary = await handler(
+				buildRequest('/index.html'),
+				createTestContext(buildRequest('/index.html'), {}),
+				async () => new Response('miss'),
+			)
+			expect(primary.status).toBe(200)
+			const shellETag = primary.headers.get('etag')
+			if (shellETag === null) throw new Error('expected an ETag on the primary shell response')
+			const shellLength = primary.headers.get('content-length')
+			await primary.text()
+
+			const spaRequest = new Request('http://test.local/dashboard', {
+				headers: { accept: 'text/html' },
+			})
+			const spa = await handler(
+				spaRequest,
+				createTestContext(spaRequest, {}),
+				async () => new Response('miss'),
+			)
+			expect(spa.status).toBe(200)
+			expect(spa.headers.get('etag')).toBe(shellETag)
+			expect(spa.headers.get('cache-control')).toBe('max-age=60')
+			expect(spa.headers.get('content-length')).toBe(shellLength)
+			expect(spa.headers.get('accept-ranges')).toBe('bytes')
+			expect(await spa.text()).toContain('root index')
+
+			const headRequest = new Request('http://test.local/dashboard', {
+				method: 'HEAD',
+				headers: { accept: 'text/html' },
+			})
+			const head = await handler(
+				headRequest,
+				createTestContext(headRequest, {}),
+				async () => new Response('miss', { status: 404 }),
+			)
+			expect(head.status).toBe(200)
+			expect(head.headers.get('etag')).toBe(shellETag)
+			expect(head.headers.get('cache-control')).toBe('max-age=60')
+			expect(head.headers.get('content-length')).toBe(shellLength)
+			expect(await head.text()).toBe('')
+
+			const revalidateRequest = new Request('http://test.local/dashboard', {
+				headers: { accept: 'text/html', 'if-none-match': shellETag },
+			})
+			const revalidated = await handler(
+				revalidateRequest,
+				createTestContext(revalidateRequest, {}),
+				async () => new Response('miss'),
+			)
+			expect(revalidated.status).toBe(304)
+			expect(revalidated.headers.get('etag')).toBe(shellETag)
+			expect(await revalidated.text()).toBe('')
+
+			const rangeRequest = new Request('http://test.local/dashboard', {
+				headers: { accept: 'text/html', range: 'bytes=0-9' },
+			})
+			const ranged = await handler(
+				rangeRequest,
+				createTestContext(rangeRequest, {}),
+				async () => new Response('miss'),
+			)
+			expect(ranged.status).toBe(206)
+			expect(ranged.headers.get('content-range')).toBe(`bytes 0-9/${shellLength ?? ''}`)
+			expect(ranged.headers.get('content-length')).toBe('10')
+			expect(await ranged.text()).toBe('<!doctype ')
+		} finally {
+			fixture.scratch.destroy()
+		}
+	})
+
+	it('SPA fallback serves the configured index even when dotfiles deny that same path directly', async () => {
+		const scratch = createScratch({
+			prefix: 'middleware-dotshell-',
+			files: {
+				'.shell.html': '<!doctype html><html><body>configured shell</body></html>',
+				'.env': 'SECRET=hidden',
+			},
+		})
+		try {
+			const handler = createStatic({
+				root: scratch.path,
+				index: '.shell.html',
+				dotfiles: 'deny',
+				fallback: true,
+			})
+			const directRequest = new Request('http://test.local/.shell.html', {
+				headers: { accept: 'text/html' },
+			})
+			await expect(
+				handler(
+					directRequest,
+					createTestContext(directRequest, {}),
+					async () => new Response('miss'),
+				),
+			).rejects.toSatisfy((error: unknown) => error instanceof HTTPError && error.status === 403)
+
+			const spaRequest = new Request('http://test.local/dashboard', {
+				headers: { accept: 'text/html' },
+			})
+			const spa = await handler(
+				spaRequest,
+				createTestContext(spaRequest, {}),
+				async () => new Response('miss'),
+			)
+			expect(spa.status).toBe(200)
+			expect(await spa.text()).toContain('configured shell')
+		} finally {
+			scratch.destroy()
 		}
 	})
 

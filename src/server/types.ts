@@ -19,6 +19,8 @@ export interface Asset {
  * @remarks
  * A successful result is cached by `createAssets`; later source changes do
  * not alter that path's response. A miss may be read again on a later request.
+ * `read` therefore owes a BOUNDED key set: that cache retains every
+ * successful result for the factory's lifetime and evicts nothing.
  */
 export interface AssetSourceInterface {
 	/**
@@ -34,7 +36,12 @@ export interface AssetSourceInterface {
  * Options for `createAssets` — in-memory identity/Brotli asset serving.
  *
  * @remarks
- * - `source` — the required in-memory asset reader.
+ * - `source` — the required in-memory asset reader. It MUST answer a bounded
+ *   key set and return `undefined` for every key outside it, because
+ *   `createAssets` retains every successful result for the factory's lifetime
+ *   and evicts nothing. A `source` that synthesizes a representation for an
+ *   arbitrary key therefore grows that cache without limit under request
+ *   pressure.
  */
 export interface AssetOptions {
 	readonly source: AssetSourceInterface
@@ -48,8 +55,10 @@ export interface AssetOptions {
  *   construction. REQUIRED.
  * - `prefix` — a URL path prefix stripped (on a segment boundary) before
  *   resolving under `root`.
- * - `index` — the filename served for a directory hit; defaults to
- *   {@link DEFAULT_STATIC_INDEX}.
+ * - `index` — the filename served for a directory hit and by the SPA
+ *   fallback; defaults to {@link DEFAULT_STATIC_INDEX}. The fallback serves
+ *   it whatever `dotfiles` is set to, because this path is operator-
+ *   configured rather than request-derived.
  * - `dotfiles` — the policy for a path with a dotfile segment: `'ignore'`
  *   (falls through to `next()`), `'deny'` (403), or `'allow'` (serves it);
  *   defaults to {@link DEFAULT_STATIC_DOTFILES}.
@@ -57,7 +66,11 @@ export interface AssetOptions {
  * - `etag` — whether to compute and honor a weak file `ETag`; defaults to `true`.
  * - `fallback` — SPA fallback: `false` (default, off), `true` (on, excluding
  *   {@link DEFAULT_STATIC_FALLBACK_EXCLUDE}), or `{ exclude }` for a custom
- *   excluded prefix.
+ *   excluded prefix. An eligible `GET` or `HEAD` navigation miss answers with
+ *   `index` through the SAME handle-`fstat` header block a directly requested
+ *   file answers through, so `cache`, `etag`, conditional revalidation,
+ *   `HEAD`, and ranges are identical on both routes; `index` reaches the
+ *   client through this route whatever `dotfiles` is set to.
  */
 export interface StaticOptions {
 	readonly root: string

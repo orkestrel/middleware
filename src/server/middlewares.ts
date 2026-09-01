@@ -312,16 +312,24 @@ export function createStatic<TState>(options: StaticOptions): MiddlewareHandler<
 			} catch {
 				return next()
 			}
+			let shellInfo: Stats
 			try {
-				const body = streamFile(shellHandle)
-				return new Response(body, {
-					status: 200,
-					headers: new Headers({ 'content-type': lookupContentType(shellReal) }),
-				})
-			} catch (error) {
+				shellInfo = await shellHandle.stat()
+			} catch {
 				await shellHandle.close().catch(() => {})
-				throw error
+				return next()
 			}
+			if (!shellInfo.isFile()) {
+				await shellHandle.close().catch(() => {})
+				return next()
+			}
+			// The shell answers through the SAME response block the primary path
+			// uses, so `cache`, `etag`, conditional revalidation, `HEAD`, and
+			// ranges are computed from the shell handle's own `fstat` and cannot
+			// diverge between a served file and the shell served in its place.
+			resolvedPath = shellReal
+			handle = shellHandle
+			info = shellInfo
 		}
 
 		if (handle === undefined || info === undefined) return next()

@@ -53,10 +53,16 @@ export function isUnderPath(pathname: string, prefix: string): boolean {
  * Resolve the fixed SPA shell path when a static-file miss is eligible for
  * fallback.
  *
+ * @remarks
+ * `GET` and `HEAD` are both eligible, and resolve the SAME shell: `HEAD` is
+ * defined as `GET` without a body (RFC 9110 §9.3.2), so a navigation probe
+ * that answered `404` while its `GET` answered `200` would report a resource
+ * the very next request serves.
+ *
  * @param root - The configured static root
  * @param index - The configured shell filename
  * @param exclude - The URL prefix excluded from fallback
- * @param method - The request method
+ * @param method - The request method; only `GET` and `HEAD` are eligible
  * @param pathname - The request pathname
  * @param accept - The request's `Accept` header value
  * @returns The fixed shell path, or `undefined` when fallback is ineligible
@@ -75,7 +81,7 @@ export function resolveStaticFallbackPath(
 	pathname: string,
 	accept: string,
 ): string | undefined {
-	if (method !== 'GET') return undefined
+	if (method !== 'GET' && method !== 'HEAD') return undefined
 	if (extname(pathname) !== '') return undefined
 	if (!accept.includes('text/html') && !accept.includes('*/*')) return undefined
 	if (isUnderPath(pathname, exclude)) return undefined

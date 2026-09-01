@@ -721,6 +721,12 @@ Return `{ body, encoding: 'br' }` when `body` contains Brotli bytes.
 decompression for every other client. Both responses share an identity-body
 ETag. Gzip is not offered.
 
+`read` must answer a bounded key set and return `undefined` for every key
+outside it. `createAssets` retains every successful result for the factory's
+lifetime and evicts nothing, so a `read` that synthesizes a representation for
+an arbitrary key grows that cache without limit under request pressure. A miss
+is never retained, so an absent key is read again on its next request.
+
 ### Static: SPA fallback
 
 ```ts
@@ -728,6 +734,20 @@ import { createStatic } from '@orkestrel/middleware/server'
 
 const serveApp = createStatic({ root: '/srv/public', fallback: true }) // excludes '/api' by default
 ```
+
+An eligible miss is a `GET` or `HEAD` request for an extensionless pathname
+outside the excluded prefix whose `Accept` admits `text/html`. It answers with
+`index` through the same opened-handle `fstat` header block a directly
+requested file answers through. `Cache-Control`, `ETag`, `Content-Length`, and
+`Accept-Ranges` therefore carry the shell's own facts, `If-None-Match`
+revalidates to `304`, and `Range` serves `206` — identically on both routes. A
+`HEAD` navigation resolves the same shell as its `GET` and answers `200` with
+those headers and no body.
+
+The shell path is a fixed `root`-plus-`index` join rather than a request-derived
+path, so the `dotfiles` policy screens the request pathname alone. A dotfile
+`index` is refused when it is requested directly under `dotfiles: 'deny'` and is
+still served through the fallback, because the operator configured that path.
 
 ### Seam adaptations — read before wiring sessions or multipart
 
