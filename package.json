@@ -89,7 +89,7 @@
 	"dependencies": {
 		"@orkestrel/abort": "^0.0.8",
 		"@orkestrel/budget": "^0.0.8",
-		"@orkestrel/contract": "^0.0.13",
+		"@orkestrel/contract": "^0.0.15",
 		"@orkestrel/timeout": "^0.0.8"
 	},
 	"devDependencies": {
