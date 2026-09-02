@@ -12,7 +12,12 @@ import type {
 } from './types.js'
 import type { Encoding, MiddlewareContext } from '@orkestrel/server'
 import { isFiniteNumber } from '@orkestrel/contract'
-import { clientRateKey, isCompressibleType, mergeVary, negotiateEncoding } from '@orkestrel/server'
+import {
+	computeClientKey,
+	isCompressibleType,
+	mergeVary,
+	negotiateEncoding,
+} from '@orkestrel/server'
 
 /**
  * Derive `createLimiter`'s default rate-limit bucket key from a request's
@@ -22,7 +27,7 @@ import { clientRateKey, isCompressibleType, mergeVary, negotiateEncoding } from 
  * Prefers a verified bearer token ({@link BearerState.token}) as
  * `token:<value>`; else a resolved client IP ({@link ClientState.client.ip},
  * set when `createForwarded` is mounted) or the raw socket peer
- * ({@link ConnectionState.connection.ip}) collapsed via `clientRateKey`
+ * ({@link ConnectionState.connection.ip}) collapsed through `computeClientKey`
  * (IPv6 to its `/64` network) as `ip:<key>`; else the literal `ip:unknown`.
  * Never reads `X-Forwarded-For` itself — that trust decision belongs solely
  * to `createForwarded`.
@@ -39,7 +44,7 @@ import { clientRateKey, isCompressibleType, mergeVary, negotiateEncoding } from 
 export function resolveKey(state: BearerState & ClientState & ConnectionState): string {
 	if (state.token !== undefined) return `token:${state.token}`
 	const ip = state.client?.ip ?? state.connection?.ip
-	if (ip !== undefined) return `ip:${clientRateKey(ip)}`
+	if (ip !== undefined) return `ip:${computeClientKey(ip)}`
 	return 'ip:unknown'
 }
 

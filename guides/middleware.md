@@ -88,7 +88,7 @@ const handle = compose<State>([boundary, security], async (_request, context) =>
 | `IdentifierState`           | interface | `{ readonly identifier?: string }` — the state slice `createSecurity` stashes.                         |
 | `Client`                    | interface | `{ readonly ip?: string }` — the resolved client connection facts.                                     |
 | `ClientState`               | interface | `{ readonly client?: Client }` — the state slice `createForwarded` stashes.                            |
-| `ConnectionState`           | interface | `{ readonly connection?: ConnectionInfo }` — the socket-fact state slice `resolveKey` reads.           |
+| `ConnectionState`           | interface | `{ readonly connection?: Connection }` — the socket-fact state slice `resolveKey` reads.               |
 | `SessionInterface`          | interface | `{ id; state }` plus `set` / `delete` / `clear` — a server-managed session's public surface.           |
 | `SessionControlInterface`   | interface | `regenerate()` / `destroy()` — the mid-handler session control handle.                                 |
 | `SessionState`              | interface | `{ readonly session?; readonly control? }` — the state slice `createSession` stashes.                  |
@@ -418,8 +418,8 @@ prevents:
     `createForwarded`'s already-resolved `ClientState` does, when mounted) —
     so an unmounted `createForwarded` leaves XFF completely untrusted;
     same-socket requests with different XFF values still share one bucket
-    without it; IPv6 addresses collapse to their `/64` network via
-    `clientRateKey`; the exhausted check runs BEFORE `consume`, admitting
+    without it; IPv6 addresses collapse to their `/64` network through
+    `computeClientKey`; the exhausted check runs BEFORE `consume`, admitting
     exactly `max` requests per window; capacity eviction is true LRU — every
     access (not just insertion) refreshes a key's recency, so an attacker
     re-requesting a hot key can never keep it evicted-and-reset; a bucket

@@ -1,5 +1,5 @@
 import type {
-	ConnectionInfo,
+	Connection,
 	CookieOptions,
 	Encoding,
 	MiddlewareContext,
@@ -275,7 +275,7 @@ export interface IdentifierState {
  * `state` option.
  */
 export interface ConnectionState {
-	readonly connection?: ConnectionInfo
+	readonly connection?: Connection
 }
 
 /**

@@ -80,7 +80,7 @@ describe('resolveKey', () => {
 		expect(resolveKey({})).toBe('ip:unknown')
 	})
 
-	it('collapses an IPv6 client IP to its /64 network via clientRateKey', () => {
+	it('collapses an IPv6 client IP to its /64 network through computeClientKey', () => {
 		expect(resolveKey({ client: { ip: '2001:db8::1' } })).toBe('ip:2001:db8:0:0::/64')
 	})
 })
