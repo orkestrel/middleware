@@ -38,16 +38,16 @@ export const NODE_COMPRESSION_ENCODINGS: readonly Encoding[] = Object.freeze(['g
 export const DEFAULT_CONTENT_TYPE = 'application/octet-stream'
 
 /** `createMultipart`'s default per-file byte-size cap. */
-export const DEFAULT_MULTIPART_FILE = 10_485_760
+export const DEFAULT_MULTIPART_FILE_SIZE = 10_485_760
 
 /** `createMultipart`'s default maximum file-part count. */
-export const DEFAULT_MULTIPART_FILES = 10
+export const DEFAULT_MULTIPART_FILE_COUNT = 10
 
 /** `createMultipart`'s default per-field byte-size cap. */
-export const DEFAULT_MULTIPART_FIELD = 65_536
+export const DEFAULT_MULTIPART_FIELD_SIZE = 65_536
 
 /** `createMultipart`'s default maximum field-part count. */
-export const DEFAULT_MULTIPART_FIELDS = 100
+export const DEFAULT_MULTIPART_FIELD_COUNT = 100
 
 /** `createMultipart`'s default combined request-body byte-size cap. */
 export const DEFAULT_MULTIPART_TOTAL = 52_428_800

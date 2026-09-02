@@ -450,10 +450,10 @@ export async function compressResponse(
  *
  * @example
  * ```ts
- * transferSessionData(oldSession, newSession)
+ * transferSessionState(oldSession, newSession)
  * ```
  */
-export function transferSessionData(from: SessionInterface, to: SessionInterface): void {
+export function transferSessionState(from: SessionInterface, to: SessionInterface): void {
 	for (const [key, value] of from.state) to.set(key, value)
 }
 
@@ -475,18 +475,18 @@ export function isPreflight(method: string, headers: Headers): boolean {
 }
 
 /**
- * A parsed client-info fact for {@link Client} — a leaf shaping helper
- * `createForwarded` uses to build its stashed slice.
+ * Builds the {@link Client} slice `createForwarded` stashes, from the
+ * resolved client IP — a leaf shaping helper.
  *
  * @param ip - The resolved client IP, if any
  * @returns The {@link Client} slice value
  *
  * @example
  * ```ts
- * buildClientInfo('203.0.113.7') // { ip: '203.0.113.7' }
+ * buildClient('203.0.113.7') // { ip: '203.0.113.7' }
  * ```
  */
-export function buildClientInfo(ip: string | undefined): Client {
+export function buildClient(ip: string | undefined): Client {
 	return { ...(ip !== undefined ? { ip } : {}) }
 }
 
@@ -571,11 +571,11 @@ export function validateSessionLimits(limits: SessionLimits | undefined): void {
  * projection a durable store's `set` writes to disk.
  *
  * @param session - The session to snapshot
- * @returns A {@link SessionSnapshot} whose `data` is a plain-object copy of
+ * @returns A {@link SessionSnapshot} whose `state` is a plain-object copy of
  * `session.state`, keyed alongside `session.id`
  *
  * @remarks
- * `data` is built on a null-prototype object (`Object.create(null)`), never
+ * `state` is built on a null-prototype object (`Object.create(null)`), never
  * a `{}` literal — a session key literally named `__proto__` must round-trip
  * as an OWN enumerable property instead of hitting `Object.prototype`'s
  * `__proto__` accessor (which would silently drop the entry and risk
@@ -583,11 +583,11 @@ export function validateSessionLimits(limits: SessionLimits | undefined): void {
  *
  * @example
  * ```ts
- * snapshotSession(session) // { id: 'abc', data: { userId: 'u_1' } }
+ * snapshotSession(session) // { id: 'abc', state: { userId: 'u_1' } }
  * ```
  */
 export function snapshotSession(session: SessionInterface): SessionSnapshot {
-	const data: Record<string, unknown> = Object.create(null)
-	for (const [key, value] of session.state) data[key] = value
-	return { id: session.id, data }
+	const state: Record<string, unknown> = Object.create(null)
+	for (const [key, value] of session.state) state[key] = value
+	return { id: session.id, state }
 }

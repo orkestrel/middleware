@@ -103,7 +103,7 @@ const handle = compose<State>([boundary, security], async (_request, context) =>
 | `SessionCursors`            | interface | `{ seen; created }` — the per-session instants `sessionExpired` measures against.                      |
 | `SessionRow`                | interface | `{ id; session; seen; created }` — one persisted session row `DatabaseSessionStore` reads/writes.      |
 | `SessionEntry`              | interface | `{ session; seen; created }` — one in-process entry `MemorySessionStore` holds.                        |
-| `SessionSnapshot`           | interface | `{ id; data }` — a session's serializable projection, the value `snapshotSession` produces.            |
+| `SessionSnapshot`           | interface | `{ id; state }` — a session's serializable projection, the value `snapshotSession` produces.           |
 | `CSRFState`                 | interface | `{ readonly csrf?: string }` — the state slice `createCSRF` stashes.                                   |
 | `CSRFOptions`               | interface | `{ secret; cookie?; header?; field?; safe? }` — options for `createCSRF`.                              |
 | `MultipartFile`             | interface | `{ field; name; size; mime; validated; status; path }` — one staged upload.                            |
@@ -160,10 +160,10 @@ const handle = compose<State>([boundary, security], async (_request, context) =>
 | `DEFAULT_STATIC_FALLBACK_EXCLUDE` | const | Default SPA-fallback excluded prefix (`'/api'`).                                       |
 | `DEFAULT_STATIC_DOTFILES`         | const | Default dotfile-segment policy (`'ignore'`).                                           |
 | `DEFAULT_CONTENT_TYPE`            | const | Fallback `Content-Type` for an unmapped extension.                                     |
-| `DEFAULT_MULTIPART_FILE`          | const | Default max size (bytes) of one uploaded file (`10_485_760`).                          |
-| `DEFAULT_MULTIPART_FILES`         | const | Default max number of file parts (`10`).                                               |
-| `DEFAULT_MULTIPART_FIELD`         | const | Default max size (bytes) of one text field (`65_536`).                                 |
-| `DEFAULT_MULTIPART_FIELDS`        | const | Default max number of text field parts (`100`).                                        |
+| `DEFAULT_MULTIPART_FILE_SIZE`     | const | Default max size (bytes) of one uploaded file (`10_485_760`).                          |
+| `DEFAULT_MULTIPART_FILE_COUNT`    | const | Default max number of file parts (`10`).                                               |
+| `DEFAULT_MULTIPART_FIELD_SIZE`    | const | Default max size (bytes) of one text field (`65_536`).                                 |
+| `DEFAULT_MULTIPART_FIELD_COUNT`   | const | Default max number of text field parts (`100`).                                        |
 | `DEFAULT_MULTIPART_TOTAL`         | const | Default max combined request body size (bytes) (`52_428_800`).                         |
 | `MULTIPART_MAX_HEADER_BLOCK`      | const | Max bytes a single multipart part header block may occupy (`16_384`).                  |
 | `MULTIPART_MAX_PREAMBLE`          | const | Max bytes scanned before the first boundary before rejecting as malformed (`65_536`).  |
@@ -193,12 +193,12 @@ const handle = compose<State>([boundary, security], async (_request, context) =>
 | `isCompressionNegotiated`   | function | Narrow a negotiated `Encoding` to one worth actually compressing with.                    |
 | `rebuildResponse`           | function | Reconstruct a `Response` with a new body, copying status/headers (with overrides).        |
 | `compressResponse`          | function | The shared compression decision skeleton — eligibility, negotiation, buffer, compress.    |
-| `transferSessionData`       | function | Copy one session's `state` onto another — the `regenerate()` state-carry.                 |
+| `transferSessionState`      | function | Copy one session's `state` onto another — the `regenerate()` state-carry.                 |
 | `sessionExpired`            | function | Whether a session's idle/absolute-lifetime thresholds have elapsed as of `now`.           |
-| `snapshotSession`           | function | Copy a session's `state` into a plain, serializable `{ id; data }` record.                |
+| `snapshotSession`           | function | Copy a session's `state` into a plain, serializable `{ id; state }` record.               |
 | `validateSessionLimits`     | function | Refuse a malformed `ttl`/`lifetime` — the construction gate both stores apply.            |
 | `isPreflight`               | function | Whether a request is a CORS preflight (`OPTIONS` + `Access-Control-Request-Method`).      |
-| `buildClientInfo`           | function | Build a `Client` from a resolved (or absent) client IP.                                   |
+| `buildClient`               | function | Build a `Client` from a resolved (or absent) client IP.                                   |
 | `equalsConstantTime`        | function | Constant-time string equality (avoids a timing oracle in the CSRF double-submit compare). |
 
 ### Validators — core
@@ -295,8 +295,9 @@ factory's lifetime. A miss may be read again later.
 
 #### `SessionInterface`
 
-The session entity's own write seam. `state` is a readonly view, so every
-write goes through a mutator and no consumer holds the entity's `Map`.
+The session entity's own write seam. `state` is a `ReadonlyMap` view:
+TypeScript refuses a write through it, and `set`, `delete`, and `clear` are
+the write path.
 
 | Method   | Returns   | Behavior                                                         |
 | -------- | --------- | ---------------------------------------------------------------- |
@@ -320,7 +321,9 @@ returns (`destroy` supersedes a prior `regenerate`).
 
 The pluggable point-access persistence seam — `get`/`set`/`delete`, every
 primitive async with a trailing injected `now`. `set` reads the id from the
-session it is handed, so no separate id is passed.
+session it is handed, so no separate id is passed. `DatabaseSessionStore`
+takes its snapshot rebuild step as a constructor argument, and
+`createDatabaseSessionStore` supplies `createRestoredSession` as that step.
 
 | Method   | Returns                   | Behavior                                                           |
 | -------- | ------------------------- | ------------------------------------------------------------------ |
@@ -483,9 +486,9 @@ prevents:
     same fail-closed cleanup; a preamble longer than
     `MULTIPART_MAX_PREAMBLE` before the first boundary is rejected
     `'malformed'` rather than scanned unbounded; an empty-filename part
-    (a file input submitted with no file chosen) is a no-op — staged then
-    discarded, never counted against `limits.file.count`, never surfaced as an
-    upload; staged files default to a
+    with a zero-byte body (a file input submitted with no file chosen) is a
+    no-op — staged then discarded, never counted against `limits.file.count`,
+    never surfaced as an upload; staged files default to a
     process-owned `mkdtemp` directory under `os.tmpdir()` locked to mode
     `0o700`, with each staged file opened at mode `0o600` (both overridable
     via `options.directory`).
@@ -663,6 +666,15 @@ await store.set(new Session('id-1'), now)
 await store.get('id-1', now) // resolves the session, or undefined if expired/removed
 ```
 
+The `session` column holds the `SessionSnapshot` JSON that `snapshotSession`
+writes and `createRestoredSession` reads back: `{ id, state }`, where `state`
+carries the session's entries. The cursor columns are `seen` and `created`. A
+table still declared with the earlier `lastSeen` and `createdAt` columns fails
+closed rather than reading a stale row as live: the table's own read guard
+refuses a row that does not satisfy `sessionColumns`, `store.get` resolves
+`undefined`, and the row stays in place until the table is migrated or
+recreated.
+
 ### Session transport seam — direct calls
 
 ```ts
@@ -817,8 +829,8 @@ still served through the fallback, because the operator configured that path.
   `resolveKey` precedence, `buildRetryAfter`/`buildRateLimitField`/
   `buildRateLimitPolicyField` exact wire strings, `matchesTrustedEntry`/
   `resolveForwardedFor` matrices, `detectEncodings`, `compressBytes`, buffering-eligibility
-  predicates, `transferSessionData`, the `isSession`/`isSessionControl`/
-  `isMultipartBody` totality guards, `isPreflight`, `buildClientInfo`,
+  predicates, `transferSessionState`, the `isSession`/`isSessionControl`/
+  `isMultipartBody` totality guards, `isPreflight`, `buildClient`,
   `validateSessionLimits`.
 - [`tests/src/core/Session.test.ts`](../tests/src/core/Session.test.ts) —
   the entity shape (`id`, an independent `state` view and its mutators per instance).

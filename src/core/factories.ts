@@ -89,7 +89,7 @@ export function createHeaderTransport(options?: HeaderTransportOptions): Session
  * Create the default in-process {@link SessionStoreInterface} — a `Map`-backed
  * store enforcing an idle timeout and an absolute lifetime.
  *
- * @typeParam S - The session data payload type
+ * @typeParam S - The session entity type
  * @param options - See {@link MemorySessionStoreOptions}
  * @returns A {@link SessionStoreInterface}
  * @throws {TypeError} When `options.ttl` or `options.lifetime` is malformed
@@ -114,7 +114,7 @@ export function createMemorySessionStore<S extends SessionInterface>(
  * the durable counterpart to `createMemorySessionStore`, over a caller-opened
  * `@orkestrel/database` table (declare it with {@link sessionColumns}).
  *
- * @typeParam S - The session data payload type
+ * @typeParam S - The session entity type
  * @param table - The backing `TableInterface<SessionRow>`
  * @param guard - A {@link Guard} narrowing a restored snapshot to `S`
  * @param options - See {@link SessionLimits}
@@ -124,7 +124,9 @@ export function createMemorySessionStore<S extends SessionInterface>(
  * @remarks
  * This factory only wraps `new DatabaseSessionStore(...)` — it never opens a
  * database or driver itself; the caller owns that lifecycle and passes in an
- * already-open table.
+ * already-open table. It supplies {@link createRestoredSession} as the store's
+ * snapshot rebuild step, which is why the store imports nothing from this
+ * file.
  *
  * @example
  * ```ts
@@ -136,7 +138,7 @@ export function createDatabaseSessionStore<S extends SessionInterface = Session>
 	guard: Guard<S>,
 	options?: SessionLimits,
 ): SessionStoreInterface<S> {
-	return new DatabaseSessionStore<S>(table, guard, options)
+	return new DatabaseSessionStore<S>(table, guard, createRestoredSession, options)
 }
 
 /**
@@ -148,14 +150,14 @@ export function createDatabaseSessionStore<S extends SessionInterface = Session>
  *
  * @example
  * ```ts
- * createRestoredSession({ id: 'abc', data: { userId: 'u_1' } }) // Session { id: 'abc' }
+ * createRestoredSession({ id: 'abc', state: { userId: 'u_1' } }) // Session { id: 'abc' }
  * createRestoredSession({ id: 1 }) // undefined
  * ```
  */
 export function createRestoredSession(value: unknown): Session | undefined {
 	if (!isRecord(value)) return undefined
-	if (!isString(value.id) || !isRecord(value.data)) return undefined
+	if (!isString(value.id) || !isRecord(value.state)) return undefined
 	const session = new Session(value.id)
-	for (const [key, entry] of Object.entries(value.data)) session.set(key, entry)
+	for (const [key, entry] of Object.entries(value.state)) session.set(key, entry)
 	return session
 }

@@ -16,10 +16,10 @@ import { deflate as zlibDeflate, gzip as zlibGzip } from 'node:zlib'
 import { isRecord } from '@orkestrel/contract'
 import {
 	DEFAULT_CONTENT_TYPE,
-	DEFAULT_MULTIPART_FIELD,
-	DEFAULT_MULTIPART_FIELDS,
-	DEFAULT_MULTIPART_FILE,
-	DEFAULT_MULTIPART_FILES,
+	DEFAULT_MULTIPART_FIELD_SIZE,
+	DEFAULT_MULTIPART_FIELD_COUNT,
+	DEFAULT_MULTIPART_FILE_SIZE,
+	DEFAULT_MULTIPART_FILE_COUNT,
 	DEFAULT_MULTIPART_TOTAL,
 	EXTENSION_TYPES,
 	RESERVED_DEVICE_NAMES,
@@ -404,12 +404,12 @@ export function multipartBoundary(contentType: string | null): string | undefine
 export function resolveMultipartLimits(limits: MultipartLimitsInput | undefined): MultipartLimits {
 	return {
 		file: {
-			size: limits?.file?.size ?? DEFAULT_MULTIPART_FILE,
-			count: limits?.file?.count ?? DEFAULT_MULTIPART_FILES,
+			size: limits?.file?.size ?? DEFAULT_MULTIPART_FILE_SIZE,
+			count: limits?.file?.count ?? DEFAULT_MULTIPART_FILE_COUNT,
 		},
 		field: {
-			size: limits?.field?.size ?? DEFAULT_MULTIPART_FIELD,
-			count: limits?.field?.count ?? DEFAULT_MULTIPART_FIELDS,
+			size: limits?.field?.size ?? DEFAULT_MULTIPART_FIELD_SIZE,
+			count: limits?.field?.count ?? DEFAULT_MULTIPART_FIELD_COUNT,
 		},
 		total: limits?.total ?? DEFAULT_MULTIPART_TOTAL,
 	}

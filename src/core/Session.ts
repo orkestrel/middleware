@@ -7,10 +7,10 @@ import type { SessionInterface } from './types.js'
  * `createRestoredSession` rebuilds one from a stored snapshot.
  *
  * @remarks
- * `state` is a readonly view over the entity's own `Map`; `set`, `delete`,
- * and `clear` are the only ways to write it, so a handler never holds a
- * mutable reference to it. `createSession` persists the state to the
- * configured store on the way out.
+ * `state` is a `ReadonlyMap` view over the entity's own `Map`: TypeScript
+ * refuses a write through it, and `set`, `delete`, and `clear` are the write
+ * path. `createSession` persists the state to the configured store on the way
+ * out.
  *
  * @example
  * ```ts

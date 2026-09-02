@@ -1,6 +1,6 @@
 import type { MiddlewareContext } from '@orkestrel/server'
 import {
-	buildClientInfo,
+	buildClient,
 	buildRateLimitField,
 	buildRateLimitPolicyField,
 	buildRetryAfter,
@@ -21,7 +21,7 @@ import {
 	Session,
 	sessionExpired,
 	snapshotSession,
-	transferSessionData,
+	transferSessionState,
 	validateSessionLimits,
 } from '@src/core'
 import { describe, expect, it } from 'vitest'
@@ -275,13 +275,13 @@ describe('isCompressionNegotiated', () => {
 	})
 })
 
-describe('transferSessionData', () => {
+describe('transferSessionState', () => {
 	it('copies every entry from one session state into another', () => {
 		const from = new Session('a')
 		from.set('userId', 'u_1')
 		from.set('role', 'admin')
 		const to = new Session('b')
-		transferSessionData(from, to)
+		transferSessionState(from, to)
 		expect(to.state.get('userId')).toBe('u_1')
 		expect(to.state.get('role')).toBe('admin')
 		expect(to.state.size).toBe(2)
@@ -291,7 +291,7 @@ describe('transferSessionData', () => {
 		const from = buildSession('a', 'new')
 		const to = buildSession('b', 'old')
 		to.set('extra', 1)
-		transferSessionData(from, to)
+		transferSessionState(from, to)
 		expect(to.state.get('mark')).toBe('new')
 		expect(to.state.get('extra')).toBe(1)
 		expect(from.state.get('mark')).toBe('new')
@@ -433,13 +433,13 @@ describe('equalsConstantTime', () => {
 	})
 })
 
-describe('buildClientInfo', () => {
+describe('buildClient', () => {
 	it('wraps a resolved IP into a Client slice', () => {
-		expect(buildClientInfo('203.0.113.7')).toEqual({ ip: '203.0.113.7' })
+		expect(buildClient('203.0.113.7')).toEqual({ ip: '203.0.113.7' })
 	})
 
 	it('wraps an undefined IP the same way', () => {
-		expect(buildClientInfo(undefined)).toEqual({})
+		expect(buildClient(undefined)).toEqual({})
 	})
 })
 
@@ -685,20 +685,20 @@ describe('snapshotSession', () => {
 		const session = new Session('abc')
 		session.set('userId', 'u_1')
 		session.set('count', 3)
-		expect(snapshotSession(session)).toEqual({ id: 'abc', data: { userId: 'u_1', count: 3 } })
+		expect(snapshotSession(session)).toEqual({ id: 'abc', state: { userId: 'u_1', count: 3 } })
 	})
 
 	it('snapshots an empty session state to an empty record', () => {
-		expect(snapshotSession(new Session('x'))).toEqual({ id: 'x', data: {} })
+		expect(snapshotSession(new Session('x'))).toEqual({ id: 'x', state: {} })
 	})
 
 	it('carries a "__proto__"-named state key without polluting Object.prototype', () => {
 		const session = new Session('x')
 		session.set('__proto__', 'evil')
 		const snapshot = snapshotSession(session)
-		expect(Object.getPrototypeOf(snapshot.data)).toBeNull()
-		expect(Object.prototype.hasOwnProperty.call(snapshot.data, '__proto__')).toBe(true)
-		expect(snapshot.data['__proto__']).toBe('evil')
+		expect(Object.getPrototypeOf(snapshot.state)).toBeNull()
+		expect(Object.prototype.hasOwnProperty.call(snapshot.state, '__proto__')).toBe(true)
+		expect(snapshot.state['__proto__']).toBe('evil')
 		expect(Object.getPrototypeOf({})).toBe(Object.prototype)
 	})
 })

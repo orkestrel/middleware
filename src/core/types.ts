@@ -302,12 +302,11 @@ export interface ClientState {
  * mutators that write it.
  *
  * @remarks
- * `state` is a readonly view a handler reads directly; `set`, `delete`, and
- * `clear` are the only ways to write it, so no consumer holds a mutable
- * reference to the entity's own `Map`. `createSession` persists the state to
- * the configured {@link SessionStoreInterface} on the way out. `clear` empties
- * the state without ending the session — `SessionControlInterface.destroy`
- * does that.
+ * `state` is a `ReadonlyMap` view a handler reads directly: TypeScript
+ * refuses a write through it, and `set`, `delete`, and `clear` are the write
+ * path. `createSession` persists the state to the configured
+ * {@link SessionStoreInterface} on the way out. `clear` empties the state
+ * without ending the session — `SessionControlInterface.destroy` does that.
  */
 export interface SessionInterface {
 	readonly id: string
@@ -437,14 +436,14 @@ export interface SessionEntry<S extends SessionInterface> extends SessionCursors
  * and a durable store's `set` writes.
  *
  * @remarks
- * `data` is the wire member a persisted row carries, built on a
+ * `state` is the wire member a persisted row carries, built on a
  * null-prototype record so a session key literally named `__proto__`
  * round-trips as an own enumerable property. It holds the same entries the
- * entity publishes as `state`.
+ * entity's own `state` view publishes.
  */
 export interface SessionSnapshot {
 	readonly id: string
-	readonly data: Readonly<Record<string, unknown>>
+	readonly state: Readonly<Record<string, unknown>>
 }
 
 /**

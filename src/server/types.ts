@@ -105,13 +105,13 @@ export interface MultipartLimitsInput {
  *
  * @remarks
  * - `file.size` — the maximum size in bytes of one uploaded file; defaults to
- *   {@link DEFAULT_MULTIPART_FILE}.
+ *   {@link DEFAULT_MULTIPART_FILE_SIZE}.
  * - `file.count` — the maximum number of file parts; defaults to
- *   {@link DEFAULT_MULTIPART_FILES}.
+ *   {@link DEFAULT_MULTIPART_FILE_COUNT}.
  * - `field.size` — the maximum size in bytes of one text field; defaults to
- *   {@link DEFAULT_MULTIPART_FIELD}.
+ *   {@link DEFAULT_MULTIPART_FIELD_SIZE}.
  * - `field.count` — the maximum number of text field parts; defaults to
- *   {@link DEFAULT_MULTIPART_FIELDS}.
+ *   {@link DEFAULT_MULTIPART_FIELD_COUNT}.
  * - `total` — the maximum combined byte size of the whole request body;
  *   defaults to {@link DEFAULT_MULTIPART_TOTAL}.
  */

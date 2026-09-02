@@ -1383,6 +1383,36 @@ describe('createSession', () => {
 		expect(stored).toBeUndefined()
 	})
 
+	it('installs no route of its own on DELETE — the terminal runs and the session survives', async () => {
+		const transport = createTestTransport()
+		const store = createMemorySessionStore<SessionInterface>()
+		const session = createSession<SessionInterface, SessionState>({ transport, store })
+		const first = await runChain(
+			[session],
+			createEchoTerminal(),
+			buildRequest('/'),
+			createTestContext(buildRequest('/'), {}),
+		)
+		const id = first.headers.get('x-test-session') ?? ''
+		expect(id).not.toBe('')
+
+		const request = buildRequest('/', {
+			method: 'DELETE',
+			headers: { 'x-test-session': id },
+		})
+		const terminal = createRecordingTerminal<SessionState>()
+		const state: SessionState = {}
+		const response = await runChain(
+			[session],
+			terminal.handler,
+			request,
+			createTestContext(request, state),
+		)
+		expect(terminal.count).toBe(1)
+		expect(response.status).not.toBe(204)
+		expect(await store.get(id, Date.now())).toBeDefined()
+	})
+
 	it('the mint predicate is honored, including async', async () => {
 		const transport = createTestTransport()
 		const session = createSession<SessionInterface, SessionState>({

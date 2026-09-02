@@ -67,7 +67,7 @@ import {
 	DEFAULT_REFERRER_POLICY,
 } from './constants.js'
 import {
-	buildClientInfo,
+	buildClient,
 	buildRateLimitField,
 	buildRateLimitPolicyField,
 	buildRetryAfter,
@@ -81,7 +81,7 @@ import {
 	resolveForwardedFor,
 	resolveKey,
 	resolveOptInHeader,
-	transferSessionData,
+	transferSessionState,
 } from './helpers.js'
 import { MemorySessionStore } from './stores/MemorySessionStore.js'
 import { Session } from './Session.js'
@@ -447,7 +447,7 @@ export function createForwarded<TState extends ClientState & ConnectionState>(
 		const header = request.headers.get('x-forwarded-for') ?? undefined
 		const resolved = resolveForwardedFor(header, trust)
 		const ip = resolved ?? context.state.connection?.ip
-		Object.assign(context.state, { client: buildClientInfo(ip) })
+		Object.assign(context.state, { client: buildClient(ip) })
 		return next()
 	}
 }
@@ -751,7 +751,7 @@ export function createSession<
 					if (destroyed) return
 					const newSession =
 						create === undefined ? new Session(crypto.randomUUID()) : create(crypto.randomUUID())
-					transferSessionData(activeSession, newSession)
+					transferSessionState(activeSession, newSession)
 					regenerated = newSession
 				},
 				destroy() {

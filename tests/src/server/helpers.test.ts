@@ -18,10 +18,10 @@ import {
 	isUnderPath,
 	lookupContentType,
 	matchesBytes,
-	DEFAULT_MULTIPART_FIELD,
-	DEFAULT_MULTIPART_FIELDS,
-	DEFAULT_MULTIPART_FILE,
-	DEFAULT_MULTIPART_FILES,
+	DEFAULT_MULTIPART_FIELD_SIZE,
+	DEFAULT_MULTIPART_FIELD_COUNT,
+	DEFAULT_MULTIPART_FILE_SIZE,
+	DEFAULT_MULTIPART_FILE_COUNT,
 	DEFAULT_MULTIPART_TOTAL,
 	MULTIPART_MAX_HEADER_BLOCK,
 	MULTIPART_MAX_PREAMBLE,
@@ -1537,18 +1537,18 @@ describe('staging security', () => {
 describe('resolveMultipartLimits', () => {
 	it('fills every leaf from the documented defaults when no limits are given', () => {
 		expect(resolveMultipartLimits(undefined)).toEqual({
-			file: { size: DEFAULT_MULTIPART_FILE, count: DEFAULT_MULTIPART_FILES },
-			field: { size: DEFAULT_MULTIPART_FIELD, count: DEFAULT_MULTIPART_FIELDS },
+			file: { size: DEFAULT_MULTIPART_FILE_SIZE, count: DEFAULT_MULTIPART_FILE_COUNT },
+			field: { size: DEFAULT_MULTIPART_FIELD_SIZE, count: DEFAULT_MULTIPART_FIELD_COUNT },
 			total: DEFAULT_MULTIPART_TOTAL,
 		})
 	})
 
 	it('keeps a stated leaf and defaults its sibling inside the same group', () => {
 		const limits = resolveMultipartLimits({ file: { size: 1_048_576 } })
-		expect(limits.file).toEqual({ size: 1_048_576, count: DEFAULT_MULTIPART_FILES })
+		expect(limits.file).toEqual({ size: 1_048_576, count: DEFAULT_MULTIPART_FILE_COUNT })
 		expect(limits.field).toEqual({
-			size: DEFAULT_MULTIPART_FIELD,
-			count: DEFAULT_MULTIPART_FIELDS,
+			size: DEFAULT_MULTIPART_FIELD_SIZE,
+			count: DEFAULT_MULTIPART_FIELD_COUNT,
 		})
 	})
 

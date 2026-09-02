@@ -1,10 +1,14 @@
 import type { Session } from '@src/core'
 import {
 	createCookieTransport,
+	createDatabaseSessionStore,
 	createHeaderTransport,
 	createMemorySessionStore,
 	createRestoredSession,
+	isSession,
+	sessionColumns,
 } from '@src/core'
+import { createDatabase, createMemoryDriver } from '@orkestrel/database'
 import { describe, expect, it } from 'vitest'
 import { buildSession } from '../../setup.js'
 
@@ -155,16 +159,30 @@ describe('createMemorySessionStore', () => {
 	})
 })
 
+describe('createDatabaseSessionStore', () => {
+	it('throws a TypeError when ttl or lifetime is malformed', () => {
+		const db = createDatabase({
+			driver: createMemoryDriver(),
+			tables: { sessions: sessionColumns },
+		})
+		const table = db.table('sessions')
+		expect(() => createDatabaseSessionStore(table, isSession, { ttl: Number.NaN })).toThrow(
+			TypeError,
+		)
+		expect(() => createDatabaseSessionStore(table, isSession, { lifetime: 0 })).toThrow(TypeError)
+	})
+})
+
 describe('createRestoredSession', () => {
 	it('rebuilds a session with its id and every snapshot entry', () => {
-		const restored = createRestoredSession({ id: 'abc', data: { userId: 'u_1', count: 3 } })
+		const restored = createRestoredSession({ id: 'abc', state: { userId: 'u_1', count: 3 } })
 		expect(restored?.id).toBe('abc')
 		expect(restored?.state.get('userId')).toBe('u_1')
 		expect(restored?.state.get('count')).toBe(3)
 	})
 
 	it('rebuilds a "__proto__"-named key as an own state entry', () => {
-		const snapshot: unknown = JSON.parse('{"id":"x","data":{"__proto__":"evil"}}')
+		const snapshot: unknown = JSON.parse('{"id":"x","state":{"__proto__":"evil"}}')
 		const restored = createRestoredSession(snapshot)
 		expect(restored?.state.get('__proto__')).toBe('evil')
 		expect(Object.getPrototypeOf({})).toBe(Object.prototype)
@@ -175,7 +193,7 @@ describe('createRestoredSession', () => {
 		expect(createRestoredSession(null)).toBeUndefined()
 		expect(createRestoredSession('abc')).toBeUndefined()
 		expect(createRestoredSession({})).toBeUndefined()
-		expect(createRestoredSession({ id: 1, data: {} })).toBeUndefined()
-		expect(createRestoredSession({ id: 'abc', data: 'not-a-record' })).toBeUndefined()
+		expect(createRestoredSession({ id: 1, state: {} })).toBeUndefined()
+		expect(createRestoredSession({ id: 'abc', state: 'not-a-record' })).toBeUndefined()
 	})
 })
