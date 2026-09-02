@@ -3,7 +3,7 @@ import { HTTPError } from '@orkestrel/server'
 import { MULTIPART_ERROR_BRAND, MULTIPART_STATUS } from './constants.js'
 
 /**
- * An error `createMultipart` throws when a streamed multipart request fails
+ * Represents an error `createMultipart` throws when a streamed multipart request fails
  * a mid-stream limit, is structurally malformed, or has a file whose sniffed
  * bytes are rejected by the configured `allowed` MIME list.
  *
@@ -39,7 +39,7 @@ export class MultipartError extends HTTPError {
 }
 
 /**
- * Narrow an unknown caught value to a {@link MultipartError}.
+ * Narrows an unknown caught value to a {@link MultipartError}.
  *
  * @remarks
  * Structural, not `instanceof` — tests that `value` is a non-null object
@@ -48,7 +48,7 @@ export class MultipartError extends HTTPError {
  * Total: never throws, returns `false` for any off-shape input.
  *
  * @param value - The value to test (typically a `catch` binding)
- * @returns `true` when `value` is a {@link MultipartError}
+ * @returns True if `value` is a {@link MultipartError}; false otherwise
  *
  * @example
  * ```ts

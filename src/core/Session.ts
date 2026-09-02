@@ -1,7 +1,7 @@
 import type { SessionInterface } from './types.js'
 
 /**
- * A server-managed session's default entity — the `create` option's default
+ * Represents a server-managed session's default entity — the `create` option's default
  * value for `createSession`. It ships without a bare `create*` factory of its
  * own, because the name `createSession` belongs to the battery;
  * `createRestoredSession` rebuilds one from a stored snapshot.

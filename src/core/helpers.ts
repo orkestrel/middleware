@@ -20,7 +20,7 @@ import {
 } from '@orkestrel/server'
 
 /**
- * Derive `createLimiter`'s default rate-limit bucket key from a request's
+ * Derives `createLimiter`'s default rate-limit bucket key from a request's
  * resolved identity facts.
  *
  * @remarks
@@ -49,7 +49,7 @@ export function resolveKey(state: BearerState & ClientState & ConnectionState): 
 }
 
 /**
- * Build the `Retry-After` header value — whole seconds until a window reset,
+ * Builds the `Retry-After` header value — whole seconds until a window reset,
  * floored at a minimum of `1`.
  *
  * @param resetAt - The window reset instant (same clock unit as `now`)
@@ -67,7 +67,7 @@ export function buildRetryAfter(resetAt: number, now: number): string {
 }
 
 /**
- * Build the draft `RateLimit` structured header field — emitted only when
+ * Builds the draft `RateLimit` structured header field — emitted only when
  * `createLimiter`'s `policy` option is `true`.
  *
  * @param remaining - The requests still admitted this window
@@ -86,7 +86,7 @@ export function buildRateLimitField(remaining: number, resetAt: number, now: num
 }
 
 /**
- * Build the draft `RateLimit-Policy` structured header field — emitted only
+ * Builds the draft `RateLimit-Policy` structured header field — emitted only
  * when `createLimiter`'s `policy` option is `true`.
  *
  * @param max - The window's admitted request count
@@ -103,7 +103,7 @@ export function buildRateLimitPolicyField(max: number, window: number): string {
 }
 
 /**
- * Whether a candidate address is a bare (non-CIDR) trusted-hop match — an
+ * Checks whether a candidate address is a bare (non-CIDR) trusted-hop match — an
  * exact string match, or a simple prefix-CIDR match for IPv4 (`/8`–`/32`).
  * An IPv6 entry matches by exact string only — there is no IPv6 CIDR
  * support.
@@ -122,7 +122,7 @@ export function buildRateLimitPolicyField(max: number, window: number): string {
  *
  * @param address - The candidate hop address
  * @param entry - One `trusted` roster entry — an exact address or an IPv4 CIDR
- * @returns `true` when `address` is covered by `entry`
+ * @returns True if `address` is covered by `entry`; false otherwise
  *
  * @example
  * ```ts
@@ -160,7 +160,7 @@ export function matchesTrustedEntry(address: string, entry: string): boolean {
 }
 
 /**
- * Walk `X-Forwarded-For` right-to-left and resolve the first UNTRUSTED hop
+ * Walks `X-Forwarded-For` right-to-left and resolves the first UNTRUSTED hop
  * address — `createForwarded`'s core algorithm.
  *
  * @remarks
@@ -212,7 +212,7 @@ export function resolveForwardedFor(
 }
 
 /**
- * Feature-detect which of `candidates` the runtime's `CompressionStream`
+ * Feature-detects which of `candidates` the runtime's `CompressionStream`
  * actually supports — `createCompression`'s construction-time intersection.
  *
  * @remarks
@@ -246,7 +246,7 @@ export function detectEncodings(candidates: readonly Encoding[]): readonly Encod
 }
 
 /**
- * Compress bytes with the host-independent `CompressionStream` primitive.
+ * Compresses bytes with the host-independent `CompressionStream` primitive.
  *
  * @param bytes - The uncompressed response bytes
  * @param encoding - The negotiated actionable coding
@@ -272,7 +272,7 @@ export async function compressBytes(
 }
 
 /**
- * Whether a response is eligible for the compression/ETag buffering pipeline
+ * Checks whether a response is eligible for the compression/ETag buffering pipeline
  * — the shared cheap-skip predicate both batteries apply before ever touching
  * `response.arrayBuffer()`.
  *
@@ -286,7 +286,7 @@ export async function compressBytes(
  * @param method - The request's HTTP method
  * @param response - The candidate response
  * @param skipHeader - The response header whose presence means "already handled"
- * @returns `true` when the response should be left untouched
+ * @returns True if the response should be left untouched; false otherwise
  *
  * @example
  * ```ts
@@ -308,11 +308,11 @@ export function isBufferingIneligible(
 }
 
 /**
- * Whether a negotiated `Accept-Encoding` outcome is worth acting on —
+ * Checks whether a negotiated `Accept-Encoding` outcome is worth acting on —
  * `createCompression`'s negotiation-eligibility half of the skip list.
  *
  * @param encoding - The negotiated coding, or `undefined` when negotiation failed
- * @returns `true` when `encoding` names an actionable, non-`identity` coding
+ * @returns True if `encoding` names an actionable, non-`identity` coding; false otherwise
  *
  * @example
  * ```ts
@@ -327,7 +327,7 @@ export function isCompressionNegotiated(
 }
 
 /**
- * Resolve an opt-in, value-bearing security header — `string | boolean`
+ * Resolves an opt-in, value-bearing security header — `string | boolean`
  * (default OFF, `true` uses the secure default), the shape `createSecurity`'s
  * `coep`/`hsts` options use, distinct from the plain value-or-`false` shape
  * `resolveSecurityHeader` (the peer substrate) handles.
@@ -352,7 +352,7 @@ export function resolveOptInHeader(
 }
 
 /**
- * Rebuild a `Response` around a replacement body while preserving its
+ * Rebuilds a `Response` around a replacement body while preserving its
  * status/statusText — the buffered-response reconstruction shared by the
  * compression and ETag batteries after they have consumed
  * `response.arrayBuffer()`.
@@ -381,7 +381,7 @@ export function rebuildResponse(
 }
 
 /**
- * The shared negotiate → skip → threshold → compress → header-set skeleton
+ * Runs the shared negotiate → skip → threshold → compress → header-set skeleton
  * both faces' `createCompression` batteries compose — response-body
  * compression over a caller-supplied set of feature-detected codings.
  *
@@ -463,12 +463,12 @@ export function transferSessionState(from: SessionInterface, to: SessionInterfac
 }
 
 /**
- * Determine whether a request is a CORS PREFLIGHT — an `OPTIONS` request
+ * Determines whether a request is a CORS PREFLIGHT — an `OPTIONS` request
  * carrying an `Access-Control-Request-Method` header.
  *
  * @param method - The request's HTTP method
  * @param headers - The request's `Headers`
- * @returns `true` when the request is a CORS preflight `createCors` must answer
+ * @returns True if the request is a CORS preflight `createCors` must answer; false otherwise
  *
  * @example
  * ```ts
@@ -496,7 +496,7 @@ export function buildClient(ip: string | undefined): Client {
 }
 
 /**
- * Constant-time string equality — `createCSRF`'s double-submit token
+ * Compares two strings in constant time — `createCSRF`'s double-submit token
  * comparison, avoiding a timing oracle on the submitted-vs-cookie match.
  *
  * @remarks
@@ -508,7 +508,7 @@ export function buildClient(ip: string | undefined): Client {
  *
  * @param a - The first string
  * @param b - The second string
- * @returns `true` when `a` and `b` are exactly equal
+ * @returns True if `a` and `b` are exactly equal; false otherwise
  *
  * @example
  * ```ts
@@ -525,13 +525,13 @@ export function equalsConstantTime(a: string, b: string): boolean {
 }
 
 /**
- * Whether a session has aged past its idle timeout or absolute lifetime as
+ * Checks whether a session has aged past its idle timeout or absolute lifetime as
  * of `now` — the pure expiry predicate `MemorySessionStore` delegates to.
  *
  * @param cursors - See {@link SessionCursors}
  * @param now - The current instant (same clock unit as `cursors`)
  * @param limits - See {@link SessionLimits}
- * @returns `true` when either configured threshold has elapsed
+ * @returns True if either configured threshold has elapsed; false otherwise
  *
  * @example
  * ```ts

@@ -7,7 +7,7 @@ import type {
 } from '@orkestrel/server'
 
 /**
- * Options for `createBoundary` — the outermost error-rendering battery.
+ * Configures `createBoundary` — the outermost error-rendering battery.
  *
  * @remarks
  * - `expose` — when `true`, a non-`HTTPError` throw's `error.message` is
@@ -22,7 +22,7 @@ export interface BoundaryOptions {
 }
 
 /**
- * One access-log-style entry `createTelemetry` records after a response
+ * Represents one access-log-style entry `createTelemetry` records after a response
  * settles — the access-log/timing seam's payload shape.
  *
  * @remarks
@@ -41,7 +41,7 @@ export interface TelemetryEntry {
 }
 
 /**
- * Options for `createTelemetry` — the request timing/access-log seam.
+ * Configures `createTelemetry` — the request timing/access-log seam.
  *
  * @remarks
  * - `record` — invoked once per request with the settled {@link
@@ -53,7 +53,7 @@ export interface TelemetryOptions {
 }
 
 /**
- * Options for `createCompression` — response-body compression.
+ * Configures `createCompression` — response-body compression.
  *
  * @remarks
  * - `threshold` — the minimum buffered body size (bytes) worth compressing;
@@ -72,7 +72,7 @@ export interface CompressionOptions {
 }
 
 /**
- * The already-resolved settings `compressResponse` runs its shared
+ * Describes the already-resolved settings `compressResponse` runs its shared
  * negotiate → skip → threshold → compress skeleton against — the shape each
  * face's `createCompression` builds from its own option bag.
  *
@@ -96,7 +96,7 @@ export interface CompressResponseOptions {
 }
 
 /**
- * `createSecurity`'s `identifier` sub-option — request-id minting/echo
+ * Describes `createSecurity`'s `identifier` sub-option — request-id minting/echo
  * policy, or `false` to disable the feature entirely.
  *
  * @remarks
@@ -107,7 +107,7 @@ export interface CompressResponseOptions {
 export type SecurityIdentifierOptions = { readonly trust?: boolean } | false
 
 /**
- * Options for `createSecurity` — the security-headers + request-id battery.
+ * Configures `createSecurity` — the security-headers + request-id battery.
  *
  * @remarks
  * Every header option is `string | false` (a custom value replaces the
@@ -142,7 +142,7 @@ export interface SecurityOptions {
 }
 
 /**
- * Options for `createCors` — Cross-Origin Resource Sharing.
+ * Configures `createCors` — Cross-Origin Resource Sharing.
  *
  * @remarks
  * - `origin` — the allowed origin(s): `'*'` (default), a single origin
@@ -159,7 +159,7 @@ export interface CorsOptions {
 }
 
 /**
- * Options for `createDeadline` — the application-level per-request deadline.
+ * Configures `createDeadline` — the application-level per-request deadline.
  *
  * @remarks
  * - `ms` — the deadline in milliseconds, armed via `@orkestrel/timeout` and
@@ -173,7 +173,7 @@ export interface DeadlineOptions {
 }
 
 /**
- * Options for `createForwarded` — the trusted-proxy client-IP resolver.
+ * Configures `createForwarded` — the trusted-proxy client-IP resolver.
  *
  * @remarks
  * Construction requires EXACTLY ONE of the two forms (a `TypeError` guards
@@ -187,7 +187,7 @@ export type ForwardedOptions =
 	| { readonly trusted: readonly string[] }
 
 /**
- * Options for `createETag` — dynamic response ETag + conditional GET.
+ * Configures `createETag` — dynamic response ETag + conditional GET.
  *
  * @remarks
  * - `weak` — mint a weak `W/"…"` ETag (default `true`) or a strong `"…"` one
@@ -198,7 +198,7 @@ export interface ETagOptions {
 }
 
 /**
- * Options for `createBearer` — bearer-token authentication.
+ * Configures `createBearer` — bearer-token authentication.
  *
  * @remarks
  * - `secret` — the {@link TokenSecret} `verifyToken` checks the extracted
@@ -216,7 +216,7 @@ export interface BearerOptions {
 }
 
 /**
- * Options for `createLimiter` — fixed-window rate limiting.
+ * Configures `createLimiter` — fixed-window rate limiting.
  *
  * @typeParam TState - The consumer's opaque per-request state type `key` reads
  * @remarks
@@ -248,7 +248,7 @@ export interface LimiterOptions<TState = unknown> {
 }
 
 /**
- * The bearer-authentication state slice `createBearer` stashes on
+ * Describes the bearer-authentication state slice `createBearer` stashes on
  * `context.state` once a token verifies.
  *
  * @remarks
@@ -261,7 +261,7 @@ export interface BearerState {
 }
 
 /**
- * The request-identifier state slice `createSecurity` stashes when its
+ * Describes the request-identifier state slice `createSecurity` stashes when its
  * `identifier` option is enabled.
  */
 export interface IdentifierState {
@@ -269,7 +269,7 @@ export interface IdentifierState {
 }
 
 /**
- * The connection-facts state slice `createLimiter`'s default key derivation
+ * Describes the connection-facts state slice `createLimiter`'s default key derivation
  * falls back to when neither {@link BearerState} nor {@link ClientState} is
  * present — the raw socket peer surfaced on `context.state` by the server's
  * `state` option.
@@ -279,7 +279,7 @@ export interface ConnectionState {
 }
 
 /**
- * The resolved client connection facts `createForwarded` stashes.
+ * Describes the resolved client connection facts `createForwarded` stashes.
  *
  * @remarks
  * `ip` is the first untrusted address walking `X-Forwarded-For` /
@@ -291,14 +291,14 @@ export interface Client {
 }
 
 /**
- * The client-facts state slice `createForwarded` stashes.
+ * Describes the client-facts state slice `createForwarded` stashes.
  */
 export interface ClientState {
 	readonly client?: Client
 }
 
 /**
- * A server-managed session's public surface — an id, its live state, and the
+ * Represents a server-managed session's public surface — an id, its live state, and the
  * mutators that write it.
  *
  * @remarks
@@ -317,7 +317,7 @@ export interface SessionInterface {
 }
 
 /**
- * The mid-handler control handle `createSession` stashes alongside the
+ * Describes the mid-handler control handle `createSession` stashes alongside the
  * session itself — the OWASP anti-fixation / logout primitives.
  *
  * @remarks
@@ -332,7 +332,7 @@ export interface SessionControlInterface {
 }
 
 /**
- * The session state slice `createSession` stashes.
+ * Describes the session state slice `createSession` stashes.
  *
  * @remarks
  * `session` is present whenever a request resolves or mints a session;
@@ -344,7 +344,7 @@ export interface SessionState {
 }
 
 /**
- * The body state slice `createBody` stashes.
+ * Describes the body state slice `createBody` stashes.
  *
  * @remarks
  * `body` holds the same defined value the cached `context.body()` resolved
@@ -356,7 +356,7 @@ export interface BodyState {
 }
 
 /**
- * The pluggable session persistence seam `createSession`'s `store` option
+ * Describes the pluggable session persistence seam `createSession`'s `store` option
  * implements — a point-access store keyed by session id.
  *
  * @typeParam S - The stored session entity type
@@ -383,7 +383,7 @@ export interface SessionStoreInterface<S extends SessionInterface> {
 }
 
 /**
- * The idle and absolute-lifetime thresholds a session store enforces —
+ * Describes the idle and absolute-lifetime thresholds a session store enforces —
  * `sessionExpired`'s limits argument and both shipped stores' construction
  * options.
  *
@@ -398,7 +398,7 @@ export interface SessionLimits {
 }
 
 /**
- * The per-session instants a store stamps and `sessionExpired` measures
+ * Describes the per-session instants a store stamps and `sessionExpired` measures
  * against.
  *
  * @remarks
@@ -412,7 +412,7 @@ export interface SessionCursors {
 }
 
 /**
- * One persisted session row — an opaque snapshot column plus the store-owned
+ * Represents one persisted session row — an opaque snapshot column plus the store-owned
  * idle/absolute-lifetime cursors, the shape a {@link DatabaseSessionStore}'s
  * backing table holds.
  */
@@ -422,7 +422,7 @@ export interface SessionRow extends SessionCursors {
 }
 
 /**
- * One in-process session entry — the payload {@link MemorySessionStore} holds
+ * Represents one in-process session entry — the payload {@link MemorySessionStore} holds
  * against an id, alongside the same cursors a persisted row carries.
  *
  * @typeParam S - The stored session entity type
@@ -432,7 +432,7 @@ export interface SessionEntry<S extends SessionInterface> extends SessionCursors
 }
 
 /**
- * A session's serializable projection — the value `snapshotSession` produces
+ * Represents a session's serializable projection — the value `snapshotSession` produces
  * and a durable store's `set` writes.
  *
  * @remarks
@@ -447,7 +447,7 @@ export interface SessionSnapshot {
 }
 
 /**
- * The transport seam `createSession`'s `transport` option implements — how a
+ * Describes the transport seam `createSession`'s `transport` option implements — how a
  * session id travels to and from the client (a signed cookie, a header, …).
  *
  * @remarks
@@ -467,7 +467,7 @@ export interface SessionTransportInterface {
 }
 
 /**
- * Options for `createSession` — the generic session battery.
+ * Configures `createSession` — the generic session battery.
  *
  * @typeParam S - The session entity type `create` produces
  * @typeParam TState - The consumer's opaque per-request state type `mint` reads
@@ -507,7 +507,7 @@ export interface SessionOptions<S extends SessionInterface, TState = unknown> {
 }
 
 /**
- * Options for `createCookieTransport` — the signed-cookie {@link SessionTransportInterface}.
+ * Configures `createCookieTransport` — the signed-cookie {@link SessionTransportInterface}.
  *
  * @remarks
  * - `name` — the cookie name; defaults to {@link DEFAULT_SESSION_COOKIE}.
@@ -522,7 +522,7 @@ export interface CookieTransportOptions {
 }
 
 /**
- * Options for `createHeaderTransport` — the bare-header {@link SessionTransportInterface}.
+ * Configures `createHeaderTransport` — the bare-header {@link SessionTransportInterface}.
  *
  * @remarks
  * - `header` — the header carrying the session id; defaults to
@@ -533,7 +533,7 @@ export interface HeaderTransportOptions {
 }
 
 /**
- * Options for `createMemorySessionStore` — the default in-process {@link SessionStoreInterface}.
+ * Configures `createMemorySessionStore` — the default in-process {@link SessionStoreInterface}.
  *
  * @remarks
  * - `ttl` — the idle timeout in milliseconds (lazy eviction on `get`).
@@ -554,7 +554,7 @@ export interface MemorySessionStoreOptions extends SessionLimits {
 }
 
 /**
- * The CSRF state slice `createCSRF` stashes — the raw token a safe-method
+ * Describes the CSRF state slice `createCSRF` stashes — the raw token a safe-method
  * response exposes for a subsequent mutating request to submit back.
  */
 export interface CSRFState {
@@ -562,7 +562,7 @@ export interface CSRFState {
 }
 
 /**
- * Options for `createCSRF` — session-bound double-submit CSRF protection.
+ * Configures `createCSRF` — session-bound double-submit CSRF protection.
  *
  * @remarks
  * - `secret` — the {@link TokenSecret} the CSRF token is signed with.
@@ -584,7 +584,7 @@ export interface CSRFOptions {
 }
 
 /**
- * One staged multipart upload's public record — the shape the node-face
+ * Represents one staged multipart upload's public record — the shape the node-face
  * `createMultipart` battery (`@orkestrel/middleware/server`) produces per
  * uploaded file.
  *
@@ -606,7 +606,7 @@ export interface MultipartFile {
 }
 
 /**
- * The parsed multipart request body `createMultipart` stashes — files keyed
+ * Describes the parsed multipart request body `createMultipart` stashes — files keyed
  * by their field name, plus every plain text field.
  */
 export interface MultipartBody {
@@ -615,7 +615,7 @@ export interface MultipartBody {
 }
 
 /**
- * The multipart state slice `createMultipart` stashes.
+ * Describes the multipart state slice `createMultipart` stashes.
  *
  * @remarks
  * Present only once `createMultipart` has fully parsed a multipart request.

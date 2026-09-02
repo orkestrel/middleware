@@ -7,14 +7,14 @@ import type {
 import { isRecord, isString } from '@orkestrel/contract'
 
 /**
- * Determine whether a value implements {@link SessionInterface} — a total
+ * Determines whether a value implements {@link SessionInterface} — a total
  * structural guard: an `id` string, a `state` `Map`, and the `set`, `delete`,
  * and `clear` mutators. Prototype-agnostic — accepts a plain object, a
  * null-prototype object, AND a class instance (a real `Session`), since a
  * restored/stored session is routinely a class instance, not a literal.
  *
  * @param value - The candidate value
- * @returns `true` when `value` is shaped like a {@link SessionInterface}
+ * @returns True if `value` is shaped like a {@link SessionInterface}; false otherwise
  *
  * @example
  * ```ts
@@ -34,11 +34,11 @@ export function isSession(value: unknown): value is SessionInterface {
 }
 
 /**
- * Determine whether a value implements {@link SessionControlInterface} — a
+ * Determines whether a value implements {@link SessionControlInterface} — a
  * total structural guard: callable `regenerate` and `destroy`.
  *
  * @param value - The candidate value
- * @returns `true` when `value` is shaped like a {@link SessionControlInterface}
+ * @returns True if `value` is shaped like a {@link SessionControlInterface}; false otherwise
  *
  * @example
  * ```ts
@@ -51,11 +51,11 @@ export function isSessionControl(value: unknown): value is SessionControlInterfa
 }
 
 /**
- * Determine whether a value is one staged {@link MultipartFile} record — a
+ * Determines whether a value is one staged {@link MultipartFile} record — a
  * total structural guard checking every required field's shape.
  *
  * @param value - The candidate value
- * @returns `true` when `value` is shaped like a {@link MultipartFile}
+ * @returns True if `value` is shaped like a {@link MultipartFile}; false otherwise
  *
  * @example
  * ```ts
@@ -84,12 +84,12 @@ export function isMultipartFile(value: unknown): value is MultipartFile {
 }
 
 /**
- * Determine whether a value implements {@link MultipartBody} — a total
+ * Determines whether a value implements {@link MultipartBody} — a total
  * structural guard: `files` keyed by field name to arrays of
  * {@link MultipartFile}, and a `fields` string record.
  *
  * @param value - The candidate value
- * @returns `true` when `value` is shaped like a {@link MultipartBody}
+ * @returns True if `value` is shaped like a {@link MultipartBody}; false otherwise
  *
  * @example
  * ```ts

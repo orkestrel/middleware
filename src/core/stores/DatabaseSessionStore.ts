@@ -10,7 +10,7 @@ import { sessionExpired, snapshotSession, validateSessionLimits } from '../helpe
 import type { Session } from '../Session.js'
 
 /**
- * A durable {@link SessionStoreInterface} over an `@orkestrel/database`
+ * Implements a durable {@link SessionStoreInterface} over an `@orkestrel/database`
  * table — the same idle-timeout + absolute-lifetime contract as
  * {@link MemorySessionStore}, backed by a caller-supplied `TableInterface`
  * instead of an in-process `Map`.

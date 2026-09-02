@@ -18,7 +18,7 @@ import { DatabaseSessionStore } from './stores/DatabaseSessionStore.js'
 import { MemorySessionStore } from './stores/MemorySessionStore.js'
 
 /**
- * Create a signed-cookie {@link SessionTransportInterface} — the session id travels as
+ * Creates a signed-cookie {@link SessionTransportInterface} — the session id travels as
  * a `signToken`-signed cookie value.
  *
  * @param options - See {@link CookieTransportOptions}
@@ -56,7 +56,7 @@ export function createCookieTransport(options: CookieTransportOptions): SessionT
 }
 
 /**
- * Create a bare-header {@link SessionTransportInterface} — the session id travels
+ * Creates a bare-header {@link SessionTransportInterface} — the session id travels
  * verbatim in a request/response header.
  *
  * @param options - See {@link HeaderTransportOptions}
@@ -86,7 +86,7 @@ export function createHeaderTransport(options?: HeaderTransportOptions): Session
 }
 
 /**
- * Create the default in-process {@link SessionStoreInterface} — a `Map`-backed
+ * Creates the default in-process {@link SessionStoreInterface} — a `Map`-backed
  * store enforcing an idle timeout and an absolute lifetime.
  *
  * @typeParam S - The session entity type
@@ -110,7 +110,7 @@ export function createMemorySessionStore<S extends SessionInterface>(
 }
 
 /**
- * Create a {@link DatabaseSessionStore} as a {@link SessionStoreInterface} —
+ * Creates a {@link DatabaseSessionStore} as a {@link SessionStoreInterface} —
  * the durable counterpart to `createMemorySessionStore`, over a caller-opened
  * `@orkestrel/database` table (declare it with {@link sessionColumns}).
  *

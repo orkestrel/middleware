@@ -49,7 +49,7 @@ import {
 import { parseMultipartRequest } from './parsers.js'
 
 /**
- * Serve validated in-memory assets with identity/Brotli negotiation.
+ * Serves validated in-memory assets with identity/Brotli negotiation.
  *
  * @remarks
  * Only `GET` and `HEAD` are served. `/` resolves to `index.html`. Every other
@@ -164,7 +164,7 @@ export function createAssets<TState>(options: AssetOptions): MiddlewareHandler<T
 }
 
 /**
- * Serve static files from `options.root` over `node:fs` — the node-bound
+ * Serves static files from `options.root` over `node:fs` — the node-bound
  * static-file battery.
  *
  * @remarks
@@ -384,7 +384,7 @@ export function createStatic<TState>(options: StaticOptions): MiddlewareHandler<
 }
 
 /**
- * Parse a streamed `multipart/form-data` request body and stash its
+ * Parses a streamed `multipart/form-data` request body and stashes its
  * {@link MultipartBody} on `context.state.multipart` — the node-bound
  * streaming multipart battery.
  *
@@ -437,7 +437,7 @@ export function createMultipart<TState extends MultipartState>(
 }
 
 /**
- * Compress response bodies through `node:zlib` — the node-bound sibling of
+ * Compresses response bodies through `node:zlib` — the node-bound sibling of
  * the core face's `CompressionStream`-feature-detected `createCompression`,
  * guaranteed available on any Node runtime rather than dependent on the
  * WHATWG `CompressionStream` global. Ships as a SEPARATE package entry point

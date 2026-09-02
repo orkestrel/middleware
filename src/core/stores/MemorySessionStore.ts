@@ -9,7 +9,7 @@ import { sessionExpired, validateSessionLimits } from '../helpers.js'
 import { isFiniteNumber, isFunction } from '@orkestrel/contract'
 
 /**
- * The default in-process {@link SessionStoreInterface} — a `Map`-backed store
+ * Implements the default in-process {@link SessionStoreInterface} — a `Map`-backed store
  * enforcing both an idle timeout and an absolute lifetime, with lazy
  * (read-time) eviction, a bounded capacity, and no background timers.
  *

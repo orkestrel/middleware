@@ -26,14 +26,14 @@ import {
 } from './constants.js'
 
 /**
- * Whether `pathname` is `prefix` itself or lies under it on a SEGMENT
+ * Checks whether `pathname` is `prefix` itself or lies under it on a SEGMENT
  * boundary — the shared under-path test `resolveStaticPath`'s prefix strip
  * and `createStatic`'s SPA-fallback `exclude` both apply, so `exclude:
  * '/api'` matches `/api` and `/api/x` but never `/apifoo`.
  *
  * @param pathname - The request pathname to test
  * @param prefix - The path prefix to test against
- * @returns `true` when `pathname` equals `prefix` or starts with `prefix` + `/`
+ * @returns True if `pathname` equals `prefix` or starts with `prefix` + `/`; false otherwise
  *
  * @example
  * ```ts
@@ -48,7 +48,7 @@ export function isUnderPath(pathname: string, prefix: string): boolean {
 }
 
 /**
- * Resolve the fixed SPA shell path when a static-file miss is eligible for
+ * Resolves the fixed SPA shell path when a static-file miss is eligible for
  * fallback.
  *
  * @remarks
@@ -87,7 +87,7 @@ export function resolveStaticFallbackPath(
 }
 
 /**
- * Whether `child` is `parent` itself or lies inside it on-disk — the
+ * Checks whether `child` is `parent` itself or lies inside it on-disk — the
  * FILESYSTEM containment predicate `createStatic` applies to `fs.realpath`
  * output (never to a URL pathname — that is {@link isUnderPath}'s job).
  *
@@ -101,7 +101,7 @@ export function resolveStaticFallbackPath(
  *
  * @param child - The absolute on-disk path to test
  * @param parent - The absolute on-disk directory it must lie under
- * @returns `true` when `child` equals `parent` or resolves inside it
+ * @returns True if `child` equals `parent` or resolves inside it; false otherwise
  *
  * @example
  * ```ts
@@ -116,7 +116,7 @@ export function isContainedPath(child: string, parent: string): boolean {
 }
 
 /**
- * Resolve a request pathname to an on-disk path UNDER `root`, or `undefined`
+ * Resolves a request pathname to an on-disk path UNDER `root`, or `undefined`
  * when it cannot — the traversal guard, whose algorithm and order are exact:
  * strip `prefix` on a segment boundary → `decodeURIComponent` (a
  * malformed escape refuses, never throws) → reject a NUL byte → strip the
@@ -163,7 +163,7 @@ export function resolveStaticPath(
 }
 
 /**
- * Canonicalize `candidate` and return it only when it lies inside `rootReal`
+ * Canonicalizes `candidate` and returns it only when it lies inside `rootReal`
  * — the shared realpath-then-contain step `createStatic` applies to a
  * directory index and to its SPA shell.
  *
@@ -197,7 +197,7 @@ export async function resolveContainedRealPath(
 }
 
 /**
- * Whether a path segment is a Windows reserved device name (CVE-2025-27210).
+ * Checks whether a path segment is a Windows reserved device name (CVE-2025-27210).
  *
  * @remarks
  * Normalizes superscript digits (`¹²³` → `123`) first, strips trailing dots
@@ -207,7 +207,7 @@ export async function resolveContainedRealPath(
  * `console.js` and `nullable.css` are never flagged.
  *
  * @param segment - One path segment (no separators)
- * @returns `true` when `segment` names a reserved device
+ * @returns True if `segment` names a reserved device; false otherwise
  *
  * @example
  * ```ts
@@ -227,11 +227,11 @@ export function isReservedDeviceName(segment: string): boolean {
 }
 
 /**
- * Whether a relative path (already resolved under a static root) has any
+ * Checks whether a relative path (already resolved under a static root) has any
  * segment starting with `.` — a dotfile or dot-directory.
  *
  * @param relativePath - A path relative to the static root
- * @returns `true` when any segment starts with `.`
+ * @returns True if any segment starts with `.`; false otherwise
  *
  * @example
  * ```ts
@@ -244,7 +244,7 @@ export function isDotfilePath(relativePath: string): boolean {
 }
 
 /**
- * Look up the MIME type for a static file path by its extension.
+ * Looks up the MIME type for a static file path by its extension.
  *
  * @param pathname - The file's path (only its extension is read)
  * @returns The mapped MIME type, or {@link DEFAULT_CONTENT_TYPE} when unknown
@@ -261,7 +261,7 @@ export function lookupContentType(pathname: string): string {
 }
 
 /**
- * Compute a static file's weak ETag from its size and modification time.
+ * Computes a static file's weak ETag from its size and modification time.
  *
  * @param size - The file's byte size
  * @param mtimeMs - The file's modification time in milliseconds
@@ -277,7 +277,7 @@ export function computeFileETag(size: number, mtimeMs: number): string {
 }
 
 /**
- * Compress response bytes with Node's guaranteed zlib gzip/deflate codecs.
+ * Compresses response bytes with Node's guaranteed zlib gzip/deflate codecs.
  *
  * @param bytes - The uncompressed response bytes
  * @param encoding - The negotiated actionable coding
@@ -299,7 +299,7 @@ export async function compressNodeBytes(
 }
 
 /**
- * Sniff a MIME type from a file's leading bytes against a small magic-byte
+ * Sniffs a MIME type from a file's leading bytes against a small magic-byte
  * table (jpeg, png, gif87a/89a, webp, pdf, zip).
  *
  * @remarks
@@ -339,12 +339,12 @@ export function detectMIME(head: Uint8Array): string | undefined {
 }
 
 /**
- * Whether `bytes` contains `signature` at the requested offset.
+ * Checks whether `bytes` contains `signature` at the requested offset.
  *
  * @param bytes - The bytes to inspect
  * @param signature - The exact byte sequence to match
  * @param offset - The starting byte offset, defaulting to zero
- * @returns `true` when the complete signature matches
+ * @returns True if the complete signature matches; false otherwise
  *
  * @example
  * ```ts
@@ -359,7 +359,7 @@ export function matchesBytes(bytes: Uint8Array, signature: readonly number[], of
 }
 
 /**
- * Extract the `boundary` parameter from a `Content-Type` header, or
+ * Extracts the `boundary` parameter from a `Content-Type` header, or
  * `undefined` when the request is not `multipart/form-data`.
  *
  * @param contentType - The request's `Content-Type` header value, if present
@@ -416,7 +416,7 @@ export function resolveMultipartLimits(limits: MultipartLimitsInput | undefined)
 }
 
 /**
- * Parse one multipart part's raw header block into its `name` (from
+ * Parses one multipart part's raw header block into its `name` (from
  * `Content-Disposition`), optional `filename`, and optional `Content-Type`.
  *
  * @param block - The raw header block for one multipart part (before the
@@ -452,7 +452,7 @@ export function parsePartHeaders(block: string): PartHeaders {
 }
 
 /**
- * Build a frozen {@link UploadedFile} record.
+ * Builds a frozen {@link UploadedFile} record.
  *
  * @param input - Every field of the record
  * @returns A frozen {@link UploadedFile}
@@ -467,7 +467,7 @@ export function createUploadedFile(input: UploadedFileInput): UploadedFile {
 }
 
 /**
- * Best-effort unlink every still-`'staged'` file in a parsed
+ * Attempts to unlink every still-`'staged'` file in a parsed
  * {@link MultipartBody} — the fail-closed cleanup `createMultipart` runs when
  * its downstream handler throws, mirroring `parseMultipartRequest`'s own
  * cleanup pattern (a missing file is already gone; failures are swallowed).
@@ -494,7 +494,7 @@ export async function unlinkStagedFiles(body: MultipartBody): Promise<void> {
 }
 
 /**
- * Adapt a `node:fs` read stream over `path` (or an already-open
+ * Adapts a `node:fs` read stream over `path` (or an already-open
  * `FileHandle`) into a DOM-compatible `ReadableStream<Uint8Array>` — the
  * single shared node↔web stream bridge every static-file and uploaded-file
  * response body routes through.
@@ -569,7 +569,7 @@ export function streamFile(
 }
 
 /**
- * Open a staged/moved uploaded file as a web `ReadableStream`.
+ * Opens a staged/moved uploaded file as a web `ReadableStream`.
  *
  * @param file - The {@link UploadedFile} record to stream
  * @returns A `ReadableStream<Uint8Array>` over the file's current on-disk path
@@ -584,7 +584,7 @@ export function streamUploadedFile(file: UploadedFile): ReadableStream<Uint8Arra
 }
 
 /**
- * Read a staged/moved uploaded file's full contents into memory.
+ * Reads a staged/moved uploaded file's full contents into memory.
  *
  * @param file - The {@link UploadedFile} record to read
  * @returns The file's bytes
@@ -599,7 +599,7 @@ export async function readUploadedFile(file: UploadedFile): Promise<Uint8Array> 
 }
 
 /**
- * Move a staged uploaded file to its final `destination`.
+ * Moves a staged uploaded file to its final `destination`.
  *
  * @remarks
  * Attempts a `rename` first; on a cross-device error (`EXDEV`) falls back to

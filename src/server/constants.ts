@@ -1,7 +1,7 @@
 import type { MultipartErrorCode, StaticOptions } from './types.js'
 import type { Encoding } from '@orkestrel/server'
 
-/** The HTTP status `createMultipart` renders for each {@link MultipartErrorCode}. */
+/** Holds the HTTP status `createMultipart` renders for each {@link MultipartErrorCode}. */
 export const MULTIPART_STATUS: Readonly<Record<MultipartErrorCode, number>> = Object.freeze({
 	limit: 413,
 	malformed: 400,
@@ -9,7 +9,7 @@ export const MULTIPART_STATUS: Readonly<Record<MultipartErrorCode, number>> = Ob
 })
 
 /**
- * The `Symbol.for` brand {@link MultipartError} carries so
+ * Holds the `Symbol.for` brand {@link MultipartError} carries so
  * {@link isMultipartError} recognizes an instance across duplicate copies of
  * this package — a registry symbol rather than a module-local `Symbol()`,
  * which would mint an unequal symbol per copy.
@@ -18,48 +18,48 @@ export const MULTIPART_ERROR_BRAND: unique symbol = Symbol.for(
 	'@orkestrel/middleware.MultipartError',
 )
 
-/** `createStatic`'s default directory-index filename. */
+/** Names `createStatic`'s default directory-index filename. */
 export const DEFAULT_STATIC_INDEX = 'index.html'
 
-/** `createStatic`'s `fallback: true` default excluded path prefix. */
+/** Names `createStatic`'s `fallback: true` default excluded path prefix. */
 export const DEFAULT_STATIC_FALLBACK_EXCLUDE = '/api'
 
-/** `createStatic`'s default policy for a path carrying a dotfile segment. */
+/** Names `createStatic`'s default policy for a path carrying a dotfile segment. */
 export const DEFAULT_STATIC_DOTFILES: NonNullable<StaticOptions['dotfiles']> = 'ignore'
 
 /**
- * The content-codings the node face's `createCompression` offers — the two
+ * Lists the content-codings the node face's `createCompression` offers — the two
  * `node:zlib` guarantees on every Node runtime, so this face never
  * feature-detects.
  */
 export const NODE_COMPRESSION_ENCODINGS: readonly Encoding[] = Object.freeze(['gzip', 'deflate'])
 
-/** The MIME type served when a file extension has no known mapping. */
+/** Names the MIME type served when a file extension has no known mapping. */
 export const DEFAULT_CONTENT_TYPE = 'application/octet-stream'
 
-/** `createMultipart`'s default per-file byte-size cap. */
+/** Holds `createMultipart`'s default per-file byte-size cap. */
 export const DEFAULT_MULTIPART_FILE_SIZE = 10_485_760
 
-/** `createMultipart`'s default maximum file-part count. */
+/** Holds `createMultipart`'s default maximum file-part count. */
 export const DEFAULT_MULTIPART_FILE_COUNT = 10
 
-/** `createMultipart`'s default per-field byte-size cap. */
+/** Holds `createMultipart`'s default per-field byte-size cap. */
 export const DEFAULT_MULTIPART_FIELD_SIZE = 65_536
 
-/** `createMultipart`'s default maximum field-part count. */
+/** Holds `createMultipart`'s default maximum field-part count. */
 export const DEFAULT_MULTIPART_FIELD_COUNT = 100
 
-/** `createMultipart`'s default combined request-body byte-size cap. */
+/** Holds `createMultipart`'s default combined request-body byte-size cap. */
 export const DEFAULT_MULTIPART_TOTAL = 52_428_800
 
-/** The maximum bytes a single multipart part's header block may occupy before it is malformed. */
+/** Holds the maximum bytes a single multipart part's header block may occupy before it is malformed. */
 export const MULTIPART_MAX_HEADER_BLOCK = 16_384
 
-/** The maximum bytes scanned before the first multipart boundary is found before it is malformed. */
+/** Holds the maximum bytes scanned before the first multipart boundary is found before it is malformed. */
 export const MULTIPART_MAX_PREAMBLE = 65_536
 
 /**
- * Windows reserved device-name stems (CVE-2025-27210) — matched
+ * Lists the Windows reserved device-name stems (CVE-2025-27210) — matched
  * case-insensitively against the segment's stem (before its first `.`).
  */
 export const RESERVED_DEVICE_NAMES: ReadonlySet<string> = Object.freeze(
@@ -89,7 +89,7 @@ export const RESERVED_DEVICE_NAMES: ReadonlySet<string> = Object.freeze(
 	]),
 )
 
-/** File-extension (lowercase, with leading `.`) → MIME type lookup table for static serving. */
+/** Holds the file-extension (lowercase, with leading `.`) → MIME type lookup table for static serving. */
 export const EXTENSION_TYPES: Readonly<Record<string, string>> = Object.freeze({
 	'.html': 'text/html; charset=utf-8',
 	'.htm': 'text/html; charset=utf-8',

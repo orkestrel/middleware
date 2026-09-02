@@ -1,7 +1,7 @@
 import type { MultipartFile } from '@src/core'
 
 /**
- * One in-memory asset representation returned by an {@link AssetSourceInterface}.
+ * Describes one in-memory asset representation returned by an {@link AssetSourceInterface}.
  *
  * @remarks
  * - `body` — the representation bytes. `createAssets` copies them before use.
@@ -14,7 +14,7 @@ export interface Asset {
 }
 
 /**
- * Read in-memory assets by decoded, browser-build-relative path.
+ * Reads in-memory assets by decoded, browser-build-relative path.
  *
  * @remarks
  * A successful result is cached by `createAssets`; later source changes do
@@ -24,7 +24,7 @@ export interface Asset {
  */
 export interface AssetSourceInterface {
 	/**
-	 * Read one asset representation.
+	 * Reads one asset representation.
 	 *
 	 * @param path - The validated relative asset path
 	 * @returns The asset, or `undefined` when the path is absent
@@ -33,7 +33,7 @@ export interface AssetSourceInterface {
 }
 
 /**
- * Options for `createAssets` — in-memory identity/Brotli asset serving.
+ * Configures `createAssets` — in-memory identity/Brotli asset serving.
  *
  * @remarks
  * - `source` — the required in-memory asset reader. It MUST answer a bounded
@@ -48,7 +48,7 @@ export interface AssetOptions {
 }
 
 /**
- * Options for `createStatic` — node `fs`-backed static file serving.
+ * Configures `createStatic` — node `fs`-backed static file serving.
  *
  * @remarks
  * - `root` — the directory every request resolves under, resolved once at
@@ -83,7 +83,7 @@ export interface StaticOptions {
 }
 
 /**
- * The caller's partial {@link MultipartLimits} — `createMultipart`'s `limits`
+ * Describes the caller's partial {@link MultipartLimits} — `createMultipart`'s `limits`
  * option, with every member optional.
  *
  * @remarks
@@ -100,7 +100,7 @@ export interface MultipartLimitsInput {
 }
 
 /**
- * Per-category size/count caps `createMultipart` enforces MID-STREAM — the
+ * Describes the per-category size/count caps `createMultipart` enforces MID-STREAM — the
  * effective limits, every documented default already applied.
  *
  * @remarks
@@ -122,7 +122,7 @@ export interface MultipartLimits {
 }
 
 /**
- * Options for `createMultipart` — node `fs`/`os`/`crypto`-backed streaming
+ * Configures `createMultipart` — node `fs`/`os`/`crypto`-backed streaming
  * multipart upload parsing.
  *
  * @remarks
@@ -140,14 +140,14 @@ export interface MultipartOptions {
 }
 
 /**
- * Why `createMultipart` rejected a request — the machine-readable code
+ * Names the reason `createMultipart` rejected a request — the machine-readable code
  * {@link MultipartError} carries and maps onto its HTTP status: `'limit'` →
  * 413, `'malformed'` → 400, `'rejected'` → 415.
  */
 export type MultipartErrorCode = 'limit' | 'malformed' | 'rejected'
 
 /**
- * The lifecycle stage of one staged upload's temp file.
+ * Names the lifecycle stage of one staged upload's temp file.
  *
  * @remarks
  * `'staged'` — written to the configured temp directory under a random name,
@@ -156,7 +156,7 @@ export type MultipartErrorCode = 'limit' | 'malformed' | 'rejected'
 export type UploadStatus = 'staged' | 'moved'
 
 /**
- * One uploaded file's post-parse record — the node-bound, richer sibling of
+ * Describes one uploaded file's post-parse record — the node-bound, richer sibling of
  * the pure core's {@link MultipartFile} (identical fields, `status` narrowed
  * to {@link UploadStatus}). Structurally assignable into {@link MultipartFile}
  * so a `createMultipart`-built {@link MultipartBody} satisfies the shared
@@ -181,7 +181,7 @@ export interface UploadedFile extends Omit<MultipartFile, 'status'> {
 }
 
 /**
- * One multipart part's parsed header block — `parsePartHeaders`'s return
+ * Describes one multipart part's parsed header block — `parsePartHeaders`'s return
  * shape.
  *
  * @remarks
@@ -196,7 +196,7 @@ export interface PartHeaders {
 }
 
 /**
- * The full field set `createUploadedFile` needs to build an
+ * Describes the full field set `createUploadedFile` needs to build an
  * {@link UploadedFile} record.
  *
  * @remarks
@@ -221,7 +221,7 @@ export interface UploadedFileInput {
 }
 
 /**
- * Options for the node face's `createCompression` — `node:zlib`-backed
+ * Configures the node face's `createCompression` — `node:zlib`-backed
  * response compression.
  *
  * @remarks

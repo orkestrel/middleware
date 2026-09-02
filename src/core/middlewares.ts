@@ -88,7 +88,7 @@ import { Session } from './Session.js'
 import { computeBodyETag, matchesETag } from '@orkestrel/server'
 
 /**
- * The outermost error-rendering battery — catches a downstream throw and
+ * Creates the outermost error-rendering battery — catches a downstream throw and
  * renders it as a `Response`.
  *
  * @typeParam TState - The consumer's opaque per-request state type
@@ -133,7 +133,7 @@ export function createBoundary<TState>(options?: BoundaryOptions): MiddlewareHan
 }
 
 /**
- * The access-log/timing seam — records one {@link TelemetryEntry} per request
+ * Creates the access-log/timing seam — records one {@link TelemetryEntry} per request
  * after the response settles.
  *
  * @typeParam TState - The consumer's opaque per-request state type
@@ -169,7 +169,7 @@ export function createTelemetry<TState>(options: TelemetryOptions): MiddlewareHa
 }
 
 /**
- * Response-body compression — negotiates and compresses a buffered response
+ * Creates the response-body compression battery — negotiates and compresses a buffered response
  * body over the runtime's feature-detected `CompressionStream` codings.
  *
  * @typeParam TState - The consumer's opaque per-request state type
@@ -207,7 +207,7 @@ export function createCompression<TState>(options?: CompressionOptions): Middlew
 }
 
 /**
- * Security-headers + request-identifier battery.
+ * Creates the security-headers + request-identifier battery.
  *
  * @typeParam TState - The consumer's opaque per-request state type, must carry {@link IdentifierState}
  * @param options - See {@link SecurityOptions}
@@ -307,7 +307,7 @@ export function createSecurity<TState extends IdentifierState>(
 }
 
 /**
- * Cross-Origin Resource Sharing battery.
+ * Creates the Cross-Origin Resource Sharing battery.
  *
  * @typeParam TState - The consumer's opaque per-request state type
  * @param options - See {@link CorsOptions}
@@ -352,7 +352,7 @@ export function createCors<TState>(options?: CorsOptions): MiddlewareHandler<TSt
 }
 
 /**
- * The application-level per-request deadline battery.
+ * Creates the application-level per-request deadline battery.
  *
  * @typeParam TState - The consumer's opaque per-request state type
  * @param options - See {@link DeadlineOptions}
@@ -414,7 +414,7 @@ export function createDeadline<TState>(options: DeadlineOptions): MiddlewareHand
 }
 
 /**
- * The trusted-proxy client-IP resolver battery.
+ * Creates the trusted-proxy client-IP resolver battery.
  *
  * @typeParam TState - The consumer's opaque per-request state type, must carry {@link ClientState} and {@link ConnectionState}
  * @param options - See {@link ForwardedOptions}
@@ -453,7 +453,7 @@ export function createForwarded<TState extends ClientState & ConnectionState>(
 }
 
 /**
- * Dynamic response `ETag` + conditional GET battery.
+ * Creates the dynamic response `ETag` + conditional GET battery.
  *
  * @typeParam TState - The consumer's opaque per-request state type
  * @param options - See {@link ETagOptions}
@@ -490,7 +490,7 @@ export function createETag<TState>(options?: ETagOptions): MiddlewareHandler<TSt
 }
 
 /**
- * Bearer-token authentication battery.
+ * Creates the bearer-token authentication battery.
  *
  * @typeParam TState - The consumer's opaque per-request state type, must carry {@link BearerState}
  * @param options - See {@link BearerOptions}
@@ -535,7 +535,7 @@ export function createBearer<TState extends BearerState>(
 }
 
 /**
- * Fixed-window rate-limiting battery.
+ * Creates the fixed-window rate-limiting battery.
  *
  * @typeParam TState - The consumer's opaque per-request state type, must carry {@link BearerState}, {@link ClientState}, and {@link ConnectionState}
  * @param options - See {@link LimiterOptions}
@@ -627,7 +627,7 @@ export function createLimiter<TState extends BearerState & ClientState & Connect
 }
 
 /**
- * The body-driving battery — eagerly awaits the cached `context.body()` so
+ * Creates the body-driving battery — eagerly awaits the cached `context.body()` so
  * its throws (or a malformed-JSON `undefined`) surface before the handler
  * runs, and stashes the resolved value onto {@link BodyState.body}.
  *
@@ -664,7 +664,7 @@ export function createBody<TState extends BodyState = BodyState>(): MiddlewareHa
 }
 
 /**
- * The generic session battery — resolves, mints, and persists a session
+ * Creates the generic session battery — resolves, mints, and persists a session
  * across the request, with a mid-handler `regenerate`/`destroy` control handle.
  *
  * @typeParam S - The session entity type the store persists (must implement {@link SessionInterface})
@@ -783,7 +783,7 @@ export function createSession<
 }
 
 /**
- * Session-bound double-submit CSRF protection battery.
+ * Creates the session-bound double-submit CSRF protection battery.
  *
  * @typeParam TState - The consumer's opaque per-request state type, must carry {@link CSRFState}, {@link SessionState}, and {@link ConnectionState}
  * @param options - See {@link CSRFOptions}
@@ -857,7 +857,7 @@ export function createCSRF<TState extends CSRFState & SessionState & ConnectionS
 }
 
 /**
- * Scope a battery to run ONLY on a set of exact pathnames — elsewhere it
+ * Scopes a battery to run ONLY on a set of exact pathnames — elsewhere it
  * steps aside via `next()`.
  *
  * @typeParam TState - The consumer's opaque per-request state type
@@ -882,7 +882,7 @@ export function only<TState>(
 }
 
 /**
- * Scope a battery to run everywhere EXCEPT a set of exact pathnames — there
+ * Scopes a battery to run everywhere EXCEPT a set of exact pathnames — there
  * it steps aside via `next()`.
  *
  * @typeParam TState - The consumer's opaque per-request state type
