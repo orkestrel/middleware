@@ -207,5 +207,6 @@ describe('DatabaseSessionStore earlier column names', () => {
 		// missing `seen`/`created` into `sessionExpired`.
 		expect(await table.get('a')).toBeUndefined()
 		expect(await store.get('a', 10_000_000)).toBeUndefined()
+		expect(await driver.read('sessions', 'a')).toMatchObject({ lastSeen: 0, createdAt: 0 })
 	})
 })

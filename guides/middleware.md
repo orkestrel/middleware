@@ -840,11 +840,14 @@ still served through the fallback, because the operator configured that path.
 - [`tests/src/core/stores/DatabaseSessionStore.test.ts`](../tests/src/core/stores/DatabaseSessionStore.test.ts) —
   get/set/delete over a real `@orkestrel/database` memory-driver table, idle +
   absolute-lifetime eviction (including the underlying row's removal),
-  `created` stamped once and preserved across re-set, guard rejection.
+  `created` stamped once and preserved across re-set, guard rejection,
+  construction guards, rebuild through the injected restore step, and the
+  fail-closed read of a row stored under the earlier cursor columns.
 - [`tests/src/core/factories.test.ts`](../tests/src/core/factories.test.ts) —
   `createCookieTransport`/`createHeaderTransport` round-trips over real
   `Request`/`Response`, `createMemorySessionStore` shallow mirror,
-  `createRestoredSession` snapshot rebuilds and malformed refusals.
+  `createRestoredSession` snapshot rebuilds and malformed refusals,
+  `createDatabaseSessionStore` construction guard.
 - [`tests/src/core/middlewares.test.ts`](../tests/src/core/middlewares.test.ts) —
   every battery's defaults, options, skip conditions, and §6 invariants;
   the canonical onion composed end-to-end.
