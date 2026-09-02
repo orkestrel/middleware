@@ -1,6 +1,7 @@
-import type { MemorySessionStoreOptions } from '@src/core'
+import type { MemorySessionStoreOptions, Session } from '@src/core'
 import { DEFAULT_SESSION_CAPACITY, MemorySessionStore } from '@src/core'
 import { describe, expect, it } from 'vitest'
+import { buildSession } from '../../../setup.js'
 
 // ============================================================================
 //  @orkestrel/middleware — MemorySessionStore unit tests (§16 mirror). Every
@@ -41,47 +42,47 @@ describe('MemorySessionStore construction', () => {
 
 describe('MemorySessionStore get/set', () => {
 	it('resolves undefined for an id that was never set', async () => {
-		const store = new MemorySessionStore<string>()
+		const store = new MemorySessionStore<Session>()
 		expect(await store.get('missing', 0)).toBeUndefined()
 	})
 
 	it('round-trips a set session back through get', async () => {
-		const store = new MemorySessionStore<string>()
-		await store.set('a', 'payload', 0)
-		expect(await store.get('a', 0)).toBe('payload')
+		const store = new MemorySessionStore<Session>()
+		await store.set(buildSession('a'), 0)
+		expect((await store.get('a', 0))?.id).toBe('a')
 	})
 
 	it('a later set replaces the session payload for the same id', async () => {
-		const store = new MemorySessionStore<string>()
-		await store.set('a', 'first', 0)
-		await store.set('a', 'second', 100)
-		expect(await store.get('a', 100)).toBe('second')
+		const store = new MemorySessionStore<Session>()
+		await store.set(buildSession('a', 'first'), 0)
+		await store.set(buildSession('a', 'second'), 100)
+		expect((await store.get('a', 100))?.state.get('mark')).toBe('second')
 	})
 })
 
 describe('MemorySessionStore idle (ttl) eviction', () => {
 	it('resolves the session right up to the boundary (exclusive)', async () => {
-		const store = new MemorySessionStore<string>({ ttl: 1_000 })
-		await store.set('a', 'payload', 0)
-		expect(await store.get('a', 999)).toBe('payload')
+		const store = new MemorySessionStore<Session>({ ttl: 1_000 })
+		await store.set(buildSession('a'), 0)
+		expect((await store.get('a', 999))?.id).toBe('a')
 	})
 
-	it('evicts exactly AT the idle boundary (now - lastSeen >= ttl)', async () => {
-		const store = new MemorySessionStore<string>({ ttl: 1_000 })
-		await store.set('a', 'payload', 0)
+	it('evicts exactly AT the idle boundary (now - seen >= ttl)', async () => {
+		const store = new MemorySessionStore<Session>({ ttl: 1_000 })
+		await store.set(buildSession('a'), 0)
 		expect(await store.get('a', 1_000)).toBeUndefined()
 	})
 
-	it('a live read touches lastSeen, resetting the idle window', async () => {
-		const store = new MemorySessionStore<string>({ ttl: 1_000 })
-		await store.set('a', 'payload', 0)
-		expect(await store.get('a', 900)).toBe('payload')
-		expect(await store.get('a', 1_800)).toBe('payload')
+	it('a live read touches seen, resetting the idle window', async () => {
+		const store = new MemorySessionStore<Session>({ ttl: 1_000 })
+		await store.set(buildSession('a'), 0)
+		expect((await store.get('a', 900))?.id).toBe('a')
+		expect((await store.get('a', 1_800))?.id).toBe('a')
 	})
 
 	it('evicting an idle-expired session removes it permanently', async () => {
-		const store = new MemorySessionStore<string>({ ttl: 1_000 })
-		await store.set('a', 'payload', 0)
+		const store = new MemorySessionStore<Session>({ ttl: 1_000 })
+		await store.set(buildSession('a'), 0)
 		expect(await store.get('a', 1_000)).toBeUndefined()
 		expect(await store.get('a', 1_000)).toBeUndefined()
 	})
@@ -89,46 +90,46 @@ describe('MemorySessionStore idle (ttl) eviction', () => {
 
 describe('MemorySessionStore absolute lifetime eviction', () => {
 	it('evicts a continuously-touched session once its absolute lifetime elapses', async () => {
-		const store = new MemorySessionStore<string>({ ttl: 1_000, lifetime: 250 })
-		await store.set('a', 'payload', 0)
-		expect(await store.get('a', 50)).toBe('payload')
-		expect(await store.get('a', 100)).toBe('payload')
-		expect(await store.get('a', 200)).toBe('payload')
+		const store = new MemorySessionStore<Session>({ ttl: 1_000, lifetime: 250 })
+		await store.set(buildSession('a'), 0)
+		expect((await store.get('a', 50))?.id).toBe('a')
+		expect((await store.get('a', 100))?.id).toBe('a')
+		expect((await store.get('a', 200))?.id).toBe('a')
 		expect(await store.get('a', 250)).toBeUndefined()
 	})
 
-	it('evicts exactly AT the lifetime boundary (now - createdAt >= lifetime)', async () => {
-		const store = new MemorySessionStore<string>({ lifetime: 1_000 })
-		await store.set('a', 'payload', 0)
-		expect(await store.get('a', 999)).toBe('payload')
+	it('evicts exactly AT the lifetime boundary (now - created >= lifetime)', async () => {
+		const store = new MemorySessionStore<Session>({ lifetime: 1_000 })
+		await store.set(buildSession('a'), 0)
+		expect((await store.get('a', 999))?.id).toBe('a')
 		expect(await store.get('a', 1_000)).toBeUndefined()
 	})
 })
 
-describe('MemorySessionStore createdAt stamping', () => {
-	it('stamps createdAt once at the first set and preserves it across a later re-set', async () => {
-		const store = new MemorySessionStore<string>({ lifetime: 1_000 })
-		await store.set('a', 'first', 0)
-		await store.set('a', 'second', 500)
-		expect(await store.get('a', 999)).toBe('second')
+describe('MemorySessionStore created stamping', () => {
+	it('stamps created once at the first set and preserves it across a later re-set', async () => {
+		const store = new MemorySessionStore<Session>({ lifetime: 1_000 })
+		await store.set(buildSession('a', 'first'), 0)
+		await store.set(buildSession('a', 'second'), 500)
+		expect((await store.get('a', 999))?.state.get('mark')).toBe('second')
 		expect(await store.get('a', 1_000)).toBeUndefined()
 	})
 })
 
 describe('MemorySessionStore capacity', () => {
 	it('defaults to DEFAULT_SESSION_CAPACITY and evicts the oldest-written entry once exceeded', async () => {
-		const store = new MemorySessionStore<string>()
+		const store = new MemorySessionStore<Session>()
 		for (let index = 0; index < DEFAULT_SESSION_CAPACITY; index += 1)
-			await store.set(`id-${index}`, 'payload', 0)
-		expect(await store.get('id-0', 0)).toBe('payload')
-		await store.set('overflow', 'payload', 0)
+			await store.set(buildSession(`id-${index}`), 0)
+		expect((await store.get('id-0', 0))?.id).toBe('id-0')
+		await store.set(buildSession('overflow'), 0)
 		expect(await store.get('id-0', 0)).toBeUndefined()
-		expect(await store.get('overflow', 0)).toBe('payload')
+		expect((await store.get('overflow', 0))?.id).toBe('overflow')
 	})
 
 	it('keeps size at or below an explicit capacity when inserting capacity+1 distinct never-read ids', async () => {
-		const store = new MemorySessionStore<string>({ capacity: 5 })
-		for (let index = 0; index < 6; index += 1) await store.set(`id-${index}`, 'payload', 0)
+		const store = new MemorySessionStore<Session>({ capacity: 5 })
+		for (let index = 0; index < 6; index += 1) await store.set(buildSession(`id-${index}`), 0)
 		let alive = 0
 		for (let index = 0; index < 6; index += 1)
 			if ((await store.get(`id-${index}`, 0)) !== undefined) alive += 1
@@ -136,36 +137,36 @@ describe('MemorySessionStore capacity', () => {
 	})
 
 	it('evicts the least-recently-WRITTEN id, not the least-recently-inserted', async () => {
-		const store = new MemorySessionStore<string>({ capacity: 2 })
-		await store.set('a', '1', 0)
-		await store.set('b', '2', 0)
+		const store = new MemorySessionStore<Session>({ capacity: 2 })
+		await store.set(buildSession('a', '1'), 0)
+		await store.set(buildSession('b', '2'), 0)
 		// Touch 'a' again — refreshes its write recency, making 'b' the oldest.
-		await store.set('a', '1-touched', 0)
+		await store.set(buildSession('a', '1-touched'), 0)
 		// Inserting a brand-new id exceeds capacity — evicts the least-recently-written, 'b'.
-		await store.set('c', '3', 0)
+		await store.set(buildSession('c', '3'), 0)
 		expect(await store.get('b', 0)).toBeUndefined()
-		expect(await store.get('a', 0)).toBe('1-touched')
-		expect(await store.get('c', 0)).toBe('3')
+		expect((await store.get('a', 0))?.state.get('mark')).toBe('1-touched')
+		expect((await store.get('c', 0))?.state.get('mark')).toBe('3')
 	})
 
 	it('invokes evict with the evicted id on a capacity eviction', async () => {
 		const evicted: string[] = []
-		const store = new MemorySessionStore<string>({ capacity: 1, evict: (id) => evicted.push(id) })
-		await store.set('a', '1', 0)
-		await store.set('b', '2', 0)
+		const store = new MemorySessionStore<Session>({ capacity: 1, evict: (id) => evicted.push(id) })
+		await store.set(buildSession('a', '1'), 0)
+		await store.set(buildSession('b', '2'), 0)
 		expect(evicted).toEqual(['a'])
 	})
 
 	it('swallows a throwing evict callback without affecting the store', async () => {
-		const store = new MemorySessionStore<string>({
+		const store = new MemorySessionStore<Session>({
 			capacity: 1,
 			evict: () => {
 				throw new Error('evict callback is broken')
 			},
 		})
-		await store.set('a', '1', 0)
-		await expect(store.set('b', '2', 0)).resolves.toBeUndefined()
-		expect(await store.get('b', 0)).toBe('2')
+		await store.set(buildSession('a', '1'), 0)
+		await expect(store.set(buildSession('b', '2'), 0)).resolves.toBeUndefined()
+		expect((await store.get('b', 0))?.state.get('mark')).toBe('2')
 	})
 
 	it('throws a TypeError for capacity 0, negative, or non-integer', () => {
@@ -177,14 +178,14 @@ describe('MemorySessionStore capacity', () => {
 
 describe('MemorySessionStore delete', () => {
 	it('deletes a present session so a later get resolves undefined', async () => {
-		const store = new MemorySessionStore<string>()
-		await store.set('a', 'payload', 0)
+		const store = new MemorySessionStore<Session>()
+		await store.set(buildSession('a'), 0)
 		await store.delete('a')
 		expect(await store.get('a', 0)).toBeUndefined()
 	})
 
 	it('is a total no-op deleting an absent id (never throws)', async () => {
-		const store = new MemorySessionStore<string>()
+		const store = new MemorySessionStore<Session>()
 		await expect(store.delete('missing')).resolves.toBeUndefined()
 	})
 })

@@ -83,26 +83,42 @@ export interface StaticOptions {
 }
 
 /**
- * Per-category size/count caps `createMultipart` enforces MID-STREAM.
+ * The caller's partial {@link MultipartLimits} — `createMultipart`'s `limits`
+ * option, with every member optional.
  *
  * @remarks
- * - `file` — the maximum size in bytes of one uploaded file; defaults to
+ * `resolveMultipartLimits` applies each documented default to an omitted leaf,
+ * so a caller states only the caps it wants to move.
+ * - `file` — the per-file caps: `size` in bytes, `count` of file parts.
+ * - `field` — the per-field caps: `size` in bytes, `count` of text field parts.
+ * - `total` — the maximum combined byte size of the whole request body.
+ */
+export interface MultipartLimitsInput {
+	readonly file?: { readonly size?: number; readonly count?: number }
+	readonly field?: { readonly size?: number; readonly count?: number }
+	readonly total?: number
+}
+
+/**
+ * Per-category size/count caps `createMultipart` enforces MID-STREAM — the
+ * effective limits, every documented default already applied.
+ *
+ * @remarks
+ * - `file.size` — the maximum size in bytes of one uploaded file; defaults to
  *   {@link DEFAULT_MULTIPART_FILE}.
- * - `files` — the maximum number of file parts; defaults to
+ * - `file.count` — the maximum number of file parts; defaults to
  *   {@link DEFAULT_MULTIPART_FILES}.
- * - `field` — the maximum size in bytes of one text field; defaults to
+ * - `field.size` — the maximum size in bytes of one text field; defaults to
  *   {@link DEFAULT_MULTIPART_FIELD}.
- * - `fields` — the maximum number of text field parts; defaults to
+ * - `field.count` — the maximum number of text field parts; defaults to
  *   {@link DEFAULT_MULTIPART_FIELDS}.
  * - `total` — the maximum combined byte size of the whole request body;
  *   defaults to {@link DEFAULT_MULTIPART_TOTAL}.
  */
 export interface MultipartLimits {
-	readonly file?: number
-	readonly files?: number
-	readonly field?: number
-	readonly fields?: number
-	readonly total?: number
+	readonly file: { readonly size: number; readonly count: number }
+	readonly field: { readonly size: number; readonly count: number }
+	readonly total: number
 }
 
 /**
@@ -110,7 +126,7 @@ export interface MultipartLimits {
  * multipart upload parsing.
  *
  * @remarks
- * - `limits` — see {@link MultipartLimits}.
+ * - `limits` — see {@link MultipartLimitsInput}.
  * - `allowed` — a MIME allow-list validated against SNIFFED (not merely
  *   declared) bytes; an empty array allows nothing. Omitted ⇒ no type
  *   rejection.
@@ -118,17 +134,17 @@ export interface MultipartLimits {
  *   `os.tmpdir()`.
  */
 export interface MultipartOptions {
-	readonly limits?: MultipartLimits
+	readonly limits?: MultipartLimitsInput
 	readonly allowed?: readonly string[]
 	readonly directory?: string
 }
 
 /**
- * Why `createMultipart` rejected a request — the axis {@link MultipartError}
- * maps onto its HTTP status: `'limit'` → 413, `'malformed'` → 400,
- * `'rejected'` → 415.
+ * Why `createMultipart` rejected a request — the machine-readable code
+ * {@link MultipartError} carries and maps onto its HTTP status: `'limit'` →
+ * 413, `'malformed'` → 400, `'rejected'` → 415.
  */
-export type MultipartReason = 'limit' | 'malformed' | 'rejected'
+export type MultipartErrorCode = 'limit' | 'malformed' | 'rejected'
 
 /**
  * The lifecycle stage of one staged upload's temp file.
@@ -160,7 +176,7 @@ export type UploadStatus = 'staged' | 'moved'
  * - `status` — see {@link UploadStatus}.
  * - `path` — the file's current on-disk path.
  */
-export interface UploadedFileInterface extends Omit<MultipartFile, 'status'> {
+export interface UploadedFile extends Omit<MultipartFile, 'status'> {
 	readonly status: UploadStatus
 }
 
@@ -171,23 +187,25 @@ export interface UploadedFileInterface extends Omit<MultipartFile, 'status'> {
  * @remarks
  * - `name` — the `Content-Disposition` `name` parameter, or `undefined` when absent.
  * - `filename` — the `Content-Disposition` `filename` parameter, or `undefined` when absent.
- * - `contentType` — the part's declared `Content-Type` header value, or `undefined` when absent.
+ * - `mime` — the part's declared `Content-Type` header value, or `undefined` when absent.
  */
 export interface PartHeaders {
 	readonly name: string | undefined
 	readonly filename: string | undefined
-	readonly contentType: string | undefined
+	readonly mime: string | undefined
 }
 
 /**
  * The full field set `createUploadedFile` needs to build an
- * {@link UploadedFileInterface} record.
+ * {@link UploadedFile} record.
  *
  * @remarks
  * - `field` — the multipart field name the file was submitted under.
  * - `name` — the client-declared filename (metadata only).
  * - `size` — the file's byte size.
- * - `mime` — the sniffed MIME type, or the declared one when nothing sniffed.
+ * - `mime` — the SNIFFED (magic-byte-detected) MIME type when a signature
+ *   matches; otherwise the part's declared `Content-Type`; otherwise
+ *   {@link DEFAULT_CONTENT_TYPE}.
  * - `validated` — `true` when the sniffed type matches the declared `Content-Type`.
  * - `status` — see {@link UploadStatus}.
  * - `path` — the file's current on-disk path.

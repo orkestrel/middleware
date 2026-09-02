@@ -600,7 +600,7 @@ export function createLimiter<TState extends BearerState & ClientState & Connect
 				}
 			}
 			bucket = {
-				budget: createBudget<number>({ max, consume: Number }),
+				budget: createBudget<number>({ max, consumer: Number }),
 				resetAt: now + window,
 			}
 			buckets.set(key, bucket)
@@ -672,7 +672,7 @@ export function createBody<TState extends BodyState = BodyState>(): MiddlewareHa
  * @param options - See {@link SessionOptions}
  * @returns A `MiddlewareHandler<TState>`
  * @throws {TypeError} When any option is malformed
- * @throws {HTTPError} `404` when `require` is set and no session resolves or mints
+ * @throws {HTTPError} `404` when `required` is set and no session resolves or mints
  *
  * @example
  * ```ts
@@ -688,7 +688,7 @@ export function createSession<
 		!isFunction(options.transport.write) ||
 		!isFunction(options.transport.clear)
 	)
-		throw new TypeError('SessionOptions.transport must implement SessionTransport')
+		throw new TypeError('SessionOptions.transport must implement SessionTransportInterface')
 	if (
 		options.store !== undefined &&
 		(!isFunction(options.store.get) ||
@@ -704,10 +704,8 @@ export function createSession<
 		throw new TypeError('SessionOptions.create must be a function when provided')
 	if (options.mint !== undefined && !isFunction(options.mint))
 		throw new TypeError('SessionOptions.mint must be a function when provided')
-	if (options.require !== undefined && !isBoolean(options.require))
-		throw new TypeError('SessionOptions.require must be a boolean when provided')
-	if (options.ends !== undefined && !isBoolean(options.ends))
-		throw new TypeError('SessionOptions.ends must be a boolean when provided')
+	if (options.required !== undefined && !isBoolean(options.required))
+		throw new TypeError('SessionOptions.required must be a boolean when provided')
 	if (options.clock !== undefined && !isFunction(options.clock))
 		throw new TypeError('SessionOptions.clock must be a function when provided')
 
@@ -723,19 +721,13 @@ export function createSession<
 		})
 	const create = options.create
 	const mint = options.mint
-	const requireSession = options.require ?? false
-	const ends = options.ends ?? false
+	const requireSession = options.required ?? false
 
 	return async (request, context, next) => {
 		const now = clock()
 		const encrypted = context.state.connection?.encrypted ?? false
 		const incomingId = await transport.read(request)
 		let session = incomingId !== undefined ? await store.get(incomingId, now) : undefined
-
-		if (ends && context.method === 'DELETE' && session !== undefined) {
-			await store.delete(session.id)
-			return new Response(null, { status: 204 })
-		}
 
 		let minted = false
 		if (session === undefined) {
@@ -777,11 +769,11 @@ export function createSession<
 				await store.delete(activeSession.id)
 				await transport.clear(response)
 			} else if (regenerated !== undefined) {
-				await store.set(regenerated.id, regenerated, clock())
+				await store.set(regenerated, clock())
 				await store.delete(activeSession.id)
 				await transport.write(response, regenerated.id, encrypted)
 			} else {
-				await store.set(activeSession.id, activeSession, clock())
+				await store.set(activeSession, clock())
 				if (minted) await transport.write(response, activeSession.id, encrypted)
 			}
 		}

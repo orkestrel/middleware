@@ -1,8 +1,8 @@
-import type { MultipartReason, StaticOptions } from './types.js'
+import type { MultipartErrorCode, StaticOptions } from './types.js'
 import type { Encoding } from '@orkestrel/server'
 
-/** The HTTP status `createMultipart` renders for each {@link MultipartReason}. */
-export const MULTIPART_REASON_STATUS: Readonly<Record<MultipartReason, number>> = Object.freeze({
+/** The HTTP status `createMultipart` renders for each {@link MultipartErrorCode}. */
+export const MULTIPART_STATUS: Readonly<Record<MultipartErrorCode, number>> = Object.freeze({
 	limit: 413,
 	malformed: 400,
 	rejected: 415,

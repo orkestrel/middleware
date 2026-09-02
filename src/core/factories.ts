@@ -6,23 +6,23 @@ import type {
 	SessionLimits,
 	SessionRow,
 	SessionStoreInterface,
-	SessionTransport,
+	SessionTransportInterface,
 } from './types.js'
-import type { Session } from './Session.js'
 import type { Guard } from '@orkestrel/contract'
 import type { TableInterface } from '@orkestrel/database'
-import { isString } from '@orkestrel/contract'
+import { isRecord, isString } from '@orkestrel/contract'
 import { clearCookie, readSignedCookie, resolveSecure, writeSignedCookie } from '@orkestrel/server'
 import { DEFAULT_SESSION_COOKIE, DEFAULT_SESSION_HEADER } from './constants.js'
+import { Session } from './Session.js'
 import { DatabaseSessionStore } from './stores/DatabaseSessionStore.js'
 import { MemorySessionStore } from './stores/MemorySessionStore.js'
 
 /**
- * Create a signed-cookie {@link SessionTransport} — the session id travels as
+ * Create a signed-cookie {@link SessionTransportInterface} — the session id travels as
  * a `signToken`-signed cookie value.
  *
  * @param options - See {@link CookieTransportOptions}
- * @returns A {@link SessionTransport}
+ * @returns A {@link SessionTransportInterface}
  * @throws {TypeError} When `options.secret` or `options.name` is malformed
  *
  * @example
@@ -30,7 +30,7 @@ import { MemorySessionStore } from './stores/MemorySessionStore.js'
  * const transport = createCookieTransport({ secret: 'shh' })
  * ```
  */
-export function createCookieTransport(options: CookieTransportOptions): SessionTransport {
+export function createCookieTransport(options: CookieTransportOptions): SessionTransportInterface {
 	if (
 		!isString(options.secret) &&
 		(!Array.isArray(options.secret) || !options.secret.every(isString))
@@ -56,11 +56,11 @@ export function createCookieTransport(options: CookieTransportOptions): SessionT
 }
 
 /**
- * Create a bare-header {@link SessionTransport} — the session id travels
+ * Create a bare-header {@link SessionTransportInterface} — the session id travels
  * verbatim in a request/response header.
  *
  * @param options - See {@link HeaderTransportOptions}
- * @returns A {@link SessionTransport}
+ * @returns A {@link SessionTransportInterface}
  * @throws {TypeError} When `options.header` is malformed
  *
  * @example
@@ -68,7 +68,7 @@ export function createCookieTransport(options: CookieTransportOptions): SessionT
  * const transport = createHeaderTransport()
  * ```
  */
-export function createHeaderTransport(options?: HeaderTransportOptions): SessionTransport {
+export function createHeaderTransport(options?: HeaderTransportOptions): SessionTransportInterface {
 	if (options?.header !== undefined && !isString(options.header))
 		throw new TypeError('HeaderTransportOptions.header must be a string when provided')
 	const header = options?.header ?? DEFAULT_SESSION_HEADER
@@ -95,16 +95,15 @@ export function createHeaderTransport(options?: HeaderTransportOptions): Session
  * @throws {TypeError} When `options.ttl` or `options.lifetime` is malformed
  *
  * @remarks
- * The {@link Session} entity is the `create` option's default value factory
- * for `createSession` and deliberately ships WITHOUT its own `create*`
- * factory — the name `createSession` belongs to the battery, not this class.
+ * The store holds whatever {@link SessionInterface} entity `createSession`'s
+ * `create` option produced, keyed by that entity's own `id`.
  *
  * @example
  * ```ts
  * const store = createMemorySessionStore({ ttl: 60_000 })
  * ```
  */
-export function createMemorySessionStore<S>(
+export function createMemorySessionStore<S extends SessionInterface>(
 	options?: MemorySessionStoreOptions,
 ): SessionStoreInterface<S> {
 	return new MemorySessionStore<S>(options)
@@ -120,6 +119,7 @@ export function createMemorySessionStore<S>(
  * @param guard - A {@link Guard} narrowing a restored snapshot to `S`
  * @param options - See {@link SessionLimits}
  * @returns A {@link SessionStoreInterface}
+ * @throws {TypeError} When `options.ttl` or `options.lifetime` is malformed
  *
  * @remarks
  * This factory only wraps `new DatabaseSessionStore(...)` — it never opens a
@@ -137,4 +137,25 @@ export function createDatabaseSessionStore<S extends SessionInterface = Session>
 	options?: SessionLimits,
 ): SessionStoreInterface<S> {
 	return new DatabaseSessionStore<S>(table, guard, options)
+}
+
+/**
+ * Rebuilds a {@link Session} from an untrusted snapshot value — the inverse of
+ * `snapshotSession` and a durable store's `get` deserialization step.
+ *
+ * @param value - The candidate snapshot, of unknown shape
+ * @returns A rebuilt {@link Session}, or `undefined` when `value` is malformed
+ *
+ * @example
+ * ```ts
+ * createRestoredSession({ id: 'abc', data: { userId: 'u_1' } }) // Session { id: 'abc' }
+ * createRestoredSession({ id: 1 }) // undefined
+ * ```
+ */
+export function createRestoredSession(value: unknown): Session | undefined {
+	if (!isRecord(value)) return undefined
+	if (!isString(value.id) || !isRecord(value.data)) return undefined
+	const session = new Session(value.id)
+	for (const [key, entry] of Object.entries(value.data)) session.set(key, entry)
+	return session
 }

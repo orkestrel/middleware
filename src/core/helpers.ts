@@ -1,6 +1,6 @@
 import type {
 	BearerState,
-	ClientInfo,
+	Client,
 	ClientState,
 	CompressResponseOptions,
 	ConnectionState,
@@ -11,9 +11,8 @@ import type {
 	SessionSnapshot,
 } from './types.js'
 import type { Encoding, MiddlewareContext } from '@orkestrel/server'
-import { isRecord, isString } from '@orkestrel/contract'
+import { isFiniteNumber } from '@orkestrel/contract'
 import { clientRateKey, isCompressibleType, mergeVary, negotiateEncoding } from '@orkestrel/server'
-import { Session } from './Session.js'
 
 /**
  * Derive `createLimiter`'s default rate-limit bucket key from a request's
@@ -442,11 +441,12 @@ export async function compressResponse(
 }
 
 /**
- * Copy every entry of one session's `data` into another — the regenerate
- * data-carry `createSession`'s `control.regenerate()` applies.
+ * Copies every entry of one session's `state` into another — the regenerate
+ * state-carry `createSession`'s `control.regenerate()` applies.
  *
- * @param from - The source session whose `data` is copied
- * @param to - The destination session `data` is copied into
+ * @param from - The source session whose `state` is copied
+ * @param to - The destination session the entries are written into, through
+ * its own `set` mutator
  *
  * @example
  * ```ts
@@ -454,7 +454,7 @@ export async function compressResponse(
  * ```
  */
 export function transferSessionData(from: SessionInterface, to: SessionInterface): void {
-	for (const [key, value] of from.data) to.data.set(key, value)
+	for (const [key, value] of from.state) to.set(key, value)
 }
 
 /**
@@ -475,18 +475,18 @@ export function isPreflight(method: string, headers: Headers): boolean {
 }
 
 /**
- * A parsed client-info fact for {@link ClientInfo} — a leaf shaping helper
+ * A parsed client-info fact for {@link Client} — a leaf shaping helper
  * `createForwarded` uses to build its stashed slice.
  *
  * @param ip - The resolved client IP, if any
- * @returns The {@link ClientInfo} slice value
+ * @returns The {@link Client} slice value
  *
  * @example
  * ```ts
  * buildClientInfo('203.0.113.7') // { ip: '203.0.113.7' }
  * ```
  */
-export function buildClientInfo(ip: string | undefined): ClientInfo {
+export function buildClientInfo(ip: string | undefined): Client {
 	return { ...(ip !== undefined ? { ip } : {}) }
 }
 
@@ -530,7 +530,7 @@ export function equalsConstantTime(a: string, b: string): boolean {
  *
  * @example
  * ```ts
- * sessionExpired({ lastSeen: 0, createdAt: 0 }, 1_000, { ttl: 500 }) // true
+ * sessionExpired({ seen: 0, created: 0 }, 1_000, { ttl: 500 }) // true
  * ```
  */
 export function sessionExpired(
@@ -538,18 +538,41 @@ export function sessionExpired(
 	now: number,
 	limits: SessionLimits,
 ): boolean {
-	if (limits.ttl !== undefined && now - cursors.lastSeen >= limits.ttl) return true
-	if (limits.lifetime !== undefined && now - cursors.createdAt >= limits.lifetime) return true
+	if (limits.ttl !== undefined && now - cursors.seen >= limits.ttl) return true
+	if (limits.lifetime !== undefined && now - cursors.created >= limits.lifetime) return true
 	return false
 }
 
 /**
- * Snapshot a session's `data` Map into a plain, serializable record — the
+ * Validates a store's idle and absolute-lifetime thresholds, throwing when
+ * either is present and malformed — the shared construction gate
+ * {@link MemorySessionStore} and {@link DatabaseSessionStore} both apply, so
+ * one malformed `ttl` is refused identically by whichever store receives it.
+ *
+ * @param limits - See {@link SessionLimits}
+ * @returns Nothing; a successful return means both thresholds are usable
+ * @throws {TypeError} Thrown when `ttl` or `lifetime` is present and is not a
+ * positive finite number
+ *
+ * @example
+ * ```ts
+ * validateSessionLimits({ ttl: 60_000 }) // returns; the thresholds are usable
+ * ```
+ */
+export function validateSessionLimits(limits: SessionLimits | undefined): void {
+	if (limits?.ttl !== undefined && (!isFiniteNumber(limits.ttl) || limits.ttl <= 0))
+		throw new TypeError('SessionLimits.ttl must be a positive finite number when provided')
+	if (limits?.lifetime !== undefined && (!isFiniteNumber(limits.lifetime) || limits.lifetime <= 0))
+		throw new TypeError('SessionLimits.lifetime must be a positive finite number when provided')
+}
+
+/**
+ * Snapshots a session's `state` into a plain, serializable record — the
  * projection a durable store's `set` writes to disk.
  *
  * @param session - The session to snapshot
  * @returns A {@link SessionSnapshot} whose `data` is a plain-object copy of
- * `session.data`, keyed alongside `session.id`
+ * `session.state`, keyed alongside `session.id`
  *
  * @remarks
  * `data` is built on a null-prototype object (`Object.create(null)`), never
@@ -565,27 +588,6 @@ export function sessionExpired(
  */
 export function snapshotSession(session: SessionInterface): SessionSnapshot {
 	const data: Record<string, unknown> = Object.create(null)
-	for (const [key, value] of session.data) data[key] = value
+	for (const [key, value] of session.state) data[key] = value
 	return { id: session.id, data }
-}
-
-/**
- * Rebuild a `Session` from an untrusted snapshot value (the inverse of
- * {@link snapshotSession}) — a durable store's `get` deserialization step.
- *
- * @param value - The candidate snapshot, of unknown shape
- * @returns A rebuilt `Session`, or `undefined` when `value` is malformed
- *
- * @example
- * ```ts
- * restoreSession({ id: 'abc', data: { userId: 'u_1' } }) // Session { id: 'abc', data: Map }
- * restoreSession({ id: 1 }) // undefined
- * ```
- */
-export function restoreSession(value: unknown): Session | undefined {
-	if (!isRecord(value)) return undefined
-	if (!isString(value.id) || !isRecord(value.data)) return undefined
-	const session = new Session(value.id)
-	for (const [key, entry] of Object.entries(value.data)) session.data.set(key, entry)
-	return session
 }

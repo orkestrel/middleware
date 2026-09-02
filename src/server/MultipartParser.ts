@@ -19,7 +19,7 @@ export class MultipartParser {
 	readonly #signal: AbortSignal
 	readonly #abort: () => void
 	readonly #boundary: string
-	readonly #limits: Required<MultipartLimits>
+	readonly #limits: MultipartLimits
 	readonly #allowed: readonly string[] | undefined
 	readonly #directory: string
 	readonly #staged: string[] = []
@@ -35,7 +35,7 @@ export class MultipartParser {
 		stream: ReadableStream<Uint8Array>,
 		signal: AbortSignal,
 		boundary: string,
-		limits: Required<MultipartLimits>,
+		limits: MultipartLimits,
 		allowed: readonly string[] | undefined,
 		directory: string,
 	) {
@@ -98,13 +98,12 @@ export class MultipartParser {
 					throw new MultipartError('malformed', 'multipart header block too large')
 				const headerBlock = this.#buffer.subarray(0, headerEnd).toString('utf8')
 				this.#buffer = this.#buffer.subarray(headerEnd + 4)
-				const { name, filename, contentType } = parsePartHeaders(headerBlock)
+				const { name, filename, mime } = parsePartHeaders(headerBlock)
 				if (name === undefined) throw new MultipartError('malformed', 'multipart part missing name')
 
 				const partDelimiter = Buffer.from(`\r\n--${this.#boundary}`)
 
-				if (filename !== undefined)
-					await this.#consumeFile(name, filename, contentType, partDelimiter)
+				if (filename !== undefined) await this.#consumeFile(name, filename, mime, partDelimiter)
 				else await this.#consumeField(name, partDelimiter)
 
 				while (this.#buffer.length < openMarker.length)
@@ -136,12 +135,12 @@ export class MultipartParser {
 	async #consumeFile(
 		name: string,
 		filename: string,
-		contentType: string | undefined,
+		mime: string | undefined,
 		delimiter: Buffer,
 	): Promise<void> {
 		if (filename !== '') {
 			this.#fileCount += 1
-			if (this.#fileCount > this.#limits.files)
+			if (this.#fileCount > this.#limits.file.count)
 				throw new MultipartError('limit', 'too many multipart files')
 		}
 		const path = join(this.#directory, randomUUID())
@@ -152,7 +151,7 @@ export class MultipartParser {
 		try {
 			await this.#scan(delimiter, 'unterminated multipart file part', async (chunk) => {
 				size += chunk.length
-				if (size > this.#limits.file)
+				if (size > this.#limits.file.size)
 					throw new MultipartError('limit', 'multipart file exceeds size limit')
 				if (head.length < 16) head = Buffer.concat([head, chunk.subarray(0, 16 - head.length)])
 				await handle.write(chunk)
@@ -166,11 +165,11 @@ export class MultipartParser {
 		}
 		if (filename === '') {
 			this.#fileCount += 1
-			if (this.#fileCount > this.#limits.files)
+			if (this.#fileCount > this.#limits.file.count)
 				throw new MultipartError('limit', 'too many multipart files')
 		}
 		const detected = detectMIME(head)
-		const declared = contentType ?? DEFAULT_CONTENT_TYPE
+		const declared = mime ?? DEFAULT_CONTENT_TYPE
 		const validated = detected !== undefined && detected === declared
 		if (this.#allowed !== undefined) {
 			const acceptable = detected !== undefined && this.#allowed.includes(detected)
@@ -197,12 +196,12 @@ export class MultipartParser {
 	// Accumulates one text field part and keys it onto the parsed body.
 	async #consumeField(name: string, delimiter: Buffer): Promise<void> {
 		this.#fieldCount += 1
-		if (this.#fieldCount > this.#limits.fields)
+		if (this.#fieldCount > this.#limits.field.count)
 			throw new MultipartError('limit', 'too many multipart fields')
 		let value = Buffer.alloc(0)
 		await this.#scan(delimiter, 'unterminated multipart field part', (chunk) => {
 			value = Buffer.concat([value, chunk])
-			if (value.length > this.#limits.field)
+			if (value.length > this.#limits.field.size)
 				throw new MultipartError('limit', 'multipart field exceeds size limit')
 		})
 		if (!isDangerousKey(name)) this.#fields[name] = value.toString('utf8')

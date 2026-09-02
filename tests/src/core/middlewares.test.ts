@@ -6,7 +6,7 @@ import type {
 	MultipartBody,
 	SessionInterface,
 	SessionState,
-	SessionTransport,
+	SessionTransportInterface,
 } from '@src/core'
 import type { ConnectionState } from '@src/core'
 import { describe, expect, it } from 'vitest'
@@ -38,6 +38,7 @@ import {
 	createEchoTerminal,
 	createManualClock,
 	createRecordingTerminal,
+	buildSession,
 	createTestContext,
 	ECHO_MARKER,
 	runChain,
@@ -1235,7 +1236,7 @@ describe('isMultipartBody', () => {
 
 // ── createSession ─────────────────────────────────────────────────────────
 
-function createTestTransport(): SessionTransport & {
+function createTestTransport(): SessionTransportInterface & {
 	readonly written: Array<{ readonly response: Response; readonly id: string }>
 	readonly cleared: Response[]
 } {
@@ -1303,12 +1304,12 @@ describe('createSession', () => {
 		)
 	})
 
-	it('require: true renders 404 when no session resolves and mint declines', async () => {
+	it('required: true renders 404 when no session resolves and mint declines', async () => {
 		const transport = createTestTransport()
 		const session = createSession<SessionInterface, SessionState>({
 			transport,
 			mint: () => false,
-			require: true,
+			required: true,
 		})
 		const request = buildRequest('/')
 		const context = createTestContext(request, {})
@@ -1317,37 +1318,7 @@ describe('createSession', () => {
 		})
 	})
 
-	it('ends: true + DELETE with a valid session id deletes it and short-circuits with 204', async () => {
-		const transport = createTestTransport()
-		const store = createMemorySessionStore<SessionInterface>()
-		const session = createSession<SessionInterface, SessionState>({ transport, store, ends: true })
-		const first = await runChain(
-			[session],
-			createEchoTerminal(),
-			buildRequest('/'),
-			createTestContext(buildRequest('/'), {}),
-		)
-		const id = first.headers.get('x-test-session')
-
-		const deleteRequest = buildRequest('/', {
-			method: 'DELETE',
-			headers: { 'x-test-session': id ?? '' },
-		})
-		const terminal = createRecordingTerminal()
-		const response = await runChain(
-			[session],
-			terminal.handler,
-			deleteRequest,
-			createTestContext(deleteRequest, {}),
-		)
-		expect(response.status).toBe(204)
-		expect(terminal.count).toBe(0)
-
-		const stored = await store.get(id ?? '', Date.now())
-		expect(stored).toBeUndefined()
-	})
-
-	it('regenerate() rotates the id, keeps the data, and the old id is dead', async () => {
+	it('regenerate() rotates the id, keeps the state, and the old id is dead', async () => {
 		const transport = createTestTransport()
 		const store = createMemorySessionStore<SessionInterface>()
 		const session = createSession<SessionInterface, SessionState>({ transport, store })
@@ -1361,8 +1332,8 @@ describe('createSession', () => {
 		expect(oldId).not.toBeNull()
 		const seeded = await store.get(oldId ?? '', Date.now())
 		expect(seeded).toBeDefined()
-		if (seeded !== undefined) seeded.data.set('k', 'v')
-		if (seeded !== undefined) await store.set(oldId ?? '', seeded, Date.now())
+		if (seeded !== undefined) seeded.set('k', 'v')
+		if (seeded !== undefined) await store.set(seeded, Date.now())
 
 		const request = buildRequest('/', { headers: { 'x-test-session': oldId ?? '' } })
 		const state: SessionState = {}
@@ -1379,7 +1350,7 @@ describe('createSession', () => {
 		expect(newId).not.toBeNull()
 		expect(newId).not.toBe(oldId)
 		const newStored = await store.get(newId ?? '', Date.now())
-		expect(newStored?.data.get('k')).toBe('v')
+		expect(newStored?.state.get('k')).toBe('v')
 		const oldStored = await store.get(oldId ?? '', Date.now())
 		expect(oldStored).toBeUndefined()
 	})
@@ -1484,12 +1455,10 @@ describe('createSession', () => {
 		expect(state.session?.id).not.toBe(id)
 	})
 
-	it('createdAt is preserved across a re-set of the same session', async () => {
-		const store = createMemorySessionStore<{ id: string; data: Map<string, unknown> }>({
-			lifetime: 10_000,
-		})
-		await store.set('s1', { id: 's1', data: new Map() }, 0)
-		await store.set('s1', { id: 's1', data: new Map() }, 5_000)
+	it('created is preserved across a re-set of the same session', async () => {
+		const store = createMemorySessionStore<SessionInterface>({ lifetime: 10_000 })
+		await store.set(buildSession('s1'), 0)
+		await store.set(buildSession('s1'), 5_000)
 		const stillAlive = await store.get('s1', 9_000)
 		expect(stillAlive).toBeDefined()
 		const expired = await store.get('s1', 10_500)
@@ -1531,9 +1500,9 @@ describe('createSession', () => {
 		const memory = createMemorySessionStore<SessionInterface>()
 		const store = {
 			get: (id: string, now: number) => memory.get(id, now),
-			set: (id: string, value: SessionInterface, now: number) => {
+			set: (value: SessionInterface, now: number) => {
 				setCount += 1
-				return memory.set(id, value, now)
+				return memory.set(value, now)
 			},
 			delete: (id: string) => memory.delete(id),
 		}
@@ -1571,21 +1540,6 @@ describe('createSession', () => {
 		)
 		expect(second.headers.get('x-test-session')).not.toBe(firstId)
 		expect(evicted).toContain(firstId)
-	})
-
-	it('DELETE with no resolvable session is a no-op — falls through to mint/next, never short-circuits', async () => {
-		const transport = createTestTransport()
-		const session = createSession<SessionInterface, SessionState>({ transport, ends: true })
-		const request = buildRequest('/', { method: 'DELETE' })
-		const terminal = createRecordingTerminal()
-		const response = await runChain(
-			[session],
-			terminal.handler,
-			request,
-			createTestContext(request, {}),
-		)
-		expect(terminal.count).toBe(1)
-		expect(response.status).not.toBe(204)
 	})
 
 	it('destroy() after an earlier regenerate() wins — the session is not persisted', async () => {
@@ -1727,8 +1681,8 @@ describe('createCSRF', () => {
 
 	it('SESSION-BOUND: a token minted under session A replayed under session B is rejected with 403; A-on-A is accepted', async () => {
 		const csrf = createCSRF<CSRFState & SessionState>({ secret: SECRET })
-		const sessionA: SessionInterface = { id: 'session-a', data: new Map() }
-		const sessionB: SessionInterface = { id: 'session-b', data: new Map() }
+		const sessionA: SessionInterface = buildSession('session-a')
+		const sessionB: SessionInterface = buildSession('session-b')
 
 		const mintStateA: CSRFState & SessionState = { session: sessionA }
 		const mintResponseA = await runChain(

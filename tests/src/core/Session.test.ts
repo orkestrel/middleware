@@ -11,24 +11,38 @@ describe('Session', () => {
 		expect(session.id).toBe('abc123')
 	})
 
-	it('starts with an empty, live, mutable data Map', () => {
+	it('starts with an empty state view', () => {
 		const session = new Session('abc123')
-		expect(session.data).toBeInstanceOf(Map)
-		expect(session.data.size).toBe(0)
+		expect(session.state).toBeInstanceOf(Map)
+		expect(session.state.size).toBe(0)
 	})
 
-	it('a handler can read and write data directly through the live Map', () => {
+	it('a handler reads state directly and writes it through the mutators', () => {
 		const session = new Session('abc123')
-		session.data.set('userId', 'u_1')
-		expect(session.data.get('userId')).toBe('u_1')
-		session.data.delete('userId')
-		expect(session.data.has('userId')).toBe(false)
+		session.set('userId', 'u_1')
+		expect(session.state.get('userId')).toBe('u_1')
+		expect(session.delete('userId')).toBe(true)
+		expect(session.state.has('userId')).toBe(false)
 	})
 
-	it('two sessions constructed with the same id carry independent data Maps', () => {
+	it('delete reports false for a key the session never held', () => {
+		const session = new Session('abc123')
+		expect(session.delete('absent')).toBe(false)
+	})
+
+	it('clear empties the state and leaves the id in place', () => {
+		const session = new Session('abc123')
+		session.set('userId', 'u_1')
+		session.set('role', 'admin')
+		session.clear()
+		expect(session.state.size).toBe(0)
+		expect(session.id).toBe('abc123')
+	})
+
+	it('two sessions constructed with the same id carry independent state', () => {
 		const first = new Session('same-id')
 		const second = new Session('same-id')
-		first.data.set('key', 'value')
-		expect(second.data.has('key')).toBe(false)
+		first.set('key', 'value')
+		expect(second.state.has('key')).toBe(false)
 	})
 })

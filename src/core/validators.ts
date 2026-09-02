@@ -8,25 +8,29 @@ import { isRecord, isString } from '@orkestrel/contract'
 
 /**
  * Determine whether a value implements {@link SessionInterface} — a total
- * structural guard: an `id` string plus a `data` `Map`. Prototype-agnostic —
- * accepts a plain object, a null-prototype object, AND a class instance (a
- * real `Session`), since a restored/stored session is routinely a class
- * instance, not a literal.
+ * structural guard: an `id` string, a `state` `Map`, and the `set`, `delete`,
+ * and `clear` mutators. Prototype-agnostic — accepts a plain object, a
+ * null-prototype object, AND a class instance (a real `Session`), since a
+ * restored/stored session is routinely a class instance, not a literal.
  *
  * @param value - The candidate value
  * @returns `true` when `value` is shaped like a {@link SessionInterface}
  *
  * @example
  * ```ts
- * isSession({ id: 'a', data: new Map() }) // true
  * isSession(new Session('a')) // true
+ * isSession({ id: 'a', state: new Map() }) // false — the mutators are missing
  * ```
  */
 export function isSession(value: unknown): value is SessionInterface {
 	if (typeof value !== 'object' || value === null) return false
 	const id: unknown = Reflect.get(value, 'id')
-	const data: unknown = Reflect.get(value, 'data')
-	return isString(id) && data instanceof Map
+	const state: unknown = Reflect.get(value, 'state')
+	if (!isString(id) || !(state instanceof Map)) return false
+	const set: unknown = Reflect.get(value, 'set')
+	const remove: unknown = Reflect.get(value, 'delete')
+	const clear: unknown = Reflect.get(value, 'clear')
+	return typeof set === 'function' && typeof remove === 'function' && typeof clear === 'function'
 }
 
 /**

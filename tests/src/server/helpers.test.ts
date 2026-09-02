@@ -1,5 +1,5 @@
-import { join, resolve as resolvePath } from 'node:path'
-import { open, readFile, stat, writeFile } from 'node:fs/promises'
+import { dirname, join, resolve as resolvePath } from 'node:path'
+import { open, readFile, stat, unlink, writeFile } from 'node:fs/promises'
 import { randomUUID } from 'node:crypto'
 import { gunzipSync, inflateSync } from 'node:zlib'
 import { describe, expect, it } from 'vitest'
@@ -18,6 +18,11 @@ import {
 	isUnderPath,
 	lookupContentType,
 	matchesBytes,
+	DEFAULT_MULTIPART_FIELD,
+	DEFAULT_MULTIPART_FIELDS,
+	DEFAULT_MULTIPART_FILE,
+	DEFAULT_MULTIPART_FILES,
+	DEFAULT_MULTIPART_TOTAL,
 	MULTIPART_MAX_HEADER_BLOCK,
 	MULTIPART_MAX_PREAMBLE,
 	moveUploadedFile,
@@ -25,7 +30,7 @@ import {
 	parseMultipartRequest,
 	parsePartHeaders,
 	readUploadedFile,
-	resolveDefaultDirectory,
+	resolveMultipartLimits,
 	resolveStaticFallbackPath,
 	resolveStaticPath,
 	streamFile,
@@ -465,7 +470,7 @@ describe('parseMultipartRequest', () => {
 			},
 		])
 		await expect(parseMultipartRequest(request, { allowed: ['image/png'] })).rejects.toSatisfy(
-			(error: unknown) => isMultipartError(error) && error.reason === 'rejected',
+			(error: unknown) => isMultipartError(error) && error.code === 'rejected',
 		)
 	})
 
@@ -480,7 +485,7 @@ describe('parseMultipartRequest', () => {
 			},
 		])
 		await expect(parseMultipartRequest(request, { allowed: ['text/plain'] })).rejects.toSatisfy(
-			(error: unknown) => isMultipartError(error) && error.reason === 'rejected',
+			(error: unknown) => isMultipartError(error) && error.code === 'rejected',
 		)
 	})
 
@@ -495,7 +500,7 @@ describe('parseMultipartRequest', () => {
 			},
 		])
 		await expect(parseMultipartRequest(request, { allowed: [] })).rejects.toSatisfy(
-			(error: unknown) => isMultipartError(error) && error.reason === 'rejected',
+			(error: unknown) => isMultipartError(error) && error.code === 'rejected',
 		)
 	})
 
@@ -572,7 +577,7 @@ describe('parseMultipartRequest', () => {
 				bytes: Buffer.from(PNG_MAGIC),
 			},
 		])
-		const body = await parseMultipartRequest(request, { limits: { files: 1 } })
+		const body = await parseMultipartRequest(request, { limits: { file: { count: 1 } } })
 		expect(body?.files.b?.[0]?.name).toBe('b.png')
 	})
 
@@ -634,7 +639,7 @@ describe('parseMultipartRequest', () => {
 		const request = new Request('http://test.local/x', init)
 		const promise = parseMultipartRequest(request)
 		await expect(promise).rejects.toSatisfy(
-			(error: unknown) => isMultipartError(error) && error.reason === 'malformed',
+			(error: unknown) => isMultipartError(error) && error.code === 'malformed',
 		)
 		rejectedDuringFeed = sent < totalChunks
 		// The cap is checked incrementally, per chunk — rejection happens well
@@ -663,7 +668,7 @@ describe('parseMultipartRequest', () => {
 			body: rejectedBody,
 		})
 		await expect(parseMultipartRequest(rejected)).rejects.toSatisfy(
-			(error: unknown) => isMultipartError(error) && error.reason === 'malformed',
+			(error: unknown) => isMultipartError(error) && error.code === 'malformed',
 		)
 	})
 
@@ -671,9 +676,9 @@ describe('parseMultipartRequest', () => {
 		const { request, cancelled } = buildCancelTrackingMultipartRequest([
 			{ kind: 'file', name: 'avatar', filename: 'big.bin', bytes: new Uint8Array(1000) },
 		])
-		await expect(parseMultipartRequest(request, { limits: { file: 10 } })).rejects.toSatisfy(
-			(error: unknown) => isMultipartError(error) && error.reason === 'limit',
-		)
+		await expect(
+			parseMultipartRequest(request, { limits: { file: { size: 10 } } }),
+		).rejects.toSatisfy((error: unknown) => isMultipartError(error) && error.code === 'limit')
 		expect(cancelled.value).toBe(true)
 	})
 
@@ -769,7 +774,7 @@ describe('parseMultipartRequest', () => {
 			expect(directory.names()).toHaveLength(1)
 			controller.abort()
 			await expect(parsing).rejects.toSatisfy(
-				(error: unknown) => isMultipartError(error) && error.reason === 'malformed',
+				(error: unknown) => isMultipartError(error) && error.code === 'malformed',
 			)
 			expect(directory.names()).toHaveLength(0)
 		} finally {
@@ -784,8 +789,11 @@ describe('parseMultipartRequest', () => {
 				{ kind: 'file', name: 'avatar', filename: 'big.bin', bytes: new Uint8Array(1000) },
 			])
 			await expect(
-				parseMultipartRequest(request, { limits: { file: 10 }, directory: directory.path }),
-			).rejects.toSatisfy((error: unknown) => isMultipartError(error) && error.reason === 'limit')
+				parseMultipartRequest(request, {
+					limits: { file: { size: 10 } },
+					directory: directory.path,
+				}),
+			).rejects.toSatisfy((error: unknown) => isMultipartError(error) && error.code === 'limit')
 			expect(directory.names()).toHaveLength(0)
 		} finally {
 			directory.destroy()
@@ -799,7 +807,7 @@ describe('parseMultipartRequest', () => {
 				{ kind: 'file', name: 'avatar', filename: 'big.bin', bytes: new Uint8Array(10) },
 			])
 			const body = await parseMultipartRequest(request, {
-				limits: { file: 10 },
+				limits: { file: { size: 10 } },
 				directory: directory.path,
 			})
 			expect(body?.files.avatar?.[0]?.size).toBe(10)
@@ -813,9 +821,9 @@ describe('parseMultipartRequest', () => {
 			{ kind: 'field', name: 'a', value: '1' },
 			{ kind: 'field', name: 'b', value: '2' },
 		])
-		await expect(parseMultipartRequest(request, { limits: { fields: 1 } })).rejects.toSatisfy(
-			(error: unknown) => isMultipartError(error) && error.reason === 'limit',
-		)
+		await expect(
+			parseMultipartRequest(request, { limits: { field: { count: 1 } } }),
+		).rejects.toSatisfy((error: unknown) => isMultipartError(error) && error.code === 'limit')
 	})
 
 	it('accepts exactly the field-count limit worth of fields', async () => {
@@ -823,7 +831,7 @@ describe('parseMultipartRequest', () => {
 			{ kind: 'field', name: 'a', value: '1' },
 			{ kind: 'field', name: 'b', value: '2' },
 		])
-		const body = await parseMultipartRequest(request, { limits: { fields: 2 } })
+		const body = await parseMultipartRequest(request, { limits: { field: { count: 2 } } })
 		expect(body?.fields.a).toBe('1')
 		expect(body?.fields.b).toBe('2')
 	})
@@ -833,9 +841,9 @@ describe('parseMultipartRequest', () => {
 			{ kind: 'file', name: 'a', filename: 'a.txt', bytes: new TextEncoder().encode('x') },
 			{ kind: 'file', name: 'b', filename: 'b.txt', bytes: new TextEncoder().encode('y') },
 		])
-		await expect(parseMultipartRequest(request, { limits: { files: 1 } })).rejects.toSatisfy(
-			(error: unknown) => isMultipartError(error) && error.reason === 'limit',
-		)
+		await expect(
+			parseMultipartRequest(request, { limits: { file: { count: 1 } } }),
+		).rejects.toSatisfy((error: unknown) => isMultipartError(error) && error.code === 'limit')
 	})
 
 	it('accepts exactly the file-count limit worth of files', async () => {
@@ -845,7 +853,7 @@ describe('parseMultipartRequest', () => {
 				{ kind: 'file', name: 'a', filename: 'a.txt', bytes: new TextEncoder().encode('x') },
 			])
 			const body = await parseMultipartRequest(request, {
-				limits: { files: 1 },
+				limits: { file: { count: 1 } },
 				directory: directory.path,
 			})
 			expect(body?.files.a?.[0]?.name).toBe('a.txt')
@@ -862,7 +870,7 @@ describe('parseMultipartRequest', () => {
 				{ kind: 'file', name: 'unused', filename: '', bytes: new Uint8Array(0) },
 			])
 			const body = await parseMultipartRequest(request, {
-				limits: { files: 1 },
+				limits: { file: { count: 1 } },
 				directory: directory.path,
 			})
 			expect(body?.files.a?.[0]?.name).toBe('a.txt')
@@ -875,21 +883,21 @@ describe('parseMultipartRequest', () => {
 
 	it('trips the field-size limit', async () => {
 		const request = buildMultipartRequest([{ kind: 'field', name: 'a', value: 'x'.repeat(100) }])
-		await expect(parseMultipartRequest(request, { limits: { field: 10 } })).rejects.toSatisfy(
-			(error: unknown) => isMultipartError(error) && error.reason === 'limit',
-		)
+		await expect(
+			parseMultipartRequest(request, { limits: { field: { size: 10 } } }),
+		).rejects.toSatisfy((error: unknown) => isMultipartError(error) && error.code === 'limit')
 	})
 
 	it('accepts a field exactly AT the field-size limit', async () => {
 		const request = buildMultipartRequest([{ kind: 'field', name: 'a', value: 'x'.repeat(10) }])
-		const body = await parseMultipartRequest(request, { limits: { field: 10 } })
+		const body = await parseMultipartRequest(request, { limits: { field: { size: 10 } } })
 		expect(body?.fields.a).toBe('x'.repeat(10))
 	})
 
 	it('trips the total-size limit', async () => {
 		const request = buildMultipartRequest([{ kind: 'field', name: 'a', value: 'x'.repeat(1000) }])
 		await expect(parseMultipartRequest(request, { limits: { total: 50 } })).rejects.toSatisfy(
-			(error: unknown) => isMultipartError(error) && error.reason === 'limit',
+			(error: unknown) => isMultipartError(error) && error.code === 'limit',
 		)
 	})
 
@@ -916,7 +924,7 @@ describe('parseMultipartRequest', () => {
 			body: 'not a real multipart body at all',
 		})
 		await expect(parseMultipartRequest(request)).rejects.toSatisfy(
-			(error: unknown) => isMultipartError(error) && error.reason === 'malformed',
+			(error: unknown) => isMultipartError(error) && error.code === 'malformed',
 		)
 	})
 
@@ -929,7 +937,7 @@ describe('parseMultipartRequest', () => {
 			body,
 		})
 		await expect(parseMultipartRequest(request)).rejects.toSatisfy(
-			(error: unknown) => isMultipartError(error) && error.reason === 'malformed',
+			(error: unknown) => isMultipartError(error) && error.code === 'malformed',
 		)
 	})
 
@@ -942,7 +950,7 @@ describe('parseMultipartRequest', () => {
 			body,
 		})
 		await expect(parseMultipartRequest(request)).rejects.toSatisfy(
-			(error: unknown) => isMultipartError(error) && error.reason === 'malformed',
+			(error: unknown) => isMultipartError(error) && error.code === 'malformed',
 		)
 	})
 
@@ -956,7 +964,7 @@ describe('parseMultipartRequest', () => {
 			body,
 		})
 		await expect(parseMultipartRequest(request)).rejects.toSatisfy(
-			(error: unknown) => isMultipartError(error) && error.reason === 'malformed',
+			(error: unknown) => isMultipartError(error) && error.code === 'malformed',
 		)
 	})
 
@@ -982,7 +990,7 @@ describe('parseMultipartRequest', () => {
 			body: rejectedBody,
 		})
 		await expect(parseMultipartRequest(rejected)).rejects.toSatisfy(
-			(error: unknown) => isMultipartError(error) && error.reason === 'malformed',
+			(error: unknown) => isMultipartError(error) && error.code === 'malformed',
 		)
 	})
 })
@@ -1339,7 +1347,7 @@ describe('parsePartHeaders', () => {
 		expect(parsePartHeaders('Content-Disposition: form-data; name="title"')).toEqual({
 			name: 'title',
 			filename: undefined,
-			contentType: undefined,
+			mime: undefined,
 		})
 	})
 
@@ -1351,7 +1359,7 @@ describe('parsePartHeaders', () => {
 		expect(parsePartHeaders(block)).toEqual({
 			name: 'avatar',
 			filename: 'a.png',
-			contentType: 'image/png',
+			mime: 'image/png',
 		})
 	})
 
@@ -1381,7 +1389,7 @@ describe('parsePartHeaders', () => {
 		expect(parsePartHeaders('X-Custom: whatever')).toEqual({
 			name: undefined,
 			filename: undefined,
-			contentType: undefined,
+			mime: undefined,
 		})
 	})
 })
@@ -1448,11 +1456,11 @@ describe('isMultipartFile', () => {
 describe('isMultipartError', () => {
 	it('accepts a structurally-branded plain object built WITHOUT the class', () => {
 		// Simulates the "other module face" case: a value carrying the SAME
-		// well-known Symbol.for brand plus reason/status, but never
+		// well-known Symbol.for brand plus code/status, but never
 		// constructed via `new MultipartError(...)` — the guard is structural,
 		// not `instanceof`.
 		const brand = Symbol.for('@orkestrel/middleware.MultipartError')
-		const value = { [brand]: true, status: 413, reason: 'limit' }
+		const value = { [brand]: true, status: 413, code: 'limit' }
 		expect(isMultipartError(value)).toBe(true)
 	})
 
@@ -1460,9 +1468,9 @@ describe('isMultipartError', () => {
 		expect(isMultipartError(new Error('boom'))).toBe(false)
 	})
 
-	it('rejects a branded object with an invalid reason', () => {
+	it('rejects a branded object with an invalid code', () => {
 		const brand = Symbol.for('@orkestrel/middleware.MultipartError')
-		expect(isMultipartError({ [brand]: true, status: 400, reason: 'nope' })).toBe(false)
+		expect(isMultipartError({ [brand]: true, status: 400, code: 'nope' })).toBe(false)
 	})
 
 	it('is total on non-object input', () => {
@@ -1478,9 +1486,22 @@ describe('staging security', () => {
 	it.runIf(process.platform !== 'win32')(
 		'the default staging directory is created with mode 0o700',
 		async () => {
-			const directory = await resolveDefaultDirectory()
-			const info = await stat(directory)
+			const request = buildMultipartRequest([
+				{
+					kind: 'file',
+					name: 'avatar',
+					filename: 'a.png',
+					contentType: 'image/png',
+					bytes: Buffer.from(PNG_MAGIC),
+				},
+			])
+			const body = await parseMultipartRequest(request)
+			const path = body?.files.avatar?.[0]?.path
+			expect(path).toBeDefined()
+			if (path === undefined) return
+			const info = await stat(dirname(path))
 			expect(info.mode & 0o777).toBe(0o700)
+			await unlink(path)
 		},
 	)
 
@@ -1509,4 +1530,35 @@ describe('staging security', () => {
 			}
 		},
 	)
+})
+
+// ── resolveMultipartLimits — the documented default matrix ──────────────────
+
+describe('resolveMultipartLimits', () => {
+	it('fills every leaf from the documented defaults when no limits are given', () => {
+		expect(resolveMultipartLimits(undefined)).toEqual({
+			file: { size: DEFAULT_MULTIPART_FILE, count: DEFAULT_MULTIPART_FILES },
+			field: { size: DEFAULT_MULTIPART_FIELD, count: DEFAULT_MULTIPART_FIELDS },
+			total: DEFAULT_MULTIPART_TOTAL,
+		})
+	})
+
+	it('keeps a stated leaf and defaults its sibling inside the same group', () => {
+		const limits = resolveMultipartLimits({ file: { size: 1_048_576 } })
+		expect(limits.file).toEqual({ size: 1_048_576, count: DEFAULT_MULTIPART_FILES })
+		expect(limits.field).toEqual({
+			size: DEFAULT_MULTIPART_FIELD,
+			count: DEFAULT_MULTIPART_FIELDS,
+		})
+	})
+
+	it('keeps every stated leaf across both groups and the total', () => {
+		expect(
+			resolveMultipartLimits({
+				file: { size: 1, count: 2 },
+				field: { size: 3, count: 4 },
+				total: 5,
+			}),
+		).toEqual({ file: { size: 1, count: 2 }, field: { size: 3, count: 4 }, total: 5 })
+	})
 })

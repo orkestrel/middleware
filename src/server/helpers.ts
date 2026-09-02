@@ -1,10 +1,10 @@
 import type { MultipartBody } from '@src/core'
 import type {
 	MultipartLimits,
-	MultipartOptions,
+	MultipartLimitsInput,
 	PartHeaders,
+	UploadedFile,
 	UploadedFileInput,
-	UploadedFileInterface,
 } from './types.js'
 import type { FileHandle } from 'node:fs/promises'
 import type { Encoding } from '@orkestrel/server'
@@ -24,8 +24,6 @@ import {
 	EXTENSION_TYPES,
 	RESERVED_DEVICE_NAMES,
 } from './constants.js'
-import { MultipartError } from './errors.js'
-import { MultipartParser } from './MultipartParser.js'
 
 /**
  * Whether `pathname` is `prefix` itself or lies under it on a SEGMENT
@@ -392,39 +390,29 @@ export function multipartBoundary(contentType: string | null): string | undefine
 }
 
 /**
- * Resolve `createMultipart`'s effective {@link MultipartLimits}, applying
- * every documented default.
+ * Resolves `createMultipart`'s effective {@link MultipartLimits}, applying
+ * every documented default to an omitted leaf.
  *
  * @param limits - The caller's partial limits
  * @returns The fully-resolved limits
- */
-export function resolveMultipartLimits(
-	limits: MultipartLimits | undefined,
-): Required<MultipartLimits> {
-	return {
-		file: limits?.file ?? DEFAULT_MULTIPART_FILE,
-		files: limits?.files ?? DEFAULT_MULTIPART_FILES,
-		field: limits?.field ?? DEFAULT_MULTIPART_FIELD,
-		fields: limits?.fields ?? DEFAULT_MULTIPART_FIELDS,
-		total: limits?.total ?? DEFAULT_MULTIPART_TOTAL,
-	}
-}
-
-/**
- * Resolve `parseMultipartRequest`'s default staging directory when the
- * caller did not configure one — a process-owned directory created ONCE
- * (lazily, memoized across calls) via `mkdtemp` under `os.tmpdir()` and
- * locked to mode `0o700`.
- *
- * @returns The absolute path of the process-owned staging directory
  *
  * @example
  * ```ts
- * const directory = await resolveDefaultDirectory()
+ * resolveMultipartLimits({ file: { size: 1_048_576 } })
  * ```
  */
-export function resolveDefaultDirectory(): Promise<string> {
-	return MultipartParser.directory()
+export function resolveMultipartLimits(limits: MultipartLimitsInput | undefined): MultipartLimits {
+	return {
+		file: {
+			size: limits?.file?.size ?? DEFAULT_MULTIPART_FILE,
+			count: limits?.file?.count ?? DEFAULT_MULTIPART_FILES,
+		},
+		field: {
+			size: limits?.field?.size ?? DEFAULT_MULTIPART_FIELD,
+			count: limits?.field?.count ?? DEFAULT_MULTIPART_FIELDS,
+		},
+		total: limits?.total ?? DEFAULT_MULTIPART_TOTAL,
+	}
 }
 
 /**
@@ -433,19 +421,19 @@ export function resolveDefaultDirectory(): Promise<string> {
  *
  * @param block - The raw header block for one multipart part (before the
  * terminating blank line)
- * @returns The parsed `name`, `filename`, and `contentType` (each
- * `undefined` when absent)
+ * @returns The parsed `name`, `filename`, and `mime` (each `undefined` when
+ * absent)
  *
  * @example
  * ```ts
  * parsePartHeaders('Content-Disposition: form-data; name="title"')
- * // { name: 'title', filename: undefined, contentType: undefined }
+ * // { name: 'title', filename: undefined, mime: undefined }
  * ```
  */
 export function parsePartHeaders(block: string): PartHeaders {
 	let name: string | undefined
 	let filename: string | undefined
-	let contentType: string | undefined
+	let mime: string | undefined
 	for (const line of block.split('\r\n')) {
 		const colon = line.indexOf(':')
 		if (colon === -1) continue
@@ -457,86 +445,24 @@ export function parsePartHeaders(block: string): PartHeaders {
 			if (nameMatch !== null) name = nameMatch[1]
 			if (filenameMatch !== null) filename = filenameMatch[1]
 		} else if (key === 'content-type') {
-			contentType = value
+			mime = value
 		}
 	}
-	return { name, filename, contentType }
+	return { name, filename, mime }
 }
 
 /**
- * Stream-parse a `multipart/form-data` request into its files and fields —
- * the mid-stream state machine `createMultipart` drives.
- *
- * @remarks
- * Reads `request.body` chunk by chunk via its `ReadableStream` reader —
- * NEVER buffers the whole body — enforcing every {@link MultipartLimits} cap
- * the instant it is exceeded (reading stops, every already-staged temp file
- * is deleted, throws {@link MultipartError} with reason `'limit'`). Each file
- * part streams to `join(directory, randomUUID())` — the client's declared
- * filename is METADATA ONLY, never a path component. A field OR file part
- * named `__proto__` / `constructor` / `prototype` is silently skipped and
- * never keyed onto the returned {@link MultipartBody} (a skipped file's
- * staged temp file is unlinked immediately, since it can never be
- * referenced). A file part with an empty declared filename (`filename=""`)
- * AND a zero-byte body — the browser convention for an unselected optional
- * `<input type="file">` — is a silent no-op: its temp file is unlinked, it is
- * never counted against the `files` limit, and it never runs the `allowed`
- * check. A malformed
- * structure (missing/unterminated boundary, nameless part, an oversized
- * header block, or a preamble exceeding {@link MULTIPART_MAX_PREAMBLE} before
- * the first boundary) throws with reason `'malformed'`. A file is accepted
- * against the configured `allowed` MIME list iff its SNIFFED bytes detect a
- * type present in the list — sniff-authoritative, independent of whether the
- * declared `Content-Type` matches (that agreement is exposed separately as
- * `validated`); otherwise throws with reason `'rejected'`. A
- * request abort mid-upload triggers the same fail-closed cleanup as a limit
- * breach. Returns `undefined` for a non-multipart request (untouched).
- *
- * @param request - The incoming multipart request
- * @param options - See {@link MultipartOptions}
- * @returns The parsed {@link MultipartBody}, or `undefined` when the request
- * is not `multipart/form-data`
- * @throws {MultipartError} On any limit breach, malformed structure, or
- * rejected file type
- *
- * @example
- * ```ts
- * const body = await parseMultipartRequest(request, { allowed: ['image/png'] })
- * ```
- */
-export async function parseMultipartRequest(
-	request: Request,
-	options: MultipartOptions = {},
-): Promise<MultipartBody | undefined> {
-	const boundary = multipartBoundary(request.headers.get('content-type'))
-	if (boundary === undefined) return undefined
-	if (request.body === null) throw new MultipartError('malformed', 'multipart request has no body')
-
-	const limits = resolveMultipartLimits(options.limits)
-	const allowed = options.allowed
-	const directory = options.directory ?? (await resolveDefaultDirectory())
-	return new MultipartParser(
-		request.body,
-		request.signal,
-		boundary,
-		limits,
-		allowed,
-		directory,
-	).parse()
-}
-
-/**
- * Build a frozen {@link UploadedFileInterface} record.
+ * Build a frozen {@link UploadedFile} record.
  *
  * @param input - Every field of the record
- * @returns A frozen {@link UploadedFileInterface}
+ * @returns A frozen {@link UploadedFile}
  *
  * @example
  * ```ts
  * createUploadedFile({ field: 'avatar', name: 'a.png', size: 1024, mime: 'image/png', validated: true, status: 'staged', path: '/tmp/x' })
  * ```
  */
-export function createUploadedFile(input: UploadedFileInput): UploadedFileInterface {
+export function createUploadedFile(input: UploadedFileInput): UploadedFile {
 	return Object.freeze({ ...input })
 }
 
@@ -645,7 +571,7 @@ export function streamFile(
 /**
  * Open a staged/moved uploaded file as a web `ReadableStream`.
  *
- * @param file - The {@link UploadedFileInterface} record to stream
+ * @param file - The {@link UploadedFile} record to stream
  * @returns A `ReadableStream<Uint8Array>` over the file's current on-disk path
  *
  * @example
@@ -653,14 +579,14 @@ export function streamFile(
  * new Response(streamUploadedFile(file))
  * ```
  */
-export function streamUploadedFile(file: UploadedFileInterface): ReadableStream<Uint8Array> {
+export function streamUploadedFile(file: UploadedFile): ReadableStream<Uint8Array> {
 	return streamFile(file.path)
 }
 
 /**
  * Read a staged/moved uploaded file's full contents into memory.
  *
- * @param file - The {@link UploadedFileInterface} record to read
+ * @param file - The {@link UploadedFile} record to read
  * @returns The file's bytes
  *
  * @example
@@ -668,7 +594,7 @@ export function streamUploadedFile(file: UploadedFileInterface): ReadableStream<
  * const bytes = await readUploadedFile(file)
  * ```
  */
-export async function readUploadedFile(file: UploadedFileInterface): Promise<Uint8Array> {
+export async function readUploadedFile(file: UploadedFile): Promise<Uint8Array> {
 	return readFile(file.path)
 }
 
@@ -680,9 +606,9 @@ export async function readUploadedFile(file: UploadedFileInterface): Promise<Uin
  * `copyFile` + `unlink`. Returns a new frozen record with `status: 'moved'`
  * and `path: destination` — the input record is never mutated.
  *
- * @param file - The {@link UploadedFileInterface} record to move
+ * @param file - The {@link UploadedFile} record to move
  * @param destination - The final on-disk path
- * @returns A new {@link UploadedFileInterface} record reflecting the move
+ * @returns A new {@link UploadedFile} record reflecting the move
  *
  * @example
  * ```ts
@@ -690,9 +616,9 @@ export async function readUploadedFile(file: UploadedFileInterface): Promise<Uin
  * ```
  */
 export async function moveUploadedFile(
-	file: UploadedFileInterface,
+	file: UploadedFile,
 	destination: string,
-): Promise<UploadedFileInterface> {
+): Promise<UploadedFile> {
 	try {
 		await rename(file.path, destination)
 	} catch (error) {

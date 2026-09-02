@@ -40,13 +40,13 @@ import {
 	isContainedPath,
 	isDotfilePath,
 	lookupContentType,
-	parseMultipartRequest,
 	resolveContainedRealPath,
 	resolveStaticFallbackPath,
 	resolveStaticPath,
 	streamFile,
 	unlinkStagedFiles,
 } from './helpers.js'
+import { parseMultipartRequest } from './parsers.js'
 
 /**
  * Serve validated in-memory assets with identity/Brotli negotiation.

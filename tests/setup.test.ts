@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 import { ContentTooLargeError } from '@orkestrel/server'
 import {
 	buildRequest,
+	buildSession,
 	createEchoTerminal,
 	createManualClock,
 	createRecordingNext,
@@ -203,5 +204,21 @@ describe('createManualClock', () => {
 		clock.set(10)
 		expect(clock.clock()).toBe(10)
 		expect(createManualClock().clock()).toBe(0)
+	})
+})
+
+describe('buildSession', () => {
+	it('carries the given id and leaves the state empty when no mark is given', () => {
+		const session = buildSession('id-1')
+		expect(session.id).toBe('id-1')
+		expect(session.state.size).toBe(0)
+	})
+
+	it('writes a given mark through the entity mutator and keeps sessions independent', () => {
+		const first = buildSession('id-1', 'first')
+		const second = buildSession('id-1', 'second')
+		expect(first.state.get('mark')).toBe('first')
+		expect(second.state.get('mark')).toBe('second')
+		expect([...first.state.keys()]).toEqual(['mark'])
 	})
 })

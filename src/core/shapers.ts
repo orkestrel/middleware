@@ -7,7 +7,7 @@ import { integerShape, jsonShape, stringShape } from '@orkestrel/contract'
  * declaring a durable session table never hand-writes the shape.
  *
  * @remarks
- * `lastSeen`/`createdAt` are `integerShape({ min: 0 })` — the table validates
+ * `seen`/`created` are `integerShape({ min: 0 })` — the table validates
  * them as integers, so
  * {@link import('./stores/DatabaseSessionStore.js').DatabaseSessionStore}'s
  * `now` clock must yield integer milliseconds (`Date.now()`, the implicit
@@ -23,6 +23,6 @@ import { integerShape, jsonShape, stringShape } from '@orkestrel/contract'
 export const sessionColumns = {
 	id: stringShape(),
 	session: jsonShape(),
-	lastSeen: integerShape({ min: 0 }),
-	createdAt: integerShape({ min: 0 }),
+	seen: integerShape({ min: 0 }),
+	created: integerShape({ min: 0 }),
 }

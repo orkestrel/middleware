@@ -1,4 +1,4 @@
-import type { ConnectionState } from '@src/core'
+import type { ConnectionState, SessionInterface } from '@src/core'
 import type { MultipartState } from '@src/core'
 import { join } from 'node:path'
 import http from 'node:http'
@@ -936,7 +936,7 @@ describe('createMultipart', () => {
 		try {
 			const handler = createMultipart<MultipartState>({
 				directory: directory.path,
-				limits: { file: 5 },
+				limits: { file: { size: 5 } },
 			})
 			const request = buildMultipartRequest([
 				{ kind: 'file', name: 'avatar', filename: 'big.bin', bytes: new Uint8Array(500) },
@@ -1192,7 +1192,7 @@ describe('capstone: real socket + Dispatcher + canonical onion', () => {
 		identifier?: string
 		client?: { readonly ip?: string }
 		token?: string
-		session?: { readonly id: string; readonly data: Map<string, unknown> }
+		session?: SessionInterface
 		control?: { regenerate(): void; destroy(): void }
 		csrf?: string
 	}
@@ -1235,7 +1235,7 @@ describe('capstone: real socket + Dispatcher + canonical onion', () => {
 			createETag<CapstoneState>(),
 			createBearer<CapstoneState>({ secret }),
 			createLimiter<CapstoneState>({ max: 3, window: 60_000 }),
-			createSession<{ readonly id: string; readonly data: Map<string, unknown> }, CapstoneState>({
+			createSession<SessionInterface, CapstoneState>({
 				transport: createCookieTransport({ secret }),
 			}),
 			createCSRF<CapstoneState>({ secret }),

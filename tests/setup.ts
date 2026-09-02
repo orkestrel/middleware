@@ -1,5 +1,6 @@
 import type { MiddlewareContext, MiddlewareHandler, NextFunction } from '@orkestrel/server'
 import { compose, readBody } from '@orkestrel/server'
+import { Session } from '@src/core'
 
 // ── Middleware test harness (AGENTS §16.1) ───────────────────────────────────
 //
@@ -225,4 +226,24 @@ export function createManualClock(start = 0): ManualClockInterface {
 			now = value
 		},
 	}
+}
+
+/**
+ * Build a {@link Session} carrying one optional state entry — the scenario
+ * builder every session proof drives, so a store or battery test states an id
+ * and one distinguishing value instead of re-deriving the entity.
+ *
+ * @param id - The session id the store keys the entity by
+ * @param mark - The value written under the `mark` key; omitted leaves the state empty
+ * @returns A `Session` ready to hand to a `SessionStoreInterface`
+ *
+ * @example
+ * ```ts
+ * await store.set(buildSession('id-1', 'first'), 0)
+ * ```
+ */
+export function buildSession(id: string, mark?: string): Session {
+	const session = new Session(id)
+	if (mark !== undefined) session.set('mark', mark)
+	return session
 }

@@ -1,6 +1,11 @@
-import type { MemorySessionStoreOptions, SessionEntry, SessionStoreInterface } from '../types.js'
+import type {
+	MemorySessionStoreOptions,
+	SessionEntry,
+	SessionInterface,
+	SessionStoreInterface,
+} from '../types.js'
 import { DEFAULT_SESSION_CAPACITY } from '../constants.js'
-import { sessionExpired } from '../helpers.js'
+import { sessionExpired, validateSessionLimits } from '../helpers.js'
 import { isFiniteNumber, isFunction } from '@orkestrel/contract'
 
 /**
@@ -8,14 +13,14 @@ import { isFiniteNumber, isFunction } from '@orkestrel/contract'
  * enforcing both an idle timeout and an absolute lifetime, with lazy
  * (read-time) eviction, a bounded capacity, and no background timers.
  *
- * @typeParam S - The session data payload type
+ * @typeParam S - The stored session entity type
  *
  * @remarks
- * `get` evicts a session whose idle time (`now - lastSeen >= ttl`) or
- * absolute lifetime (`now - createdAt >= lifetime`) has elapsed — the
+ * `get` evicts a session whose idle time (`now - seen >= ttl`) or
+ * absolute lifetime (`now - created >= lifetime`) has elapsed — the
  * lifetime check fires EVEN IF the session was continuously touched, since
- * `createdAt` is stamped once at the first `set` and preserved across every
- * later re-`set` of the same id. A live read touches `lastSeen`. `delete` of
+ * `created` is stamped once at the first `set` and preserved across every
+ * later re-`set` of the same id. A live read touches `seen`. `delete` of
  * an absent id is a no-op.
  *
  * Capacity is enforced as least-recently-used **by last write**: `set`
@@ -30,10 +35,10 @@ import { isFiniteNumber, isFunction } from '@orkestrel/contract'
  * @example
  * ```ts
  * const store = new MemorySessionStore({ ttl: 60_000, lifetime: 3_600_000 })
- * await store.set('abc', { userId: 'u_1' }, Date.now())
+ * await store.set(new Session('abc'), Date.now())
  * ```
  */
-export class MemorySessionStore<S> implements SessionStoreInterface<S> {
+export class MemorySessionStore<S extends SessionInterface> implements SessionStoreInterface<S> {
 	readonly #entries: Map<string, SessionEntry<S>>
 	readonly #ttl: number | undefined
 	readonly #lifetime: number | undefined
@@ -41,20 +46,7 @@ export class MemorySessionStore<S> implements SessionStoreInterface<S> {
 	readonly #evict: ((id: string) => void) | undefined
 
 	constructor(options?: MemorySessionStoreOptions) {
-		if (options?.ttl !== undefined && !isFiniteNumber(options.ttl))
-			throw new TypeError(
-				'MemorySessionStore requires options.ttl to be a finite number when provided',
-			)
-		if (options?.ttl !== undefined && options.ttl <= 0)
-			throw new TypeError('MemorySessionStore requires options.ttl to be positive when provided')
-		if (options?.lifetime !== undefined && !isFiniteNumber(options.lifetime))
-			throw new TypeError(
-				'MemorySessionStore requires options.lifetime to be a finite number when provided',
-			)
-		if (options?.lifetime !== undefined && options.lifetime <= 0)
-			throw new TypeError(
-				'MemorySessionStore requires options.lifetime to be positive when provided',
-			)
+		validateSessionLimits(options)
 		if (
 			options?.capacity !== undefined &&
 			(!isFiniteNumber(options.capacity) ||
@@ -83,16 +75,17 @@ export class MemorySessionStore<S> implements SessionStoreInterface<S> {
 			this.#notify(id)
 			return undefined
 		}
-		this.#entries.set(id, { session: entry.session, lastSeen: now, createdAt: entry.createdAt })
+		this.#entries.set(id, { session: entry.session, seen: now, created: entry.created })
 		return entry.session
 	}
 
-	async set(id: string, session: S, now: number): Promise<void> {
+	async set(session: S, now: number): Promise<void> {
+		const id = session.id
 		const existing = this.#entries.get(id)
 		if (existing === undefined) this.#reserve(now)
-		const createdAt = existing?.createdAt ?? now
+		const created = existing?.created ?? now
 		this.#entries.delete(id)
-		this.#entries.set(id, { session, lastSeen: now, createdAt })
+		this.#entries.set(id, { session, seen: now, created })
 	}
 
 	async delete(id: string): Promise<void> {

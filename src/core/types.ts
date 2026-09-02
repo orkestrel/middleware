@@ -286,7 +286,7 @@ export interface ConnectionState {
  * `Forwarded` right-to-left past the configured trusted hops, falling back
  * to the socket peer when no proxy hop qualifies.
  */
-export interface ClientInfo {
+export interface Client {
 	readonly ip?: string
 }
 
@@ -294,19 +294,27 @@ export interface ClientInfo {
  * The client-facts state slice `createForwarded` stashes.
  */
 export interface ClientState {
-	readonly client?: ClientInfo
+	readonly client?: Client
 }
 
 /**
- * A server-managed session's public surface — an id and its mutable data bag.
+ * A server-managed session's public surface — an id, its live state, and the
+ * mutators that write it.
  *
  * @remarks
- * `data` is a live `Map` a handler reads/writes directly; `createSession`
- * persists it to the configured {@link SessionStoreInterface} on the way out.
+ * `state` is a readonly view a handler reads directly; `set`, `delete`, and
+ * `clear` are the only ways to write it, so no consumer holds a mutable
+ * reference to the entity's own `Map`. `createSession` persists the state to
+ * the configured {@link SessionStoreInterface} on the way out. `clear` empties
+ * the state without ending the session — `SessionControlInterface.destroy`
+ * does that.
  */
 export interface SessionInterface {
 	readonly id: string
-	readonly data: Map<string, unknown>
+	readonly state: ReadonlyMap<string, unknown>
+	set(key: string, value: unknown): void
+	delete(key: string): boolean
+	clear(): void
 }
 
 /**
@@ -317,7 +325,7 @@ export interface SessionInterface {
  * `regenerate` and `destroy` record intent SYNCHRONOUSLY when called; the
  * store I/O and transport write happen after the handler's `next()` returns
  * (`destroy` supersedes a prior `regenerate`). `regenerate` mints a new id,
- * carries the session's `data` over, and invalidates the old id.
+ * carries the session's `state` over, and invalidates the old id.
  */
 export interface SessionControlInterface {
 	regenerate(): void
@@ -352,23 +360,26 @@ export interface BodyState {
  * The pluggable session persistence seam `createSession`'s `store` option
  * implements — a point-access store keyed by session id.
  *
- * @typeParam S - The session data payload type
+ * @typeParam S - The stored session entity type
  * @remarks
  * Every primitive is async and takes a trailing `now` clock reading (the
  * same seam `createSession`'s `clock` option feeds) so a store can apply its
  * own idle/absolute expiry against the caller's injected time rather than
- * its own wall clock. `delete` of an absent id is a no-op, never throws.
+ * its own wall clock. `set` reads the id from the session it is handed —
+ * a stored value carries its own id, so no separate id is passed. `delete` of
+ * an absent id is a no-op, never throws.
  *
- * `get` must resolve a value satisfying {@link isSession} — an `id` string
- * and a `data` `Map` — or `undefined`. `createSession` dereferences the
- * resolved value's `id` and `data` without re-checking them, so a store that
- * resolves an off-shape value corrupts the battery's own state rather than
- * being refused at the seam. The shipped `DatabaseSessionStore` enforces this
- * with the caller-supplied guard it is constructed with.
+ * `get` must resolve a value satisfying {@link isSession} — an `id` string,
+ * a `state` `Map` view, and the mutators — or `undefined`. `createSession`
+ * dereferences the resolved value's `id` and `state` without re-checking
+ * them, so a store that resolves an off-shape value corrupts the battery's
+ * own state rather than being refused at the seam. The shipped
+ * `DatabaseSessionStore` enforces this with the caller-supplied guard it is
+ * constructed with.
  */
-export interface SessionStoreInterface<S> {
+export interface SessionStoreInterface<S extends SessionInterface> {
 	get(id: string, now: number): Promise<S | undefined>
-	set(id: string, session: S, now: number): Promise<void>
+	set(session: S, now: number): Promise<void>
 	delete(id: string): Promise<void>
 }
 
@@ -392,13 +403,13 @@ export interface SessionLimits {
  * against.
  *
  * @remarks
- * - `lastSeen` — the instant of the most recent live read or write.
- * - `createdAt` — the instant of the first `set`, preserved across every
+ * - `seen` — the instant of the most recent live read or write.
+ * - `created` — the instant of the first `set`, preserved across every
  *   later re-`set` of the same id.
  */
 export interface SessionCursors {
-	readonly lastSeen: number
-	readonly createdAt: number
+	readonly seen: number
+	readonly created: number
 }
 
 /**
@@ -415,9 +426,9 @@ export interface SessionRow extends SessionCursors {
  * One in-process session entry — the payload {@link MemorySessionStore} holds
  * against an id, alongside the same cursors a persisted row carries.
  *
- * @typeParam S - The session data payload type
+ * @typeParam S - The stored session entity type
  */
-export interface SessionEntry<S> extends SessionCursors {
+export interface SessionEntry<S extends SessionInterface> extends SessionCursors {
 	readonly session: S
 }
 
@@ -426,8 +437,10 @@ export interface SessionEntry<S> extends SessionCursors {
  * and a durable store's `set` writes.
  *
  * @remarks
- * `data` is a null-prototype record so a session key literally named
- * `__proto__` round-trips as an own enumerable property.
+ * `data` is the wire member a persisted row carries, built on a
+ * null-prototype record so a session key literally named `__proto__`
+ * round-trips as an own enumerable property. It holds the same entries the
+ * entity publishes as `state`.
  */
 export interface SessionSnapshot {
 	readonly id: string
@@ -448,7 +461,7 @@ export interface SessionSnapshot {
  * transport can resolve its own `Secure` attribute via `resolveSecure`
  * without re-deriving connection facts itself.
  */
-export interface SessionTransport {
+export interface SessionTransportInterface {
 	read(request: Request): string | undefined | Promise<string | undefined>
 	write(response: Response, id: string, encrypted: boolean): void | Promise<void>
 	clear(response: Response): void
@@ -457,10 +470,10 @@ export interface SessionTransport {
 /**
  * Options for `createSession` — the generic session battery.
  *
- * @typeParam S - The session data payload type `create` produces
+ * @typeParam S - The session entity type `create` produces
  * @typeParam TState - The consumer's opaque per-request state type `mint` reads
  * @remarks
- * - `transport` — the {@link SessionTransport} (`createCookieTransport(...)`,
+ * - `transport` — the {@link SessionTransportInterface} (`createCookieTransport(...)`,
  *   `createHeaderTransport(...)`, or a custom one).
  * - `store` — the {@link SessionStoreInterface}; defaults to
  *   `createMemorySessionStore({ ttl, lifetime, capacity, evict })`.
@@ -477,14 +490,12 @@ export interface SessionTransport {
  *   defaults to `new Session(id)`.
  * - `mint` — decides whether to auto-mint a session when none resolves;
  *   defaults to always minting (auto-session).
- * - `require` — when `true`, a request that resolves no session and does not
+ * - `required` — when `true`, a request that resolves no session and does not
  *   mint one renders a 404 instead of proceeding sessionless. Defaults to `false`.
- * - `ends` — when `true`, a `DELETE` request carrying a valid session id
- *   deletes the session and short-circuits with `204`. Defaults to `false`.
  * - `clock` — the injected time source fed to the store; defaults to `Date.now`.
  */
-export interface SessionOptions<S, TState = unknown> {
-	readonly transport: SessionTransport
+export interface SessionOptions<S extends SessionInterface, TState = unknown> {
+	readonly transport: SessionTransportInterface
 	readonly store?: SessionStoreInterface<S>
 	readonly ttl?: number
 	readonly lifetime?: number
@@ -492,13 +503,12 @@ export interface SessionOptions<S, TState = unknown> {
 	readonly evict?: (id: string) => void
 	readonly create?: (id: string) => S
 	readonly mint?: (context: MiddlewareContext<TState>) => boolean | Promise<boolean>
-	readonly require?: boolean
-	readonly ends?: boolean
+	readonly required?: boolean
 	readonly clock?: () => number
 }
 
 /**
- * Options for `createCookieTransport` — the signed-cookie {@link SessionTransport}.
+ * Options for `createCookieTransport` — the signed-cookie {@link SessionTransportInterface}.
  *
  * @remarks
  * - `name` — the cookie name; defaults to {@link DEFAULT_SESSION_COOKIE}.
@@ -513,7 +523,7 @@ export interface CookieTransportOptions {
 }
 
 /**
- * Options for `createHeaderTransport` — the bare-header {@link SessionTransport}.
+ * Options for `createHeaderTransport` — the bare-header {@link SessionTransportInterface}.
  *
  * @remarks
  * - `header` — the header carrying the session id; defaults to
@@ -583,7 +593,7 @@ export interface CSRFOptions {
  * Declared here rather than in the node-bound server surface so the
  * fetch/string-pure {@link MultipartState} slice — referenced by any
  * environment narrowing `context.state` — never depends on the node face.
- * The server's concrete `UploadedFileInterface` is structurally compatible
+ * The server's concrete `UploadedFile` is structurally compatible
  * with this shape.
  */
 export interface MultipartFile {

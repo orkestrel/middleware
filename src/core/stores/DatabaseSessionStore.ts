@@ -6,7 +6,8 @@ import type {
 } from '../types.js'
 import type { Guard } from '@orkestrel/contract'
 import type { TableInterface } from '@orkestrel/database'
-import { restoreSession, sessionExpired, snapshotSession } from '../helpers.js'
+import { sessionExpired, snapshotSession, validateSessionLimits } from '../helpers.js'
+import { createRestoredSession } from '../factories.js'
 import type { Session } from '../Session.js'
 
 /**
@@ -15,14 +16,14 @@ import type { Session } from '../Session.js'
  * {@link MemorySessionStore}, backed by a caller-supplied `TableInterface`
  * instead of an in-process `Map`.
  *
- * @typeParam S - The session data payload type
+ * @typeParam S - The stored session entity type
  *
  * @remarks
  * `get` reads the row, evicts (removes the row) once `sessionExpired`
  * reports either threshold elapsed, then rebuilds the session via
- * {@link restoreSession} — a malformed snapshot or one that fails the
+ * {@link createRestoredSession} — a malformed snapshot or one that fails the
  * caller's guard resolves `undefined` rather than throwing. A live read
- * touches `lastSeen`. `set` preserves an existing row's `createdAt` across a
+ * touches `seen`. `set` preserves an existing row's `created` across a
  * re-`set` of the same id (stamped once at the first `set`), mirroring
  * {@link MemorySessionStore}. `delete` of an absent id is a no-op (the
  * table's `remove` contract).
@@ -38,7 +39,7 @@ import type { Session } from '../Session.js'
  * @example
  * ```ts
  * const store = new DatabaseSessionStore(table, isSession, { ttl: 60_000 })
- * await store.set('abc', new Session('abc'), Date.now())
+ * await store.set(new Session('abc'), Date.now())
  * ```
  */
 export class DatabaseSessionStore<
@@ -50,6 +51,7 @@ export class DatabaseSessionStore<
 	readonly #lifetime: number | undefined
 
 	constructor(table: TableInterface<SessionRow>, guard: Guard<S>, options?: SessionLimits) {
+		validateSessionLimits(options)
 		this.#table = table
 		this.#guard = guard
 		this.#ttl = options?.ttl
@@ -63,16 +65,17 @@ export class DatabaseSessionStore<
 			await this.#table.remove(id)
 			return undefined
 		}
-		const session = restoreSession(row.session)
+		const session = createRestoredSession(row.session)
 		if (session === undefined || !this.#guard(session)) return undefined
-		await this.#table.update(id, { lastSeen: now })
+		await this.#table.update(id, { seen: now })
 		return session
 	}
 
-	async set(id: string, session: S, now: number): Promise<void> {
+	async set(session: S, now: number): Promise<void> {
+		const id = session.id
 		const existing = await this.#table.get(id)
-		const createdAt = existing?.createdAt ?? now
-		await this.#table.set({ id, session: snapshotSession(session), lastSeen: now, createdAt })
+		const created = existing?.created ?? now
+		await this.#table.set({ id, session: snapshotSession(session), seen: now, created })
 	}
 
 	async delete(id: string): Promise<void> {

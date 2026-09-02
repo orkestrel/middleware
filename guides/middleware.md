@@ -69,105 +69,106 @@ const handle = compose<State>([boundary, security], async (_request, context) =>
 
 ### Types
 
-| Type                        | Kind      | Shape                                                                                                   |
-| --------------------------- | --------- | ------------------------------------------------------------------------------------------------------- |
-| `BoundaryOptions`           | interface | `{ expose?; report? }` — options for `createBoundary`.                                                  |
-| `TelemetryEntry`            | interface | `{ method; pathname; status; duration }` — one settled-request record.                                  |
-| `TelemetryOptions`          | interface | `{ record }` — options for `createTelemetry`.                                                           |
-| `CompressionOptions`        | interface | `{ threshold?; encodings?; filter? }` — options for `createCompression`.                                |
-| `CompressResponseOptions`   | interface | `{ threshold; filter?; encodings; compress }` — the resolved settings `compressResponse` runs against.  |
-| `SecurityIdentifierOptions` | type      | `{ trust?: boolean } \| false` — `createSecurity`'s `identifier` sub-option.                            |
-| `SecurityOptions`           | interface | `{ frame?; csp?; referrer?; permissions?; coop?; corp?; cluster?; coep?; hsts?; identifier? }`.         |
-| `CorsOptions`               | interface | `{ origin?; methods?; headers? }` — options for `createCors`.                                           |
-| `DeadlineOptions`           | interface | `{ ms; status? }` — options for `createDeadline`.                                                       |
-| `ForwardedOptions`          | type      | `{ proxies } \| { trusted }` — exactly one, for `createForwarded`.                                      |
-| `ETagOptions`               | interface | `{ weak? }` — options for `createETag`.                                                                 |
-| `BearerOptions`             | interface | `{ secret; header?; scheme? }` — options for `createBearer`.                                            |
-| `LimiterOptions`            | interface | `{ max; window; capacity?; key?; message?; clock?; policy?; evict? }`.                                  |
-| `BearerState`               | interface | `{ readonly token?: string }` — the state slice `createBearer` stashes.                                 |
-| `IdentifierState`           | interface | `{ readonly identifier?: string }` — the state slice `createSecurity` stashes.                          |
-| `ClientInfo`                | interface | `{ readonly ip?: string }` — the resolved client connection facts.                                      |
-| `ClientState`               | interface | `{ readonly client?: ClientInfo }` — the state slice `createForwarded` stashes.                         |
-| `ConnectionState`           | interface | `{ readonly connection?: ConnectionInfo }` — the socket-fact state slice `resolveKey` reads.            |
-| `SessionInterface`          | interface | `{ id; data }` — a server-managed session's public surface.                                             |
-| `SessionControlInterface`   | interface | `regenerate()` / `destroy()` — the mid-handler session control handle.                                  |
-| `SessionState`              | interface | `{ readonly session?; readonly control? }` — the state slice `createSession` stashes.                   |
-| `BodyState`                 | interface | `{ readonly body?: unknown }` — the state slice `createBody` stashes.                                   |
-| `SessionStoreInterface`     | interface | `get` / `set` / `delete` — the pluggable session persistence seam.                                      |
-| `SessionTransport`          | interface | `read` / `write` / `clear` — how a session id travels to/from the client.                               |
-| `SessionOptions`            | interface | `{ transport; store?; ttl?; lifetime?; capacity?; evict?; create?; mint?; require?; ends?; clock? }`.   |
-| `CookieTransportOptions`    | interface | `{ name?; secret; cookie? }` — options for `createCookieTransport`.                                     |
-| `HeaderTransportOptions`    | interface | `{ header? }` — options for `createHeaderTransport`.                                                    |
-| `MemorySessionStoreOptions` | interface | `{ ttl?; lifetime?; capacity?; evict? }` — options for `createMemorySessionStore`.                      |
-| `SessionLimits`             | interface | `{ ttl?; lifetime? }` — the idle and absolute-lifetime thresholds a store enforces.                     |
-| `SessionCursors`            | interface | `{ lastSeen; createdAt }` — the per-session instants `sessionExpired` measures against.                 |
-| `SessionRow`                | interface | `{ id; session; lastSeen; createdAt }` — one persisted session row `DatabaseSessionStore` reads/writes. |
-| `SessionEntry`              | interface | `{ session; lastSeen; createdAt }` — one in-process entry `MemorySessionStore` holds.                   |
-| `SessionSnapshot`           | interface | `{ id; data }` — a session's serializable projection, the value `snapshotSession` produces.             |
-| `CSRFState`                 | interface | `{ readonly csrf?: string }` — the state slice `createCSRF` stashes.                                    |
-| `CSRFOptions`               | interface | `{ secret; cookie?; header?; field?; safe? }` — options for `createCSRF`.                               |
-| `MultipartFile`             | interface | `{ field; name; size; mime; validated; status; path }` — one staged upload.                             |
-| `MultipartBody`             | interface | `{ files; fields }` — the parsed multipart request body.                                                |
-| `MultipartState`            | interface | `{ readonly multipart?: MultipartBody }` — the state slice `createMultipart` stashes.                   |
-| `Asset`                     | interface | `{ body; encoding? }` — one identity or Brotli in-memory representation.                                |
-| `AssetSourceInterface`      | interface | `read` — resolve one validated relative asset key.                                                      |
-| `AssetOptions`              | interface | `{ source }` — options for `createAssets`.                                                              |
-| `StaticOptions`             | interface | `{ root; prefix?; index?; dotfiles?; cache?; etag?; fallback? }`.                                       |
-| `MultipartLimits`           | interface | `{ file?; files?; field?; fields?; total? }` — per-category mid-stream caps.                            |
-| `MultipartOptions`          | interface | `{ limits?; allowed?; directory? }` — options for `createMultipart`.                                    |
-| `NodeCompressionOptions`    | interface | `{ threshold?; filter? }` — options for the node face's `createCompression`.                            |
-| `MultipartReason`           | type      | `'limit' \| 'malformed' \| 'rejected'` — the axis `MultipartError` maps to a status.                    |
-| `UploadStatus`              | type      | `'staged' \| 'moved'` — a staged upload's temp-file lifecycle stage.                                    |
-| `UploadedFileInterface`     | interface | `{ field; name; size; mime; validated; status: UploadStatus; path }`.                                   |
-| `PartHeaders`               | interface | `{ name; filename; contentType }` — one multipart part's parsed header block.                           |
-| `UploadedFileInput`         | interface | `{ field; name; size; mime; validated; status; path }` — input for `createUploadedFile`.                |
+| Type                        | Kind      | Shape                                                                                                  |
+| --------------------------- | --------- | ------------------------------------------------------------------------------------------------------ |
+| `BoundaryOptions`           | interface | `{ expose?; report? }` — options for `createBoundary`.                                                 |
+| `TelemetryEntry`            | interface | `{ method; pathname; status; duration }` — one settled-request record.                                 |
+| `TelemetryOptions`          | interface | `{ record }` — options for `createTelemetry`.                                                          |
+| `CompressionOptions`        | interface | `{ threshold?; encodings?; filter? }` — options for `createCompression`.                               |
+| `CompressResponseOptions`   | interface | `{ threshold; filter?; encodings; compress }` — the resolved settings `compressResponse` runs against. |
+| `SecurityIdentifierOptions` | type      | `{ trust?: boolean } \| false` — `createSecurity`'s `identifier` sub-option.                           |
+| `SecurityOptions`           | interface | `{ frame?; csp?; referrer?; permissions?; coop?; corp?; cluster?; coep?; hsts?; identifier? }`.        |
+| `CorsOptions`               | interface | `{ origin?; methods?; headers? }` — options for `createCors`.                                          |
+| `DeadlineOptions`           | interface | `{ ms; status? }` — options for `createDeadline`.                                                      |
+| `ForwardedOptions`          | type      | `{ proxies } \| { trusted }` — exactly one, for `createForwarded`.                                     |
+| `ETagOptions`               | interface | `{ weak? }` — options for `createETag`.                                                                |
+| `BearerOptions`             | interface | `{ secret; header?; scheme? }` — options for `createBearer`.                                           |
+| `LimiterOptions`            | interface | `{ max; window; capacity?; key?; message?; clock?; policy?; evict? }`.                                 |
+| `BearerState`               | interface | `{ readonly token?: string }` — the state slice `createBearer` stashes.                                |
+| `IdentifierState`           | interface | `{ readonly identifier?: string }` — the state slice `createSecurity` stashes.                         |
+| `Client`                    | interface | `{ readonly ip?: string }` — the resolved client connection facts.                                     |
+| `ClientState`               | interface | `{ readonly client?: Client }` — the state slice `createForwarded` stashes.                            |
+| `ConnectionState`           | interface | `{ readonly connection?: ConnectionInfo }` — the socket-fact state slice `resolveKey` reads.           |
+| `SessionInterface`          | interface | `{ id; state }` plus `set` / `delete` / `clear` — a server-managed session's public surface.           |
+| `SessionControlInterface`   | interface | `regenerate()` / `destroy()` — the mid-handler session control handle.                                 |
+| `SessionState`              | interface | `{ readonly session?; readonly control? }` — the state slice `createSession` stashes.                  |
+| `BodyState`                 | interface | `{ readonly body?: unknown }` — the state slice `createBody` stashes.                                  |
+| `SessionStoreInterface`     | interface | `get` / `set` / `delete` — the pluggable session persistence seam.                                     |
+| `SessionTransportInterface` | interface | `read` / `write` / `clear` — how a session id travels to/from the client.                              |
+| `SessionOptions`            | interface | `{ transport; store?; ttl?; lifetime?; capacity?; evict?; create?; mint?; required?; clock? }`.        |
+| `CookieTransportOptions`    | interface | `{ name?; secret; cookie? }` — options for `createCookieTransport`.                                    |
+| `HeaderTransportOptions`    | interface | `{ header? }` — options for `createHeaderTransport`.                                                   |
+| `MemorySessionStoreOptions` | interface | `{ ttl?; lifetime?; capacity?; evict? }` — options for `createMemorySessionStore`.                     |
+| `SessionLimits`             | interface | `{ ttl?; lifetime? }` — the idle and absolute-lifetime thresholds a store enforces.                    |
+| `SessionCursors`            | interface | `{ seen; created }` — the per-session instants `sessionExpired` measures against.                      |
+| `SessionRow`                | interface | `{ id; session; seen; created }` — one persisted session row `DatabaseSessionStore` reads/writes.      |
+| `SessionEntry`              | interface | `{ session; seen; created }` — one in-process entry `MemorySessionStore` holds.                        |
+| `SessionSnapshot`           | interface | `{ id; data }` — a session's serializable projection, the value `snapshotSession` produces.            |
+| `CSRFState`                 | interface | `{ readonly csrf?: string }` — the state slice `createCSRF` stashes.                                   |
+| `CSRFOptions`               | interface | `{ secret; cookie?; header?; field?; safe? }` — options for `createCSRF`.                              |
+| `MultipartFile`             | interface | `{ field; name; size; mime; validated; status; path }` — one staged upload.                            |
+| `MultipartBody`             | interface | `{ files; fields }` — the parsed multipart request body.                                               |
+| `MultipartState`            | interface | `{ readonly multipart?: MultipartBody }` — the state slice `createMultipart` stashes.                  |
+| `Asset`                     | interface | `{ body; encoding? }` — one identity or Brotli in-memory representation.                               |
+| `AssetSourceInterface`      | interface | `read` — resolve one validated relative asset key.                                                     |
+| `AssetOptions`              | interface | `{ source }` — options for `createAssets`.                                                             |
+| `StaticOptions`             | interface | `{ root; prefix?; index?; dotfiles?; cache?; etag?; fallback? }`.                                      |
+| `MultipartLimitsInput`      | interface | `{ file?: { size?; count? }; field?: { size?; count? }; total? }` — the caller's partial caps.         |
+| `MultipartLimits`           | interface | `{ file: { size; count }; field: { size; count }; total }` — the effective mid-stream caps.            |
+| `MultipartOptions`          | interface | `{ limits?; allowed?; directory? }` — options for `createMultipart`.                                   |
+| `NodeCompressionOptions`    | interface | `{ threshold?; filter? }` — options for the node face's `createCompression`.                           |
+| `MultipartErrorCode`        | type      | `'limit' \| 'malformed' \| 'rejected'` — the axis `MultipartError` maps to a status.                   |
+| `UploadStatus`              | type      | `'staged' \| 'moved'` — a staged upload's temp-file lifecycle stage.                                   |
+| `UploadedFile`              | interface | `{ field; name; size; mime; validated; status: UploadStatus; path }`.                                  |
+| `PartHeaders`               | interface | `{ name; filename; mime }` — one multipart part's parsed header block.                                 |
+| `UploadedFileInput`         | interface | `{ field; name; size; mime; validated; status; path }` — input for `createUploadedFile`.               |
 
 ### Constants
 
-| API                               | Kind  | Summary                                                                               |
-| --------------------------------- | ----- | ------------------------------------------------------------------------------------- |
-| `DEFAULT_COMPRESSION_THRESHOLD`   | const | Default minimum buffered body size (bytes) worth compressing (`1024`).                |
-| `DEFAULT_COMPRESSION_ENCODINGS`   | const | Default codings offered, in preference order (`['gzip', 'deflate']`).                 |
-| `DEFAULT_FRAME_OPTIONS`           | const | Default `X-Frame-Options` value (`'DENY'`).                                           |
-| `DEFAULT_CSP`                     | const | Default `Content-Security-Policy` value.                                              |
-| `DEFAULT_REFERRER_POLICY`         | const | Default `Referrer-Policy` value (`'strict-origin-when-cross-origin'`).                |
-| `DEFAULT_PERMISSIONS_POLICY`      | const | Default `Permissions-Policy` value.                                                   |
-| `DEFAULT_COOP`                    | const | Default `Cross-Origin-Opener-Policy` value (`'same-origin'`).                         |
-| `DEFAULT_CORP`                    | const | Default `Cross-Origin-Resource-Policy` value (`'same-origin'`).                       |
-| `DEFAULT_CLUSTER`                 | const | Default `Origin-Agent-Cluster` value (`'?1'`).                                        |
-| `DEFAULT_COEP`                    | const | The `coep: true` opt-in value (`'require-corp'`).                                     |
-| `DEFAULT_HSTS`                    | const | The `hsts: true` opt-in value (`'max-age=31536000; includeSubDomains'`).              |
-| `DEFAULT_IDENTIFIER_HEADER`       | const | The request-identifier header name (`'x-request-id'`).                                |
-| `DEFAULT_CORS_METHODS`            | const | Default preflight-advertised methods.                                                 |
-| `DEFAULT_CORS_HEADERS`            | const | Default preflight-advertised headers.                                                 |
-| `DEFAULT_DEADLINE_STATUS`         | const | Default status returned when a deadline fires first (`503`).                          |
-| `DEFAULT_BEARER_HEADER`           | const | Default bearer-token header (`'authorization'`).                                      |
-| `DEFAULT_BEARER_SCHEME`           | const | Default bearer scheme prefix (`'Bearer'`).                                            |
-| `DEFAULT_LIMITER_CAPACITY`        | const | Default max distinct rate-limit keys tracked (`10_000`).                              |
-| `DEFAULT_LIMITER_MESSAGE`         | const | Default 429 body message.                                                             |
-| `DEFAULT_SESSION_CAPACITY`        | const | Default max distinct session ids `createMemorySessionStore` tracks (`10_000`).        |
-| `DEFAULT_SESSION_COOKIE`          | const | Default session cookie name (`'session'`).                                            |
-| `DEFAULT_SESSION_HEADER`          | const | Default session header name (`'session-id'`).                                         |
-| `DEFAULT_CSRF_COOKIE`             | const | Default CSRF cookie name (`'csrf'`).                                                  |
-| `DEFAULT_CSRF_HEADER`             | const | Default CSRF submission header (`'x-csrf-token'`).                                    |
-| `DEFAULT_CSRF_FIELD`              | const | Default CSRF submission body field (`'_csrf'`).                                       |
-| `DEFAULT_CSRF_SAFE_METHODS`       | const | Methods that mint instead of verify (`['GET', 'HEAD', 'OPTIONS']`).                   |
-| `MULTIPART_REASON_STATUS`         | const | `MultipartReason` → HTTP status map (`limit`→413, `malformed`→400, `rejected`→415).   |
-| `MULTIPART_ERROR_BRAND`           | const | The registry symbol `MultipartError` carries so `isMultipartError` recognizes it.     |
-| `NODE_COMPRESSION_ENCODINGS`      | const | The codings the node face's `createCompression` offers (`['gzip', 'deflate']`).       |
-| `DEFAULT_STATIC_INDEX`            | const | Default directory-index filename (`'index.html'`).                                    |
-| `DEFAULT_STATIC_FALLBACK_EXCLUDE` | const | Default SPA-fallback excluded prefix (`'/api'`).                                      |
-| `DEFAULT_STATIC_DOTFILES`         | const | Default dotfile-segment policy (`'ignore'`).                                          |
-| `DEFAULT_CONTENT_TYPE`            | const | Fallback `Content-Type` for an unmapped extension.                                    |
-| `DEFAULT_MULTIPART_FILE`          | const | Default max size (bytes) of one uploaded file (`10_485_760`).                         |
-| `DEFAULT_MULTIPART_FILES`         | const | Default max number of file parts (`10`).                                              |
-| `DEFAULT_MULTIPART_FIELD`         | const | Default max size (bytes) of one text field (`65_536`).                                |
-| `DEFAULT_MULTIPART_FIELDS`        | const | Default max number of text field parts (`100`).                                       |
-| `DEFAULT_MULTIPART_TOTAL`         | const | Default max combined request body size (bytes) (`52_428_800`).                        |
-| `MULTIPART_MAX_HEADER_BLOCK`      | const | Max bytes a single multipart part header block may occupy (`16_384`).                 |
-| `MULTIPART_MAX_PREAMBLE`          | const | Max bytes scanned before the first boundary before rejecting as malformed (`65_536`). |
-| `RESERVED_DEVICE_NAMES`           | const | The Windows reserved-device-name set the static traversal guard refuses.              |
-| `EXTENSION_TYPES`                 | const | The file-extension → `Content-Type` lookup table `lookupContentType` uses.            |
+| API                               | Kind  | Summary                                                                                |
+| --------------------------------- | ----- | -------------------------------------------------------------------------------------- |
+| `DEFAULT_COMPRESSION_THRESHOLD`   | const | Default minimum buffered body size (bytes) worth compressing (`1024`).                 |
+| `DEFAULT_COMPRESSION_ENCODINGS`   | const | Default codings offered, in preference order (`['gzip', 'deflate']`).                  |
+| `DEFAULT_FRAME_OPTIONS`           | const | Default `X-Frame-Options` value (`'DENY'`).                                            |
+| `DEFAULT_CSP`                     | const | Default `Content-Security-Policy` value.                                               |
+| `DEFAULT_REFERRER_POLICY`         | const | Default `Referrer-Policy` value (`'strict-origin-when-cross-origin'`).                 |
+| `DEFAULT_PERMISSIONS_POLICY`      | const | Default `Permissions-Policy` value.                                                    |
+| `DEFAULT_COOP`                    | const | Default `Cross-Origin-Opener-Policy` value (`'same-origin'`).                          |
+| `DEFAULT_CORP`                    | const | Default `Cross-Origin-Resource-Policy` value (`'same-origin'`).                        |
+| `DEFAULT_CLUSTER`                 | const | Default `Origin-Agent-Cluster` value (`'?1'`).                                         |
+| `DEFAULT_COEP`                    | const | The `coep: true` opt-in value (`'require-corp'`).                                      |
+| `DEFAULT_HSTS`                    | const | The `hsts: true` opt-in value (`'max-age=31536000; includeSubDomains'`).               |
+| `DEFAULT_IDENTIFIER_HEADER`       | const | The request-identifier header name (`'x-request-id'`).                                 |
+| `DEFAULT_CORS_METHODS`            | const | Default preflight-advertised methods.                                                  |
+| `DEFAULT_CORS_HEADERS`            | const | Default preflight-advertised headers.                                                  |
+| `DEFAULT_DEADLINE_STATUS`         | const | Default status returned when a deadline fires first (`503`).                           |
+| `DEFAULT_BEARER_HEADER`           | const | Default bearer-token header (`'authorization'`).                                       |
+| `DEFAULT_BEARER_SCHEME`           | const | Default bearer scheme prefix (`'Bearer'`).                                             |
+| `DEFAULT_LIMITER_CAPACITY`        | const | Default max distinct rate-limit keys tracked (`10_000`).                               |
+| `DEFAULT_LIMITER_MESSAGE`         | const | Default 429 body message.                                                              |
+| `DEFAULT_SESSION_CAPACITY`        | const | Default max distinct session ids `createMemorySessionStore` tracks (`10_000`).         |
+| `DEFAULT_SESSION_COOKIE`          | const | Default session cookie name (`'session'`).                                             |
+| `DEFAULT_SESSION_HEADER`          | const | Default session header name (`'session-id'`).                                          |
+| `DEFAULT_CSRF_COOKIE`             | const | Default CSRF cookie name (`'csrf'`).                                                   |
+| `DEFAULT_CSRF_HEADER`             | const | Default CSRF submission header (`'x-csrf-token'`).                                     |
+| `DEFAULT_CSRF_FIELD`              | const | Default CSRF submission body field (`'_csrf'`).                                        |
+| `DEFAULT_CSRF_SAFE_METHODS`       | const | Methods that mint instead of verify (`['GET', 'HEAD', 'OPTIONS']`).                    |
+| `MULTIPART_STATUS`                | const | `MultipartErrorCode` → HTTP status map (`limit`→413, `malformed`→400, `rejected`→415). |
+| `MULTIPART_ERROR_BRAND`           | const | The registry symbol `MultipartError` carries so `isMultipartError` recognizes it.      |
+| `NODE_COMPRESSION_ENCODINGS`      | const | The codings the node face's `createCompression` offers (`['gzip', 'deflate']`).        |
+| `DEFAULT_STATIC_INDEX`            | const | Default directory-index filename (`'index.html'`).                                     |
+| `DEFAULT_STATIC_FALLBACK_EXCLUDE` | const | Default SPA-fallback excluded prefix (`'/api'`).                                       |
+| `DEFAULT_STATIC_DOTFILES`         | const | Default dotfile-segment policy (`'ignore'`).                                           |
+| `DEFAULT_CONTENT_TYPE`            | const | Fallback `Content-Type` for an unmapped extension.                                     |
+| `DEFAULT_MULTIPART_FILE`          | const | Default max size (bytes) of one uploaded file (`10_485_760`).                          |
+| `DEFAULT_MULTIPART_FILES`         | const | Default max number of file parts (`10`).                                               |
+| `DEFAULT_MULTIPART_FIELD`         | const | Default max size (bytes) of one text field (`65_536`).                                 |
+| `DEFAULT_MULTIPART_FIELDS`        | const | Default max number of text field parts (`100`).                                        |
+| `DEFAULT_MULTIPART_TOTAL`         | const | Default max combined request body size (bytes) (`52_428_800`).                         |
+| `MULTIPART_MAX_HEADER_BLOCK`      | const | Max bytes a single multipart part header block may occupy (`16_384`).                  |
+| `MULTIPART_MAX_PREAMBLE`          | const | Max bytes scanned before the first boundary before rejecting as malformed (`65_536`).  |
+| `RESERVED_DEVICE_NAMES`           | const | The Windows reserved-device-name set the static traversal guard refuses.               |
+| `EXTENSION_TYPES`                 | const | The file-extension → `Content-Type` lookup table `lookupContentType` uses.             |
 
 ### Shapers
 
@@ -192,17 +193,17 @@ const handle = compose<State>([boundary, security], async (_request, context) =>
 | `isCompressionNegotiated`   | function | Narrow a negotiated `Encoding` to one worth actually compressing with.                    |
 | `rebuildResponse`           | function | Reconstruct a `Response` with a new body, copying status/headers (with overrides).        |
 | `compressResponse`          | function | The shared compression decision skeleton — eligibility, negotiation, buffer, compress.    |
-| `transferSessionData`       | function | Copy one session's `data` Map onto another — the `regenerate()` data-carry.               |
+| `transferSessionData`       | function | Copy one session's `state` onto another — the `regenerate()` state-carry.                 |
 | `sessionExpired`            | function | Whether a session's idle/absolute-lifetime thresholds have elapsed as of `now`.           |
-| `snapshotSession`           | function | Copy a session's `data` Map into a plain, serializable `{ id; data }` record.             |
-| `restoreSession`            | function | Rebuild a `Session` from an untrusted snapshot value, or `undefined` when malformed.      |
+| `snapshotSession`           | function | Copy a session's `state` into a plain, serializable `{ id; data }` record.                |
+| `validateSessionLimits`     | function | Refuse a malformed `ttl`/`lifetime` — the construction gate both stores apply.            |
 | `isPreflight`               | function | Whether a request is a CORS preflight (`OPTIONS` + `Access-Control-Request-Method`).      |
-| `buildClientInfo`           | function | Build a `ClientInfo` from a resolved (or absent) client IP.                               |
+| `buildClientInfo`           | function | Build a `Client` from a resolved (or absent) client IP.                                   |
 | `equalsConstantTime`        | function | Constant-time string equality (avoids a timing oracle in the CSRF double-submit compare). |
 
 ### Validators — core
 
-The total `(unknown) => value is T` guards, each safe against any input:
+Each guard below is total: it accepts any input, returns `false` off-shape, and never throws.
 
 | API                | Kind     | Summary                                               |
 | ------------------ | -------- | ----------------------------------------------------- |
@@ -229,21 +230,25 @@ The total `(unknown) => value is T` guards, each safe against any input:
 | `compressNodeBytes`         | function | Compress bytes with Node's guaranteed zlib gzip/deflate codecs.                                                                |
 | `multipartBoundary`         | function | Extract the multipart boundary token from a `Content-Type` header.                                                             |
 | `parsePartHeaders`          | function | Parse one multipart part's raw header block into its field/filename/mime facts.                                                |
-| `resolveMultipartLimits`    | function | Resolve `MultipartLimits` defaults into a fully-populated `Required<MultipartLimits>`.                                         |
-| `parseMultipartRequest`     | function | Stream-parse a multipart request body into a `MultipartBody`, or `undefined`.                                                  |
-| `resolveDefaultDirectory`   | function | Lazily create + memoize the default `0o700` `mkdtemp` staging directory under `os.tmpdir()`.                                   |
-| `createUploadedFile`        | function | Build a frozen `UploadedFileInterface` record.                                                                                 |
+| `resolveMultipartLimits`    | function | Resolve a `MultipartLimitsInput` into the effective `MultipartLimits`, one default per omitted leaf.                           |
+| `createUploadedFile`        | function | Build a frozen `UploadedFile` record.                                                                                          |
 | `streamFile`                | function | Open a DOM `ReadableStream` over a path's or open `FileHandle`'s bytes (optional byte range), for a `Response` body.           |
 | `streamUploadedFile`        | function | Open a `ReadableStream` over a staged upload's on-disk bytes.                                                                  |
 | `readUploadedFile`          | function | Read a staged upload's on-disk bytes into one `Uint8Array`.                                                                    |
 | `moveUploadedFile`          | function | Relocate a staged upload's temp file (rename, with EXDEV copy+unlink fallback).                                                |
 | `unlinkStagedFiles`         | function | Best-effort unlink of every still-`'staged'` file in a `MultipartBody` (downstream-throw cleanup).                             |
 
+### Parsers — node
+
+| API                     | Kind     | Summary                                                                       |
+| ----------------------- | -------- | ----------------------------------------------------------------------------- |
+| `parseMultipartRequest` | function | Stream-parse a multipart request body into a `MultipartBody`, or `undefined`. |
+
 ### Entities
 
 | API                    | Kind  | Summary                                                                                                                                 |
 | ---------------------- | ----- | --------------------------------------------------------------------------------------------------------------------------------------- |
-| `Session`              | class | The default session entity — `id` + a live `data` Map; implements `SessionInterface`.                                                   |
+| `Session`              | class | The default session entity — `id` + a `state` view written through its mutators; implements `SessionInterface`.                         |
 | `MemorySessionStore`   | class | The default in-process `SessionStoreInterface` — idle + absolute-lifetime eviction.                                                     |
 | `DatabaseSessionStore` | class | A durable `SessionStoreInterface` over an `@orkestrel/database` table — same idle + absolute-lifetime contract as `MemorySessionStore`. |
 
@@ -257,24 +262,26 @@ omission is asserted rather than assumed, and adding it to the barrel would turn
 
 | API                          | Kind     | Summary                                                                                                        |
 | ---------------------------- | -------- | -------------------------------------------------------------------------------------------------------------- |
-| `createCookieTransport`      | function | Build a signed-cookie `SessionTransport`.                                                                      |
-| `createHeaderTransport`      | function | Build a bare-header `SessionTransport`.                                                                        |
+| `createCookieTransport`      | function | Build a signed-cookie `SessionTransportInterface`.                                                             |
+| `createHeaderTransport`      | function | Build a bare-header `SessionTransportInterface`.                                                               |
 | `createMemorySessionStore`   | function | Build a `MemorySessionStore` as a `SessionStoreInterface`.                                                     |
 | `createDatabaseSessionStore` | function | Build a `DatabaseSessionStore` as a `SessionStoreInterface`, over a caller-opened `@orkestrel/database` table. |
+| `createRestoredSession`      | function | Rebuild a `Session` from an untrusted snapshot value, or `undefined` when malformed.                           |
 
 ### Errors
 
-| API                | Kind     | Summary                                                                    |
-| ------------------ | -------- | -------------------------------------------------------------------------- |
-| `MultipartError`   | class    | An `HTTPError` subclass `createMultipart` throws — adds the `reason` axis. |
-| `isMultipartError` | function | Narrow an unknown caught value to a `MultipartError`.                      |
+| API                | Kind     | Summary                                                                  |
+| ------------------ | -------- | ------------------------------------------------------------------------ |
+| `MultipartError`   | class    | An `HTTPError` subclass `createMultipart` throws — adds the `code` axis. |
+| `isMultipartError` | function | Narrow an unknown caught value to a `MultipartError`.                    |
 
 ## Methods
 
-The public methods of `AssetSourceInterface`, `SessionControlInterface`,
-`SessionStoreInterface`, and `SessionTransport` — the behavioral seams the
-middleware factories compose
-(their `readonly` data members, where any exist, stay Surface rows above).
+The public methods of `AssetSourceInterface`, `SessionInterface`,
+`SessionControlInterface`, `SessionStoreInterface`, and
+`SessionTransportInterface` — the behavioral seams the middleware factories
+compose (their `readonly` data members, where any exist, stay Surface rows
+above).
 
 #### `AssetSourceInterface`
 
@@ -286,30 +293,42 @@ factory's lifetime. A miss may be read again later.
 | ------ | -------------------- | -------------------------------------------------------------- |
 | `read` | `Asset \| undefined` | Return one identity/Brotli asset for a validated relative key. |
 
+#### `SessionInterface`
+
+The session entity's own write seam. `state` is a readonly view, so every
+write goes through a mutator and no consumer holds the entity's `Map`.
+
+| Method   | Returns   | Behavior                                                         |
+| -------- | --------- | ---------------------------------------------------------------- |
+| `set`    | `void`    | Write one key's value into the session's state.                  |
+| `delete` | `boolean` | Remove one key — true when the session held it, false otherwise. |
+| `clear`  | `void`    | Empty the state, leaving the session and its id alive.           |
+
 #### `SessionControlInterface`
 
 `regenerate` is the OWASP anti-fixation primitive (rotate the id, keep the
-data); `destroy` ends the session outright. Both record intent
+state); `destroy` ends the session outright. Both record intent
 SYNCHRONOUSLY; the store I/O and transport write happen after `next()`
 returns (`destroy` supersedes a prior `regenerate`).
 
-| Method       | Returns | Behavior                                                               |
-| ------------ | ------- | ---------------------------------------------------------------------- |
-| `regenerate` | `void`  | Mint a new id, carry the session's `data` over, invalidate the old id. |
-| `destroy`    | `void`  | End the session — deletes it from the store and clears its transport.  |
+| Method       | Returns | Behavior                                                                |
+| ------------ | ------- | ----------------------------------------------------------------------- |
+| `regenerate` | `void`  | Mint a new id, carry the session's `state` over, invalidate the old id. |
+| `destroy`    | `void`  | End the session — deletes it from the store and clears its transport.   |
 
 #### `SessionStoreInterface`
 
-The pluggable point-access persistence seam (AGENTS §5 store mold) —
-`get`/`set`/`delete`, every primitive async with a trailing injected `now`.
+The pluggable point-access persistence seam — `get`/`set`/`delete`, every
+primitive async with a trailing injected `now`. `set` reads the id from the
+session it is handed, so no separate id is passed.
 
 | Method   | Returns                   | Behavior                                                           |
 | -------- | ------------------------- | ------------------------------------------------------------------ |
 | `get`    | `Promise<S \| undefined>` | Read a session by id, applying idle/absolute expiry against `now`. |
-| `set`    | `Promise<void>`           | Persist a session's current state, refreshing its idle window.     |
+| `set`    | `Promise<void>`           | Persist a session under its own `id`, refreshing its idle window.  |
 | `delete` | `Promise<void>`           | Remove a session by id — a no-op on an absent id, never throws.    |
 
-#### `SessionTransport`
+#### `SessionTransportInterface`
 
 How a session id travels to and from the client — `read` is total (never
 throws); `write`/`clear` mutate the RETURNED `Response` on the way out (the
@@ -330,10 +349,9 @@ These invariants hold across `src/core` / `src/server` ↔ `middleware.md`.
    source directory, and every export appears as a Surface row — exhaustive,
    both directions (AGENTS §22).
 2. **DOC ↔ SOURCE method bijection.** The `## Methods` tables list exactly
-   `AssetSourceInterface`'s, `SessionControlInterface`'s,
-   `SessionStoreInterface`'s, and `SessionTransport`'s public methods —
-   exhaustive, both directions (AGENTS
-   §22).
+   `AssetSourceInterface`'s, `SessionInterface`'s, `SessionControlInterface`'s,
+   `SessionStoreInterface`'s, and `SessionTransportInterface`'s public methods —
+   exhaustive, both directions.
 
 ### The ordering doctrine (PROPOSAL §5)
 
@@ -410,18 +428,21 @@ prevents:
     maps its outcomes.
 19. **Session.** The default `MemorySessionStore` enforces BOTH an idle
     timeout (`ttl`, lazy eviction on `get`) AND an absolute lifetime
-    (`lifetime`, evicting even a continuously-touched session — `createdAt`
+    (`lifetime`, evicting even a continuously-touched session — `created`
     is stamped once at first `set` and preserved across every later
     re-persist); it is ALSO capacity-capped (`capacity`, default
     `DEFAULT_SESSION_CAPACITY`) and evicts the least-recently-WRITTEN id —
     every `set` (not `get`) refreshes recency — invoking the optional
     `evict` sink (throw-isolated) on a capacity eviction or an expired-entry
     prune, but never for an explicit `delete`; `control.regenerate()` rotates the id while carrying the
-    session's `data` over and invalidating the old id; a signed cookie
+    session's `state` over and invalidating the old id; a signed cookie
     transport inherits the full substrate injection-hardening matrix
     (`__Host-` spoof rejection, `Domain`/`Path` injection throws,
     `SameSite=None` forces `Secure`, `Secure` derived from the connection's
-    TLS fact when omitted).
+    TLS fact when omitted). The battery installs no route of its own: it
+    answers `404` when `required` is set and no session resolves or mints, and
+    a consumer ending a session on `DELETE` mounts its own handler over
+    `control.destroy()`.
 20. **CSRF.** With a session ahead, the minted token is bound to that
     session's id (`signToken(sessionId)`) — a mutating request's recovered
     bound id must equal ITS OWN session's id, so a token minted under
@@ -463,7 +484,8 @@ prevents:
     `MULTIPART_MAX_PREAMBLE` before the first boundary is rejected
     `'malformed'` rather than scanned unbounded; an empty-filename part
     (a file input submitted with no file chosen) is a no-op — staged then
-    discarded, never surfaced as an upload; staged files default to a
+    discarded, never counted against `limits.file.count`, never surfaced as an
+    upload; staged files default to a
     process-owned `mkdtemp` directory under `os.tmpdir()` locked to mode
     `0o700`, with each staged file opened at mode `0o600` (both overridable
     via `options.directory`).
@@ -612,7 +634,7 @@ import { Session } from '@orkestrel/middleware'
 
 const store = createMemorySessionStore({ ttl: 60_000 })
 const now = Date.now()
-await store.set('id-1', new Session('id-1'), now)
+await store.set(new Session('id-1'), now)
 await store.get('id-1', now) // resolves the session, or undefined if expired
 await store.delete('id-1') // no-op on an already-absent id
 ```
@@ -637,7 +659,7 @@ import { createDatabase, createMemoryDriver } from '@orkestrel/database'
 const db = createDatabase({ driver: createMemoryDriver(), tables: { sessions: sessionColumns } })
 const store = createDatabaseSessionStore(db.table('sessions'), isSession, { ttl: 900_000 })
 const now = Date.now()
-await store.set('id-1', new Session('id-1'), now)
+await store.set(new Session('id-1'), now)
 await store.get('id-1', now) // resolves the session, or undefined if expired/removed
 ```
 
@@ -693,7 +715,7 @@ if (isMultipartBody(context.state.multipart)) {
 ```ts
 import { resolveMultipartLimits } from '@orkestrel/middleware/server'
 
-resolveMultipartLimits({ file: 1_048_576 }) // fills in every other default cap
+resolveMultipartLimits({ file: { size: 1_048_576 } }) // fills in every other default cap
 ```
 
 Multipart processing reports no progress. A consumer's request for upload progress is the
@@ -762,7 +784,7 @@ still served through the fallback, because the operator configured that path.
   `context.state.multipart`, narrowed with `isMultipartBody`. After it
   runs, `context.body()` must NOT be called for that request — the
   underlying stream is exhausted.
-- **`SessionTransport.write`/`clear` mutate the RETURNED `Response` on the
+- **`SessionTransportInterface.write`/`clear` mutate the RETURNED `Response` on the
   way out.** `createSession` applies store I/O and transport writes AFTER
   `next()` resolves: `destroy()` → `store.delete` + `transport.clear`;
   `regenerate()` → `store.set` the new session, `store.delete` the old,
@@ -796,25 +818,28 @@ still served through the fallback, because the operator configured that path.
   `buildRateLimitPolicyField` exact wire strings, `matchesTrustedEntry`/
   `resolveForwardedFor` matrices, `detectEncodings`, `compressBytes`, buffering-eligibility
   predicates, `transferSessionData`, the `isSession`/`isSessionControl`/
-  `isMultipartBody` totality guards, `isPreflight`, `buildClientInfo`.
+  `isMultipartBody` totality guards, `isPreflight`, `buildClientInfo`,
+  `validateSessionLimits`.
 - [`tests/src/core/Session.test.ts`](../tests/src/core/Session.test.ts) —
-  the entity shape (`id`, an independent, mutable `data` Map per instance).
+  the entity shape (`id`, an independent `state` view and its mutators per instance).
 - [`tests/src/core/stores/MemorySessionStore.test.ts`](../tests/src/core/stores/MemorySessionStore.test.ts) —
   construction guards, get/set/delete, idle + absolute-lifetime eviction,
-  `createdAt` stamped once and preserved across re-set.
+  `created` stamped once and preserved across re-set.
 - [`tests/src/core/stores/DatabaseSessionStore.test.ts`](../tests/src/core/stores/DatabaseSessionStore.test.ts) —
   get/set/delete over a real `@orkestrel/database` memory-driver table, idle +
   absolute-lifetime eviction (including the underlying row's removal),
-  `createdAt` stamped once and preserved across re-set, guard rejection.
+  `created` stamped once and preserved across re-set, guard rejection.
 - [`tests/src/core/factories.test.ts`](../tests/src/core/factories.test.ts) —
   `createCookieTransport`/`createHeaderTransport` round-trips over real
-  `Request`/`Response`, `createMemorySessionStore` shallow mirror.
+  `Request`/`Response`, `createMemorySessionStore` shallow mirror,
+  `createRestoredSession` snapshot rebuilds and malformed refusals.
 - [`tests/src/core/middlewares.test.ts`](../tests/src/core/middlewares.test.ts) —
   every battery's defaults, options, skip conditions, and §6 invariants;
   the canonical onion composed end-to-end.
 - [`tests/src/server/helpers.test.ts`](../tests/src/server/helpers.test.ts) —
   traversal and SPA-fallback resolution, byte-signature matching, node zlib
-  compression, multipart parsing/cleanup, and uploaded-file operations.
+  compression, multipart limit resolution, parsing/cleanup, and uploaded-file
+  operations.
 - [`tests/src/server/middlewares.test.ts`](../tests/src/server/middlewares.test.ts) —
   in-memory asset ownership, key refusal, identity/Brotli negotiation,
   conditional and HEAD responses, filesystem static serving, multipart

@@ -1,5 +1,12 @@
-import { createCookieTransport, createHeaderTransport, createMemorySessionStore } from '@src/core'
+import type { Session } from '@src/core'
+import {
+	createCookieTransport,
+	createHeaderTransport,
+	createMemorySessionStore,
+	createRestoredSession,
+} from '@src/core'
 import { describe, expect, it } from 'vitest'
+import { buildSession } from '../../setup.js'
 
 // ============================================================================
 //  @orkestrel/middleware — factories.ts unit tests (§16 mirror). Round-trips
@@ -116,34 +123,59 @@ describe('createHeaderTransport', () => {
 
 describe('createMemorySessionStore', () => {
 	it('returns a working store round-tripping a set session', async () => {
-		const store = createMemorySessionStore<string>()
-		await store.set('a', 'payload', 0)
-		expect(await store.get('a', 0)).toBe('payload')
+		const store = createMemorySessionStore<Session>()
+		await store.set(buildSession('a'), 0)
+		expect((await store.get('a', 0))?.id).toBe('a')
 	})
 
 	it('resolves undefined for an id that was never set', async () => {
-		const store = createMemorySessionStore<string>()
+		const store = createMemorySessionStore<Session>()
 		expect(await store.get('missing', 0)).toBeUndefined()
 	})
 
 	it('evicts at the idle (ttl) boundary', async () => {
-		const store = createMemorySessionStore<string>({ ttl: 1_000 })
-		await store.set('a', 'payload', 0)
+		const store = createMemorySessionStore<Session>({ ttl: 1_000 })
+		await store.set(buildSession('a'), 0)
 		expect(await store.get('a', 1_000)).toBeUndefined()
 	})
 
 	it('resolves the session right up to the idle boundary (exclusive)', async () => {
-		const store = createMemorySessionStore<string>({ ttl: 1_000 })
-		await store.set('a', 'payload', 0)
-		expect(await store.get('a', 999)).toBe('payload')
+		const store = createMemorySessionStore<Session>({ ttl: 1_000 })
+		await store.set(buildSession('a'), 0)
+		expect((await store.get('a', 999))?.id).toBe('a')
 	})
 
 	it('delete is a total no-op on an absent id', async () => {
-		const store = createMemorySessionStore<string>()
+		const store = createMemorySessionStore<Session>()
 		await expect(store.delete('missing')).resolves.toBeUndefined()
 	})
 
 	it('throws a TypeError when ttl is malformed', () => {
 		expect(() => createMemorySessionStore({ ttl: Number.NaN })).toThrow(TypeError)
+	})
+})
+
+describe('createRestoredSession', () => {
+	it('rebuilds a session with its id and every snapshot entry', () => {
+		const restored = createRestoredSession({ id: 'abc', data: { userId: 'u_1', count: 3 } })
+		expect(restored?.id).toBe('abc')
+		expect(restored?.state.get('userId')).toBe('u_1')
+		expect(restored?.state.get('count')).toBe(3)
+	})
+
+	it('rebuilds a "__proto__"-named key as an own state entry', () => {
+		const snapshot: unknown = JSON.parse('{"id":"x","data":{"__proto__":"evil"}}')
+		const restored = createRestoredSession(snapshot)
+		expect(restored?.state.get('__proto__')).toBe('evil')
+		expect(Object.getPrototypeOf({})).toBe(Object.prototype)
+	})
+
+	it('returns undefined for malformed input', () => {
+		expect(createRestoredSession(undefined)).toBeUndefined()
+		expect(createRestoredSession(null)).toBeUndefined()
+		expect(createRestoredSession('abc')).toBeUndefined()
+		expect(createRestoredSession({})).toBeUndefined()
+		expect(createRestoredSession({ id: 1, data: {} })).toBeUndefined()
+		expect(createRestoredSession({ id: 'abc', data: 'not-a-record' })).toBeUndefined()
 	})
 })

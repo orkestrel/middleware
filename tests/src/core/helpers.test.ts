@@ -18,13 +18,14 @@ import {
 	rebuildResponse,
 	resolveForwardedFor,
 	resolveKey,
-	restoreSession,
 	Session,
 	sessionExpired,
 	snapshotSession,
 	transferSessionData,
+	validateSessionLimits,
 } from '@src/core'
 import { describe, expect, it } from 'vitest'
+import { buildSession } from '../../setup.js'
 
 // Minimal MiddlewareContext<unknown> stub — compressResponse only reads `method`.
 function buildContext(method = 'GET'): MiddlewareContext<unknown> {
@@ -275,63 +276,68 @@ describe('isCompressionNegotiated', () => {
 })
 
 describe('transferSessionData', () => {
-	it('copies every entry from one session data Map into another', () => {
-		const from = {
-			id: 'a',
-			data: new Map<string, unknown>([
-				['userId', 'u_1'],
-				['role', 'admin'],
-			]),
-		}
-		const to = { id: 'b', data: new Map<string, unknown>() }
+	it('copies every entry from one session state into another', () => {
+		const from = new Session('a')
+		from.set('userId', 'u_1')
+		from.set('role', 'admin')
+		const to = new Session('b')
 		transferSessionData(from, to)
-		expect(to.data.get('userId')).toBe('u_1')
-		expect(to.data.get('role')).toBe('admin')
-		expect(to.data.size).toBe(2)
+		expect(to.state.get('userId')).toBe('u_1')
+		expect(to.state.get('role')).toBe('admin')
+		expect(to.state.size).toBe(2)
 	})
 
 	it('leaves the source untouched and overwrites an overlapping destination key', () => {
-		const from = { id: 'a', data: new Map<string, unknown>([['key', 'new']]) }
-		const to = {
-			id: 'b',
-			data: new Map<string, unknown>([
-				['key', 'old'],
-				['extra', 1],
-			]),
-		}
+		const from = buildSession('a', 'new')
+		const to = buildSession('b', 'old')
+		to.set('extra', 1)
 		transferSessionData(from, to)
-		expect(to.data.get('key')).toBe('new')
-		expect(to.data.get('extra')).toBe(1)
-		expect(from.data.get('key')).toBe('new')
+		expect(to.state.get('mark')).toBe('new')
+		expect(to.state.get('extra')).toBe(1)
+		expect(from.state.get('mark')).toBe('new')
+		expect(from.state.size).toBe(1)
 	})
 })
 
 describe('isSession', () => {
 	it('accepts a value shaped like a SessionInterface', () => {
-		expect(isSession({ id: 'a', data: new Map() })).toBe(true)
+		expect(
+			isSession({
+				id: 'a',
+				state: new Map(),
+				set: () => undefined,
+				delete: () => true,
+				clear: () => undefined,
+			}),
+		).toBe(true)
 	})
 
 	it('accepts a real Session class instance', () => {
 		expect(isSession(new Session('a'))).toBe(true)
 	})
 
-	it('accepts a real Session instance with entries in data', () => {
-		const session = new Session('a')
-		session.data.set('userId', 'u_1')
-		expect(isSession(session)).toBe(true)
+	it('accepts a real Session instance with entries in state', () => {
+		expect(isSession(buildSession('a', 'u_1'))).toBe(true)
 	})
 
 	it('rejects a class instance that does not match the shape', () => {
 		class NotASession {
 			readonly id = 42
-			readonly data = []
+			readonly state = []
 		}
 		expect(isSession(new NotASession())).toBe(false)
 
-		class MissingData {
+		class MissingState {
 			readonly id = 'a'
 		}
-		expect(isSession(new MissingData())).toBe(false)
+		expect(isSession(new MissingState())).toBe(false)
+	})
+
+	it('rejects a state-carrying value that publishes no mutators', () => {
+		expect(isSession({ id: 'a', state: new Map() })).toBe(false)
+		expect(isSession({ id: 'a', state: new Map(), set: () => undefined, delete: () => true })).toBe(
+			false,
+		)
 	})
 
 	it('rejects hostile inputs totally', () => {
@@ -340,8 +346,8 @@ describe('isSession', () => {
 		expect(isSession('a')).toBe(false)
 		expect(isSession(42)).toBe(false)
 		expect(isSession([])).toBe(false)
-		expect(isSession({ id: 'a', data: [] })).toBe(false)
-		expect(isSession({ id: 1, data: new Map() })).toBe(false)
+		expect(isSession({ id: 'a', state: [] })).toBe(false)
+		expect(isSession({ id: 1, state: new Map() })).toBe(false)
 		expect(isSession({})).toBe(false)
 	})
 })
@@ -428,7 +434,7 @@ describe('equalsConstantTime', () => {
 })
 
 describe('buildClientInfo', () => {
-	it('wraps a resolved IP into a ClientInfo slice', () => {
+	it('wraps a resolved IP into a Client slice', () => {
 		expect(buildClientInfo('203.0.113.7')).toEqual({ ip: '203.0.113.7' })
 	})
 
@@ -645,70 +651,77 @@ describe('compressResponse', () => {
 
 describe('sessionExpired', () => {
 	it('is false when neither ttl nor lifetime is configured', () => {
-		expect(sessionExpired({ lastSeen: 0, createdAt: 0 }, 1_000_000, {})).toBe(false)
+		expect(sessionExpired({ seen: 0, created: 0 }, 1_000_000, {})).toBe(false)
 	})
 
 	it('is true once idle time reaches ttl (boundary >=)', () => {
-		expect(sessionExpired({ lastSeen: 0, createdAt: 0 }, 999, { ttl: 1_000 })).toBe(false)
-		expect(sessionExpired({ lastSeen: 0, createdAt: 0 }, 1_000, { ttl: 1_000 })).toBe(true)
+		expect(sessionExpired({ seen: 0, created: 0 }, 999, { ttl: 1_000 })).toBe(false)
+		expect(sessionExpired({ seen: 0, created: 0 }, 1_000, { ttl: 1_000 })).toBe(true)
 	})
 
 	it('is true once absolute lifetime reaches its threshold (boundary >=)', () => {
-		expect(sessionExpired({ lastSeen: 500, createdAt: 0 }, 1_999, { lifetime: 2_000 })).toBe(false)
-		expect(sessionExpired({ lastSeen: 500, createdAt: 0 }, 2_000, { lifetime: 2_000 })).toBe(true)
+		expect(sessionExpired({ seen: 500, created: 0 }, 1_999, { lifetime: 2_000 })).toBe(false)
+		expect(sessionExpired({ seen: 500, created: 0 }, 2_000, { lifetime: 2_000 })).toBe(true)
 	})
 
 	it('is true when either ttl or lifetime independently elapses (both configured)', () => {
+		expect(sessionExpired({ seen: 0, created: 0 }, 1_000, { ttl: 1_000, lifetime: 5_000 })).toBe(
+			true,
+		)
 		expect(
-			sessionExpired({ lastSeen: 0, createdAt: 0 }, 1_000, { ttl: 1_000, lifetime: 5_000 }),
-		).toBe(true)
-		expect(
-			sessionExpired({ lastSeen: 4_000, createdAt: 0 }, 5_000, { ttl: 2_000, lifetime: 5_000 }),
+			sessionExpired({ seen: 4_000, created: 0 }, 5_000, { ttl: 2_000, lifetime: 5_000 }),
 		).toBe(true)
 	})
 
 	it('is false when neither threshold has elapsed (both configured)', () => {
-		expect(
-			sessionExpired({ lastSeen: 100, createdAt: 0 }, 500, { ttl: 1_000, lifetime: 5_000 }),
-		).toBe(false)
+		expect(sessionExpired({ seen: 100, created: 0 }, 500, { ttl: 1_000, lifetime: 5_000 })).toBe(
+			false,
+		)
 	})
 })
 
-describe('snapshotSession / restoreSession', () => {
-	it('round-trips a session data Map through a plain-record snapshot', () => {
-		const data = new Map<string, unknown>([
-			['userId', 'u_1'],
-			['count', 3],
-		])
-		const snapshot = snapshotSession({ id: 'abc', data })
-		expect(snapshot).toEqual({ id: 'abc', data: { userId: 'u_1', count: 3 } })
-		const restored = restoreSession(snapshot)
-		expect(restored?.id).toBe('abc')
-		expect(restored?.data.get('userId')).toBe('u_1')
-		expect(restored?.data.get('count')).toBe(3)
+describe('snapshotSession', () => {
+	it('projects a session state into a plain record', () => {
+		const session = new Session('abc')
+		session.set('userId', 'u_1')
+		session.set('count', 3)
+		expect(snapshotSession(session)).toEqual({ id: 'abc', data: { userId: 'u_1', count: 3 } })
 	})
 
-	it('snapshots an empty session data Map to an empty record', () => {
-		expect(snapshotSession({ id: 'x', data: new Map() })).toEqual({ id: 'x', data: {} })
+	it('snapshots an empty session state to an empty record', () => {
+		expect(snapshotSession(new Session('x'))).toEqual({ id: 'x', data: {} })
 	})
 
-	it('round-trips a "__proto__"-named data key without polluting Object.prototype', () => {
-		const data = new Map<string, unknown>([['__proto__', 'evil']])
-		const snapshot = snapshotSession({ id: 'x', data })
+	it('carries a "__proto__"-named state key without polluting Object.prototype', () => {
+		const session = new Session('x')
+		session.set('__proto__', 'evil')
+		const snapshot = snapshotSession(session)
 		expect(Object.getPrototypeOf(snapshot.data)).toBeNull()
 		expect(Object.prototype.hasOwnProperty.call(snapshot.data, '__proto__')).toBe(true)
 		expect(snapshot.data['__proto__']).toBe('evil')
-		const restored = restoreSession(snapshot)
-		expect(restored?.data.get('__proto__')).toBe('evil')
 		expect(Object.getPrototypeOf({})).toBe(Object.prototype)
 	})
+})
 
-	it('returns undefined for malformed restore input', () => {
-		expect(restoreSession(undefined)).toBeUndefined()
-		expect(restoreSession(null)).toBeUndefined()
-		expect(restoreSession('abc')).toBeUndefined()
-		expect(restoreSession({})).toBeUndefined()
-		expect(restoreSession({ id: 1, data: {} })).toBeUndefined()
-		expect(restoreSession({ id: 'abc', data: 'not-a-record' })).toBeUndefined()
+describe('validateSessionLimits', () => {
+	it('returns for an absent bag, an absent threshold, or a positive finite one', () => {
+		expect(validateSessionLimits(undefined)).toBeUndefined()
+		expect(validateSessionLimits({})).toBeUndefined()
+		expect(validateSessionLimits({ ttl: 1_000 })).toBeUndefined()
+		expect(validateSessionLimits({ lifetime: 1_000 })).toBeUndefined()
+		expect(validateSessionLimits({ ttl: 1_000, lifetime: 2_000 })).toBeUndefined()
+	})
+
+	it('throws a TypeError for a non-finite or non-positive ttl', () => {
+		expect(() => validateSessionLimits({ ttl: Number.NaN })).toThrow(TypeError)
+		expect(() => validateSessionLimits({ ttl: Number.POSITIVE_INFINITY })).toThrow(TypeError)
+		expect(() => validateSessionLimits({ ttl: 0 })).toThrow(TypeError)
+		expect(() => validateSessionLimits({ ttl: -1 })).toThrow(TypeError)
+	})
+
+	it('throws a TypeError for a non-finite or non-positive lifetime', () => {
+		expect(() => validateSessionLimits({ lifetime: Number.NaN })).toThrow(TypeError)
+		expect(() => validateSessionLimits({ lifetime: 0 })).toThrow(TypeError)
+		expect(() => validateSessionLimits({ lifetime: -1 })).toThrow(TypeError)
 	})
 })
