@@ -48,7 +48,7 @@ in any combination, scoped with `only()` / `except()` where needed.
 ## Guides
 
 See [`guides/README.md`](./guides/README.md) for the concept and dependency
-index; the full battery-by-battery surface docs land in `guides/src/middleware.md`
+index; the full battery-by-battery surface docs land in `guides/middleware.md`
 alongside the implementation.
 
 ## License
