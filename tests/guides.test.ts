@@ -1,5 +1,5 @@
 // The consumer-side guides-parity drop-in: runs `@orkestrel/guide`'s checks against
-// this repo's own `guides/README.md` manifest. The four constants below are this
+// this repo's own `guides/README.md` manifest. The constants following are this
 // package's own, and are the only part a sibling package changes.
 
 import { describe, expect, it } from 'vitest'
@@ -37,8 +37,9 @@ const MODULES = Object.freeze({
  *
  * A class that one-class-per-file evicted from its single consumer cannot become a
  * local, so it stays exported without being public. Naming it here is what makes that
- * intentional rather than forgotten — and the second assertion below fails when a name
- * here stops being stranded, so the list cannot rot.
+ * intentional rather than forgotten — and the `names no symbol internal that the barrel
+ * already exports` assertion later in this file fails when a name here stops being
+ * stranded, so the list cannot rot.
  */
 const INTERNAL: readonly string[] = Object.freeze(['class MultipartParser'])
 

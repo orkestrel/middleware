@@ -1902,7 +1902,7 @@ describe('composition', () => {
 	})
 })
 
-// ── createCookieTransport / createHeaderTransport (from factories.ts, exercised indirectly above; direct smoke) ──
+// ── createCookieTransport / createHeaderTransport (from factories.ts, exercised indirectly earlier in this file; direct smoke) ──
 
 describe('transports', () => {
 	it('createHeaderTransport reads/writes/clears the configured header', async () => {

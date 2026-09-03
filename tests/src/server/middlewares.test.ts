@@ -1179,7 +1179,7 @@ describe('createCompression (node face)', () => {
 // throws `MODULE_NOT_FOUND` unconditionally, confirmed through a direct
 // `node -e "require('@orkestrel/server/server')"` repro — an external
 // peer-package build defect, out of this dispatch's scope to fix. The
-// capstone below substitutes a real `node:http` socket (this repo's own
+// following capstone substitutes a real `node:http` socket (this repo's own
 // `startServer` helper) plus `@orkestrel/router`'s server-face
 // `buildRequest`/`sendResponse` conversion seam driving the SAME real
 // `@orkestrel/router` `Dispatcher` and the SAME canonical onion through the peer's
