@@ -4,8 +4,8 @@ import { describe, expect, it } from 'vitest'
 import { buildSession } from '../../../setup.js'
 
 // ============================================================================
-//  @orkestrel/middleware — MemorySessionStore unit tests (§16 mirror). Every
-//  scenario drives explicit `now` values — zero wall-clock, zero timers.
+//  @orkestrel/middleware — MemorySessionStore unit tests. Every scenario
+//  drives explicit `now` values — zero wall-clock, zero timers.
 // ============================================================================
 
 describe('MemorySessionStore construction', () => {

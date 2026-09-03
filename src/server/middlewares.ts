@@ -7,11 +7,11 @@ import type {
 } from './types.js'
 import type { Stats } from 'node:fs'
 import type { FileHandle } from 'node:fs/promises'
+import type { MiddlewareHandler } from '@orkestrel/server'
 import { DEFAULT_COMPRESSION_THRESHOLD, compressResponse } from '@src/core'
 import { open, realpath, stat } from 'node:fs/promises'
 import { join, relative, resolve } from 'node:path'
 import { brotliDecompressSync } from 'node:zlib'
-import type { MiddlewareHandler } from '@orkestrel/server'
 import {
 	computeBodyETag,
 	HTTPError,
@@ -180,7 +180,7 @@ export function createAssets<TState>(options: AssetOptions): MiddlewareHandler<T
  * that carries a file body), the open `FileHandle` is owned by the
  * `Response` body and is released only once that body is fully read or
  * cancelled — Node HTTP servers do this automatically when sending the
- * response, but a caller that holds an unread `Response` (e.g. in a test)
+ * response, but a caller that holds an unread `Response` (for example in a test)
  * must cancel its body to release the handle promptly.
  *
  * @typeParam TState - The consumer's opaque per-request state type
@@ -236,9 +236,10 @@ export function createStatic<TState>(options: StaticOptions): MiddlewareHandler<
 
 		// Directory-detection only — routing decision, not the served file's
 		// facts. The bytes streamed and the headers computed for them come
-		// from a single `fstat` on an opened handle below, closing the
-		// stat-to-stream TOCTOU (a file replaced between "check" and "serve"
-		// can no longer yield a 200 with stale headers over swapped bytes).
+		// from a single `fstat` on a handle opened later in this function,
+		// closing the stat-to-stream TOCTOU (a file replaced between "check"
+		// and "serve" can no longer yield a 200 with stale headers over
+		// swapped bytes).
 		let directoryInfo: Stats | undefined
 		if (!fallbackNeeded) {
 			try {
@@ -449,7 +450,7 @@ export function createMultipart<TState extends MultipartState>(
  * `@orkestrel/server` `Encoding` union is `'gzip' | 'deflate' | 'identity'`
  * — it does not include `'br'`, so this battery cannot honestly type or
  * negotiate a guaranteed brotli coding despite `node:zlib` shipping
- * `brotliCompress`. It guarantees `gzip`/`deflate` via `node:zlib` (never
+ * `brotliCompress`. It guarantees `gzip`/`deflate` through `node:zlib` (never
  * feature-detected — always available) and negotiates only those.
  *
  * @typeParam TState - The consumer's opaque per-request state type

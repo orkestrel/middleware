@@ -1,7 +1,7 @@
 # Guides
 
 A dual-axis index into this repository's guides — by concept, and by
-directory (AGENTS §22).
+directory.
 
 ## By concept
 
@@ -31,11 +31,14 @@ configuration, and gate scripts. It documents **that package's** surface, not
 anything sourced in this repo; it is kept here so a reader can see the
 toolchain this repository is generated against without leaving this guide set.
 
-The runtime dependencies `@orkestrel/abort`, `@orkestrel/budget`,
-`@orkestrel/contract`, and `@orkestrel/timeout`, and the `@orkestrel/server`
-peerDependency, are not mirrored here. Read each package's own guide in its
-own repository.
+Every other dependency guide sits here as a byte-identical mirror of its own
+package's guide, kept so a reader can follow a seam without leaving the guide
+set: [`abort.md`](abort.md), [`budget.md`](budget.md),
+[`contract.md`](contract.md), and [`timeout.md`](timeout.md) for the runtime
+dependencies; [`server.md`](server.md) and [`database.md`](database.md) for the
+peers; [`router.md`](router.md), [`probe.md`](probe.md), and
+[`test.md`](test.md) for the development dependencies.
 
 ## See also
 
-- [`AGENTS.md`](../AGENTS.md) — the rules; §22 documentation-as-contracts.
+- [`AGENTS.md`](../AGENTS.md) — the coding rules this package is written under.

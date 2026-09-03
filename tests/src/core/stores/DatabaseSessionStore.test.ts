@@ -9,50 +9,81 @@ import {
 	sessionColumns,
 } from '@src/core'
 import { describe, expect, it } from 'vitest'
+import { buildStore } from '../../../setup.js'
 
 // ============================================================================
-//  @orkestrel/middleware — DatabaseSessionStore unit tests (§16 mirror). Every
-//  scenario drives explicit `now` values against a real in-memory database
-//  table (`createMemoryDriver`) — no mocks, zero wall-clock, zero timers. Uses
-//  the shipped `isSession` guard throughout — an end-to-end proof of the
-//  natural composition `createDatabaseSessionStore(table, isSession)`.
+//  @orkestrel/middleware — DatabaseSessionStore unit tests. Every scenario
+//  drives explicit `now` values against a real in-memory database table
+//  (`createMemoryDriver`) — no mocks, zero wall-clock, zero timers. Uses the
+//  shipped `isSession` guard throughout — an end-to-end proof of the natural
+//  composition `createDatabaseSessionStore(table, isSession)`.
 // ============================================================================
 
-function buildStore(options?: { readonly ttl?: number; readonly lifetime?: number }) {
-	const db = createDatabase({ driver: createMemoryDriver(), tables: { sessions: sessionColumns } })
-	const table = db.table('sessions')
-	const store = createDatabaseSessionStore(table, isSession, options)
-	return { table, store }
+// A rebuild step distinguishable from `createRestoredSession`: it marks every
+// session it produces, so a store using its own step fails the following proof.
+const restore = (value: unknown): Session | undefined => {
+	const session = createRestoredSession(value)
+	session?.set('rebuilt', 'injected')
+	return session
 }
+
+// Stricter than `isSession`: also requires a specific state entry, so a
+// structurally-valid session that lacks it is still rejected.
+const isAuthorized = (value: unknown): value is Session =>
+	isSession(value) && value.state.get('authorized') === true
 
 describe('DatabaseSessionStore construction', () => {
 	it('accepts no options, a bare ttl, a bare lifetime, or both', () => {
 		const { table } = buildStore()
-		const build = (options?: { readonly ttl?: number; readonly lifetime?: number }) =>
-			new DatabaseSessionStore(table, isSession, createRestoredSession, options)
-		expect(() => build()).not.toThrow()
-		expect(() => build({ ttl: 1_000 })).not.toThrow()
-		expect(() => build({ lifetime: 1_000 })).not.toThrow()
-		expect(() => build({ ttl: 1_000, lifetime: 2_000 })).not.toThrow()
+		expect(() => new DatabaseSessionStore(table, isSession, createRestoredSession)).not.toThrow()
+		expect(
+			() => new DatabaseSessionStore(table, isSession, createRestoredSession, { ttl: 1_000 }),
+		).not.toThrow()
+		expect(
+			() => new DatabaseSessionStore(table, isSession, createRestoredSession, { lifetime: 1_000 }),
+		).not.toThrow()
+		expect(
+			() =>
+				new DatabaseSessionStore(table, isSession, createRestoredSession, {
+					ttl: 1_000,
+					lifetime: 2_000,
+				}),
+		).not.toThrow()
 	})
 
 	it('throws a TypeError when ttl is non-finite or not positive', () => {
 		const { table } = buildStore()
-		const build = (options: { readonly ttl: number }) =>
-			new DatabaseSessionStore(table, isSession, createRestoredSession, options)
-		expect(() => build({ ttl: Number.NaN })).toThrow(TypeError)
-		expect(() => build({ ttl: Number.POSITIVE_INFINITY })).toThrow(TypeError)
-		expect(() => build({ ttl: 0 })).toThrow(TypeError)
-		expect(() => build({ ttl: -1 })).toThrow(TypeError)
+		expect(
+			() => new DatabaseSessionStore(table, isSession, createRestoredSession, { ttl: Number.NaN }),
+		).toThrow(TypeError)
+		expect(
+			() =>
+				new DatabaseSessionStore(table, isSession, createRestoredSession, {
+					ttl: Number.POSITIVE_INFINITY,
+				}),
+		).toThrow(TypeError)
+		expect(
+			() => new DatabaseSessionStore(table, isSession, createRestoredSession, { ttl: 0 }),
+		).toThrow(TypeError)
+		expect(
+			() => new DatabaseSessionStore(table, isSession, createRestoredSession, { ttl: -1 }),
+		).toThrow(TypeError)
 	})
 
 	it('throws a TypeError when lifetime is non-finite or not positive', () => {
 		const { table } = buildStore()
-		const build = (options: { readonly lifetime: number }) =>
-			new DatabaseSessionStore(table, isSession, createRestoredSession, options)
-		expect(() => build({ lifetime: Number.NaN })).toThrow(TypeError)
-		expect(() => build({ lifetime: 0 })).toThrow(TypeError)
-		expect(() => build({ lifetime: -1 })).toThrow(TypeError)
+		expect(
+			() =>
+				new DatabaseSessionStore(table, isSession, createRestoredSession, {
+					lifetime: Number.NaN,
+				}),
+		).toThrow(TypeError)
+		expect(
+			() => new DatabaseSessionStore(table, isSession, createRestoredSession, { lifetime: 0 }),
+		).toThrow(TypeError)
+		expect(
+			() => new DatabaseSessionStore(table, isSession, createRestoredSession, { lifetime: -1 }),
+		).toThrow(TypeError)
 	})
 })
 
@@ -136,13 +167,6 @@ describe('DatabaseSessionStore snapshot rebuild', () => {
 
 	it('rebuilds through the step it was constructed with, not one of its own', async () => {
 		const { table } = buildStore()
-		// A rebuild step distinguishable from `createRestoredSession`: it marks
-		// every session it produces, so a store using its own step fails here.
-		const restore = (value: unknown): Session | undefined => {
-			const session = createRestoredSession(value)
-			session?.set('rebuilt', 'injected')
-			return session
-		}
 		const store = new DatabaseSessionStore(table, isSession, restore)
 		await table.set({ id: 'a', session: { id: 'a', state: {} }, seen: 0, created: 0 })
 		const restored = await store.get('a', 0)
@@ -153,10 +177,6 @@ describe('DatabaseSessionStore snapshot rebuild', () => {
 describe('DatabaseSessionStore guard rejection', () => {
 	it('resolves undefined when the restored session fails the caller-supplied guard', async () => {
 		const { table } = buildStore()
-		// Stricter than `isSession`: also requires a specific state entry, so a
-		// structurally-valid session that lacks it is still rejected.
-		const isAuthorized = (value: unknown): value is Session =>
-			isSession(value) && value.state.get('authorized') === true
 		const strict = new DatabaseSessionStore(table, isAuthorized, createRestoredSession)
 		await strict.set(new Session('a'), 0)
 		expect(await strict.get('a', 0)).toBeUndefined()

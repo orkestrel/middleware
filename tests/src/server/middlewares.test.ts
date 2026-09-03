@@ -1176,13 +1176,13 @@ describe('createCompression (node face)', () => {
 // itself broken — its built `dist/src/server/index.cjs` `require`s
 // `'../core/index.cjs'`, but the installed package's core face ships ONLY an
 // ESM `index.js` (no `.cjs` sibling), so `require('@orkestrel/server/server')`
-// throws `MODULE_NOT_FOUND` unconditionally, confirmed via a direct
+// throws `MODULE_NOT_FOUND` unconditionally, confirmed through a direct
 // `node -e "require('@orkestrel/server/server')"` repro — an external
 // peer-package build defect, out of this dispatch's scope to fix. The
 // capstone below substitutes a real `node:http` socket (this repo's own
 // `startServer` helper) plus `@orkestrel/router`'s server-face
 // `buildRequest`/`sendResponse` conversion seam driving the SAME real
-// `@orkestrel/router` `Dispatcher` and the SAME canonical onion via the peer's
+// `@orkestrel/router` `Dispatcher` and the SAME canonical onion through the peer's
 // own `compose` — every layer this capstone is meant to fingerprint is still
 // real and still exercised end-to-end over a real socket; only the specific
 // `Server` class is swapped for its two documented conversion primitives.
@@ -1216,7 +1216,7 @@ describe('capstone: real socket + Dispatcher + canonical onion', () => {
 			method: 'GET',
 			path: '/prime',
 			// Exposes `state.csrf` (the RAW double-submit token, distinct from the
-			// double-SIGNED `Set-Cookie` wire value) via a response header — the
+			// double-SIGNED `Set-Cookie` wire value) through a response header — the
 			// documented consumption pattern a real app follows (a template or
 			// JSON body field, never decoded back out of the cookie by the client).
 			handler: async (_request, context) =>
@@ -1269,7 +1269,7 @@ describe('capstone: real socket + Dispatcher + canonical onion', () => {
 			})
 			expect(auth.status).toBe(403) // no CSRF token submitted on the first mutating request
 
-			// Prime a CSRF token via a safe GET, carrying forward cookies.
+			// Prime a CSRF token through a safe GET, carrying forward cookies.
 			const primed = await fetch(`${base}/prime`, {
 				headers: { authorization: `Bearer ${bearerToken}`, origin: 'https://app.example' },
 			})
@@ -1289,8 +1289,9 @@ describe('capstone: real socket + Dispatcher + canonical onion', () => {
 				.filter((value): value is string => value !== undefined)
 				.map((value) => value.split(';')[0])
 				.join('; ')
-			// The RAW double-submit token — `context.state.csrf` — travels via the
-			// `x-csrf-issued` response header the `/prime` handler exposes above,
+			// The RAW double-submit token — `context.state.csrf` — travels through
+			// the `x-csrf-issued` response header the `/prime` handler exposes
+			// earlier in this case,
 			// NOT by decoding the `Set-Cookie` wire value (which is a SECOND,
 			// outer signing layer over that same raw token).
 			const csrfToken = primed.headers.get('x-csrf-issued')

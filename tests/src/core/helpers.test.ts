@@ -1,4 +1,3 @@
-import type { MiddlewareContext } from '@orkestrel/server'
 import {
 	buildClient,
 	buildRateLimitField,
@@ -10,10 +9,7 @@ import {
 	equalsConstantTime,
 	isBufferingIneligible,
 	isCompressionNegotiated,
-	isMultipartBody,
 	isPreflight,
-	isSession,
-	isSessionControl,
 	matchesTrustedEntry,
 	rebuildResponse,
 	resolveForwardedFor,
@@ -25,31 +21,11 @@ import {
 	validateSessionLimits,
 } from '@src/core'
 import { describe, expect, it } from 'vitest'
-import { buildSession } from '../../setup.js'
-
-// Minimal MiddlewareContext<unknown> stub — compressResponse only reads `method`.
-function buildContext(method = 'GET'): MiddlewareContext<unknown> {
-	return {
-		url: new URL('https://example.test/'),
-		method,
-		state: {},
-		body: async () => undefined,
-	}
-}
-
-async function decompress(
-	bytes: Uint8Array<ArrayBuffer>,
-	encoding: 'gzip' | 'deflate',
-): Promise<string> {
-	const stream = new Response(bytes).body?.pipeThrough(new DecompressionStream(encoding))
-	const buffer = await new Response(stream).arrayBuffer()
-	return new TextDecoder().decode(buffer)
-}
+import { buildRequest, buildSession, createTestContext, decompress } from '../../setup.js'
 
 // ============================================================================
-//  @orkestrel/middleware — core helpers.ts unit tests (§16 mirror).
-//  Self-contained: no tests/setup.ts import. Every scenario is built inline
-//  with real Request/Response/Headers/Map values.
+//  @orkestrel/middleware — core helpers.ts unit tests. Every scenario is built
+//  from the shared harness plus real Request/Response/Headers/Map values.
 // ============================================================================
 
 describe('resolveKey', () => {
@@ -299,107 +275,6 @@ describe('transferSessionState', () => {
 	})
 })
 
-describe('isSession', () => {
-	it('accepts a value shaped like a SessionInterface', () => {
-		expect(
-			isSession({
-				id: 'a',
-				state: new Map(),
-				set: () => undefined,
-				delete: () => true,
-				clear: () => undefined,
-			}),
-		).toBe(true)
-	})
-
-	it('accepts a real Session class instance', () => {
-		expect(isSession(new Session('a'))).toBe(true)
-	})
-
-	it('accepts a real Session instance with entries in state', () => {
-		expect(isSession(buildSession('a', 'u_1'))).toBe(true)
-	})
-
-	it('rejects a class instance that does not match the shape', () => {
-		class NotASession {
-			readonly id = 42
-			readonly state = []
-		}
-		expect(isSession(new NotASession())).toBe(false)
-
-		class MissingState {
-			readonly id = 'a'
-		}
-		expect(isSession(new MissingState())).toBe(false)
-	})
-
-	it('rejects a state-carrying value that publishes no mutators', () => {
-		expect(isSession({ id: 'a', state: new Map() })).toBe(false)
-		expect(isSession({ id: 'a', state: new Map(), set: () => undefined, delete: () => true })).toBe(
-			false,
-		)
-	})
-
-	it('rejects hostile inputs totally', () => {
-		expect(isSession(null)).toBe(false)
-		expect(isSession(undefined)).toBe(false)
-		expect(isSession('a')).toBe(false)
-		expect(isSession(42)).toBe(false)
-		expect(isSession([])).toBe(false)
-		expect(isSession({ id: 'a', state: [] })).toBe(false)
-		expect(isSession({ id: 1, state: new Map() })).toBe(false)
-		expect(isSession({})).toBe(false)
-	})
-})
-
-describe('isSessionControl', () => {
-	it('accepts a value with callable regenerate and destroy', () => {
-		expect(isSessionControl({ regenerate: () => undefined, destroy: () => undefined })).toBe(true)
-	})
-
-	it('rejects hostile inputs totally', () => {
-		expect(isSessionControl(null)).toBe(false)
-		expect(isSessionControl(undefined)).toBe(false)
-		expect(isSessionControl(42)).toBe(false)
-		expect(isSessionControl({ regenerate: () => undefined })).toBe(false)
-		expect(isSessionControl({ regenerate: 'nope', destroy: () => undefined })).toBe(false)
-		expect(isSessionControl({})).toBe(false)
-	})
-})
-
-describe('isMultipartBody', () => {
-	const file = {
-		field: 'avatar',
-		name: 'a.png',
-		size: 10,
-		mime: 'image/png',
-		validated: true,
-		status: 'ok',
-		path: '/tmp/a.png',
-	}
-
-	it('accepts a value shaped like a MultipartBody', () => {
-		expect(isMultipartBody({ files: { avatar: [file] }, fields: { name: 'a' } })).toBe(true)
-	})
-
-	it('accepts empty files and fields records', () => {
-		expect(isMultipartBody({ files: {}, fields: {} })).toBe(true)
-	})
-
-	it('rejects hostile inputs totally', () => {
-		expect(isMultipartBody(null)).toBe(false)
-		expect(isMultipartBody(undefined)).toBe(false)
-		expect(isMultipartBody(42)).toBe(false)
-		expect(isMultipartBody({ files: [], fields: {} })).toBe(false)
-		expect(isMultipartBody({ files: {}, fields: [] })).toBe(false)
-		expect(
-			isMultipartBody({ files: { avatar: [{ ...file, size: 'not-a-number' }] }, fields: {} }),
-		).toBe(false)
-		expect(isMultipartBody({ files: { avatar: 'not-an-array' }, fields: {} })).toBe(false)
-		expect(isMultipartBody({ files: {}, fields: { name: 1 } })).toBe(false)
-	})
-})
-
 describe('isPreflight', () => {
 	it('is true for an OPTIONS request carrying Access-Control-Request-Method', () => {
 		expect(isPreflight('OPTIONS', new Headers({ 'access-control-request-method': 'POST' }))).toBe(
@@ -480,26 +355,22 @@ describe('rebuildResponse', () => {
 })
 
 describe('compressResponse', () => {
-	const compress = async (
-		bytes: Uint8Array<ArrayBuffer>,
-		encoding: 'gzip' | 'deflate',
-	): Promise<Uint8Array<ArrayBuffer>> => {
-		const stream = new Response(bytes).body?.pipeThrough(new CompressionStream(encoding))
-		const buffer = await new Response(stream).arrayBuffer()
-		return new Uint8Array(buffer)
-	}
-
 	it('compresses an above-threshold compressible body and sets the coding headers', async () => {
 		const body = 'x'.repeat(2_000)
 		const response = new Response(body, { headers: { 'content-type': 'text/plain' } })
 		const request = new Request('https://example.test/', {
 			headers: { 'accept-encoding': 'gzip' },
 		})
-		const result = await compressResponse(request, buildContext(), response, {
-			threshold: 100,
-			encodings: ['gzip'],
-			compress,
-		})
+		const result = await compressResponse(
+			request,
+			createTestContext(buildRequest('/'), {}),
+			response,
+			{
+				threshold: 100,
+				encodings: ['gzip'],
+				compress: compressBytes,
+			},
+		)
 		expect(result.headers.get('content-encoding')).toBe('gzip')
 		expect(result.headers.get('vary')).toBe('Accept-Encoding')
 		const buffer = await result.arrayBuffer()
@@ -512,11 +383,16 @@ describe('compressResponse', () => {
 		const request = new Request('https://example.test/', {
 			headers: { 'accept-encoding': 'gzip' },
 		})
-		const result = await compressResponse(request, buildContext(), response, {
-			threshold: 100_000,
-			encodings: ['gzip'],
-			compress,
-		})
+		const result = await compressResponse(
+			request,
+			createTestContext(buildRequest('/'), {}),
+			response,
+			{
+				threshold: 100_000,
+				encodings: ['gzip'],
+				compress: compressBytes,
+			},
+		)
 		expect(result.headers.has('content-encoding')).toBe(false)
 		expect(await result.text()).toBe('short')
 	})
@@ -528,11 +404,16 @@ describe('compressResponse', () => {
 		const request = new Request('https://example.test/', {
 			headers: { 'accept-encoding': 'gzip' },
 		})
-		const result = await compressResponse(request, buildContext(), response, {
-			threshold: 100,
-			encodings: ['gzip'],
-			compress,
-		})
+		const result = await compressResponse(
+			request,
+			createTestContext(buildRequest('/'), {}),
+			response,
+			{
+				threshold: 100,
+				encodings: ['gzip'],
+				compress: compressBytes,
+			},
+		)
 		expect(result.headers.has('content-encoding')).toBe(false)
 	})
 
@@ -543,11 +424,16 @@ describe('compressResponse', () => {
 		const request = new Request('https://example.test/', {
 			headers: { 'accept-encoding': 'gzip' },
 		})
-		const result = await compressResponse(request, buildContext(), response, {
-			threshold: 100,
-			encodings: ['gzip'],
-			compress,
-		})
+		const result = await compressResponse(
+			request,
+			createTestContext(buildRequest('/'), {}),
+			response,
+			{
+				threshold: 100,
+				encodings: ['gzip'],
+				compress: compressBytes,
+			},
+		)
 		expect(result).toBe(response)
 	})
 
@@ -558,11 +444,16 @@ describe('compressResponse', () => {
 		const request = new Request('https://example.test/', {
 			headers: { 'accept-encoding': 'gzip' },
 		})
-		const result = await compressResponse(request, buildContext(), response, {
-			threshold: 1,
-			encodings: ['gzip'],
-			compress,
-		})
+		const result = await compressResponse(
+			request,
+			createTestContext(buildRequest('/'), {}),
+			response,
+			{
+				threshold: 1,
+				encodings: ['gzip'],
+				compress: compressBytes,
+			},
+		)
 		expect(result).toBe(response)
 	})
 
@@ -574,22 +465,32 @@ describe('compressResponse', () => {
 		const request = new Request('https://example.test/', {
 			headers: { 'accept-encoding': 'gzip' },
 		})
-		const result = await compressResponse(request, buildContext(), response, {
-			threshold: 100_000,
-			encodings: ['gzip'],
-			compress,
-		})
+		const result = await compressResponse(
+			request,
+			createTestContext(buildRequest('/'), {}),
+			response,
+			{
+				threshold: 100_000,
+				encodings: ['gzip'],
+				compress: compressBytes,
+			},
+		)
 		expect(result).toBe(response)
 	})
 
 	it('stamps Vary: Accept-Encoding when there is no Accept-Encoding header at all', async () => {
 		const response = new Response('x'.repeat(2_000), { headers: { 'content-type': 'text/plain' } })
 		const request = new Request('https://example.test/')
-		const result = await compressResponse(request, buildContext(), response, {
-			threshold: 100,
-			encodings: ['gzip'],
-			compress,
-		})
+		const result = await compressResponse(
+			request,
+			createTestContext(buildRequest('/'), {}),
+			response,
+			{
+				threshold: 100,
+				encodings: ['gzip'],
+				compress: compressBytes,
+			},
+		)
 		expect(result.headers.get('vary')).toBe('Accept-Encoding')
 	})
 
@@ -598,11 +499,16 @@ describe('compressResponse', () => {
 		const request = new Request('https://example.test/', {
 			headers: { 'accept-encoding': 'gzip' },
 		})
-		const result = await compressResponse(request, buildContext(), response, {
-			threshold: 100_000,
-			encodings: ['gzip'],
-			compress,
-		})
+		const result = await compressResponse(
+			request,
+			createTestContext(buildRequest('/'), {}),
+			response,
+			{
+				threshold: 100_000,
+				encodings: ['gzip'],
+				compress: compressBytes,
+			},
+		)
 		expect(result.headers.get('vary')).toBe('Accept-Encoding')
 	})
 
@@ -611,11 +517,16 @@ describe('compressResponse', () => {
 		const request = new Request('https://example.test/', {
 			headers: { 'accept-encoding': 'gzip' },
 		})
-		const result = await compressResponse(request, buildContext(), response, {
-			threshold: 100,
-			encodings: ['gzip'],
-			compress,
-		})
+		const result = await compressResponse(
+			request,
+			createTestContext(buildRequest('/'), {}),
+			response,
+			{
+				threshold: 100,
+				encodings: ['gzip'],
+				compress: compressBytes,
+			},
+		)
 		expect(result.headers.get('vary')).toBe('Accept-Encoding')
 	})
 
@@ -624,11 +535,16 @@ describe('compressResponse', () => {
 		const request = new Request('https://example.test/', {
 			headers: { 'accept-encoding': 'gzip' },
 		})
-		const result = await compressResponse(request, buildContext(), response, {
-			threshold: 100,
-			encodings: ['gzip'],
-			compress,
-		})
+		const result = await compressResponse(
+			request,
+			createTestContext(buildRequest('/'), {}),
+			response,
+			{
+				threshold: 100,
+				encodings: ['gzip'],
+				compress: compressBytes,
+			},
+		)
 		expect(result.headers.get('content-encoding')).toBe('gzip')
 		expect(result.headers.get('vary')).toBe('Accept-Encoding')
 	})
@@ -640,11 +556,16 @@ describe('compressResponse', () => {
 		const request = new Request('https://example.test/', {
 			headers: { 'accept-encoding': 'gzip' },
 		})
-		const result = await compressResponse(request, buildContext(), response, {
-			threshold: 100,
-			encodings: ['gzip'],
-			compress,
-		})
+		const result = await compressResponse(
+			request,
+			createTestContext(buildRequest('/'), {}),
+			response,
+			{
+				threshold: 100,
+				encodings: ['gzip'],
+				compress: compressBytes,
+			},
+		)
 		expect(result.headers.has('vary')).toBe(false)
 	})
 })

@@ -196,28 +196,20 @@ export interface PartHeaders {
 }
 
 /**
- * Describes the full field set `createUploadedFile` needs to build an
- * {@link UploadedFile} record.
+ * Describes one inclusive byte range over a file — `streamFile`'s optional
+ * `range` argument and the shape `createStatic` builds for a satisfiable
+ * `Range` request.
  *
  * @remarks
- * - `field` — the multipart field name the file was submitted under.
- * - `name` — the client-declared filename (metadata only).
- * - `size` — the file's byte size.
- * - `mime` — the SNIFFED (magic-byte-detected) MIME type when a signature
- *   matches; otherwise the part's declared `Content-Type`; otherwise
- *   {@link DEFAULT_CONTENT_TYPE}.
- * - `validated` — `true` when the sniffed type matches the declared `Content-Type`.
- * - `status` — see {@link UploadStatus}.
- * - `path` — the file's current on-disk path.
+ * - `start` — the first byte offset served.
+ * - `end` — the last byte offset served.
+ *
+ * Both bounds are 0-indexed and inclusive, matching `node:fs`'s
+ * `createReadStream` options.
  */
-export interface UploadedFileInput {
-	readonly field: string
-	readonly name: string
-	readonly size: number
-	readonly mime: string
-	readonly validated: boolean
-	readonly status: UploadStatus
-	readonly path: string
+export interface ByteRange {
+	readonly start: number
+	readonly end: number
 }
 
 /**

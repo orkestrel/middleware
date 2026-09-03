@@ -3,14 +3,12 @@ import type {
 	BodyState,
 	ClientState,
 	CSRFState,
-	MultipartBody,
 	SessionInterface,
 	SessionState,
-	SessionTransportInterface,
 } from '@src/core'
 import type { ConnectionState } from '@src/core'
 import { describe, expect, it } from 'vitest'
-import { waitForDelay } from '@orkestrel/test'
+import { createRecorder, waitForDelay } from '@orkestrel/test'
 import {
 	createBearer,
 	createBody,
@@ -29,22 +27,23 @@ import {
 	createSession,
 	createTelemetry,
 	except,
-	isMultipartBody,
 	only,
 } from '@src/core'
 import { ContentTooLargeError, HTTPError, signToken } from '@orkestrel/server'
 import {
 	buildRequest,
+	compressibleBody,
 	createEchoTerminal,
 	createManualClock,
 	createRecordingTerminal,
 	buildSession,
 	createTestContext,
+	createTestTransport,
+	decompress,
 	ECHO_MARKER,
 	runChain,
+	TEST_SECRET,
 } from '../../setup.js'
-
-const SECRET = 'test-secret'
 
 // ── createBoundary ────────────────────────────────────────────────────────
 
@@ -170,21 +169,8 @@ describe('createTelemetry', () => {
 
 // ── createCompression ─────────────────────────────────────────────────────
 
-async function decompress(bytes: ArrayBuffer, encoding: 'gzip' | 'deflate'): Promise<string> {
-	const stream = new Response(bytes).body
-	if (stream === null) throw new Error('no body stream')
-	const decompressed = await new Response(
-		stream.pipeThrough(new DecompressionStream(encoding)),
-	).arrayBuffer()
-	return new TextDecoder().decode(decompressed)
-}
-
-function compressibleBody(length: number): string {
-	return 'a'.repeat(length)
-}
-
 describe('createCompression', () => {
-	it('compresses an eligible, over-threshold, compressible response and the output round-trips via DecompressionStream', async () => {
+	it('compresses an eligible, over-threshold, compressible response and the output round-trips through DecompressionStream', async () => {
 		const compression = createCompression<Record<string, never>>({ threshold: 16 })
 		const body = compressibleBody(2048)
 		const context = createTestContext(
@@ -328,7 +314,7 @@ describe('createCompression', () => {
 		expect(() => createCompression({ threshold: -1 })).toThrow(TypeError)
 	})
 
-	it('rejects a q=0 coding via negotiation (nothing negotiated)', async () => {
+	it('rejects a q=0 coding through negotiation (nothing negotiated)', async () => {
 		const compression = createCompression<Record<string, never>>({ threshold: 16 })
 		const request = buildRequest('/', { headers: { 'accept-encoding': 'gzip;q=0, deflate;q=0' } })
 		const context = createTestContext(request, {})
@@ -556,9 +542,10 @@ describe('createDeadline', () => {
 	it('a downstream throw arriving AFTER the deadline wins never escapes as an unhandled rejection', async () => {
 		const deadline = createDeadline<Record<string, never>>({ ms: 20 })
 		const context = createTestContext(buildRequest('/'), {})
-		const seen: unknown[] = []
-		const onUnhandled = (reason: unknown) => seen.push(reason)
-		process.on('unhandledRejection', onUnhandled)
+		// `handler` is a stable reference, so `off` removes the listener `on`
+		// added rather than leaking it into the rest of the run.
+		const unhandled = createRecorder<[unknown]>()
+		process.on('unhandledRejection', unhandled.handler)
 		try {
 			const response = await deadline(buildRequest('/'), context, async () => {
 				await waitForDelay(20)
@@ -566,9 +553,9 @@ describe('createDeadline', () => {
 			})
 			expect(response.status).toBe(503)
 			await waitForDelay(60)
-			expect(seen).toHaveLength(0)
+			expect(unhandled.count).toBe(0)
 		} finally {
-			process.off('unhandledRejection', onUnhandled)
+			process.off('unhandledRejection', unhandled.handler)
 		}
 	})
 })
@@ -797,8 +784,8 @@ describe('createETag', () => {
 
 describe('createBearer', () => {
 	it('a valid token is stashed on state and the chain continues', async () => {
-		const token = await signToken('user-1', { secret: SECRET })
-		const bearer = createBearer<BearerState>({ secret: SECRET })
+		const token = await signToken('user-1', { secret: TEST_SECRET })
+		const bearer = createBearer<BearerState>({ secret: TEST_SECRET })
 		const state: BearerState = {}
 		const request = buildRequest('/', { headers: { authorization: `Bearer ${token}` } })
 		const context = createTestContext(request, state)
@@ -808,7 +795,7 @@ describe('createBearer', () => {
 	})
 
 	it('a missing token throws HTTPError 401', async () => {
-		const bearer = createBearer<BearerState>({ secret: SECRET })
+		const bearer = createBearer<BearerState>({ secret: TEST_SECRET })
 		const request = buildRequest('/')
 		const context = createTestContext(request, {})
 		await expect(bearer(request, context, async () => new Response())).rejects.toMatchObject({
@@ -817,8 +804,8 @@ describe('createBearer', () => {
 	})
 
 	it('a tampered token throws HTTPError 401', async () => {
-		const token = await signToken('user-1', { secret: SECRET })
-		const bearer = createBearer<BearerState>({ secret: SECRET })
+		const token = await signToken('user-1', { secret: TEST_SECRET })
+		const bearer = createBearer<BearerState>({ secret: TEST_SECRET })
 		const request = buildRequest('/', { headers: { authorization: `Bearer ${token}xx` } })
 		const context = createTestContext(request, {})
 		await expect(bearer(request, context, async () => new Response())).rejects.toMatchObject({
@@ -827,9 +814,9 @@ describe('createBearer', () => {
 	})
 
 	it('an expired token throws HTTPError 401', async () => {
-		const token = await signToken('user-1', { secret: SECRET, ttl: 1 })
+		const token = await signToken('user-1', { secret: TEST_SECRET, ttl: 1 })
 		await waitForDelay(20)
-		const bearer = createBearer<BearerState>({ secret: SECRET })
+		const bearer = createBearer<BearerState>({ secret: TEST_SECRET })
 		const request = buildRequest('/', { headers: { authorization: `Bearer ${token}` } })
 		const context = createTestContext(request, {})
 		await expect(bearer(request, context, async () => new Response())).rejects.toMatchObject({
@@ -848,8 +835,8 @@ describe('createBearer', () => {
 	})
 
 	it('the scheme prefix match is case-insensitive', async () => {
-		const token = await signToken('user-1', { secret: SECRET })
-		const bearer = createBearer<BearerState>({ secret: SECRET })
+		const token = await signToken('user-1', { secret: TEST_SECRET })
+		const bearer = createBearer<BearerState>({ secret: TEST_SECRET })
 		const state: BearerState = {}
 		const request = buildRequest('/', { headers: { authorization: `bearer ${token}` } })
 		const context = createTestContext(request, state)
@@ -858,8 +845,8 @@ describe('createBearer', () => {
 	})
 
 	it('scheme: "" treats the whole header value as the raw token', async () => {
-		const token = await signToken('user-1', { secret: SECRET })
-		const bearer = createBearer<BearerState>({ secret: SECRET, scheme: '' })
+		const token = await signToken('user-1', { secret: TEST_SECRET })
+		const bearer = createBearer<BearerState>({ secret: TEST_SECRET, scheme: '' })
 		const state: BearerState = {}
 		const request = buildRequest('/', { headers: { authorization: token } })
 		const context = createTestContext(request, state)
@@ -1205,60 +1192,7 @@ describe('createBody', () => {
 	})
 })
 
-// ── Multipart guard (isMultipartBody) ───────────────────────────────────────
-
-describe('isMultipartBody', () => {
-	it('accepts a well-formed multipart body', () => {
-		const value: MultipartBody = {
-			files: {
-				upload: [
-					{
-						field: 'upload',
-						name: 'a.png',
-						size: 10,
-						mime: 'image/png',
-						validated: true,
-						status: 'ok',
-						path: '/tmp/a',
-					},
-				],
-			},
-			fields: { name: 'a' },
-		}
-		expect(isMultipartBody(value)).toBe(true)
-	})
-
-	it('rejects a malformed multipart body', () => {
-		expect(isMultipartBody({ files: {}, fields: { name: 42 } })).toBe(false)
-		expect(isMultipartBody(null)).toBe(false)
-	})
-})
-
 // ── createSession ─────────────────────────────────────────────────────────
-
-function createTestTransport(): SessionTransportInterface & {
-	readonly written: Array<{ readonly response: Response; readonly id: string }>
-	readonly cleared: Response[]
-} {
-	const written: Array<{ response: Response; id: string }> = []
-	const cleared: Response[] = []
-	const header = 'x-test-session'
-	return {
-		written,
-		cleared,
-		read(request) {
-			return request.headers.get(header) ?? undefined
-		},
-		write(response, id) {
-			written.push({ response, id })
-			response.headers.set(header, id)
-		},
-		clear(response) {
-			cleared.push(response)
-			response.headers.delete(header)
-		},
-	}
-}
 
 describe('createSession', () => {
 	it('auto-mints a session and writes the transport on the way out', async () => {
@@ -1431,7 +1365,7 @@ describe('createSession', () => {
 		expect(response.headers.has('x-test-session')).toBe(false)
 	})
 
-	it('idle ttl evicts a session via the manual clock and an injected store', async () => {
+	it('idle ttl evicts a session through the manual clock and an injected store', async () => {
 		const clock = createManualClock()
 		const transport = createTestTransport()
 		const store = createMemorySessionStore<SessionInterface>({ ttl: 1_000 })
@@ -1496,7 +1430,7 @@ describe('createSession', () => {
 	})
 
 	it('auto-Secure: the cookie transport carries Secure when connection.encrypted is true, omits it when false/absent', async () => {
-		const transport = createCookieTransport({ secret: SECRET })
+		const transport = createCookieTransport({ secret: TEST_SECRET })
 		const session = createSession<SessionInterface, SessionState & ConnectionState>({ transport })
 
 		const secureState: SessionState & ConnectionState = {
@@ -1607,7 +1541,7 @@ describe('createSession', () => {
 
 describe('createCSRF', () => {
 	it('a safe method mints a token, stashes it on state, and sets the signed cookie', async () => {
-		const csrf = createCSRF<CSRFState & SessionState>({ secret: SECRET })
+		const csrf = createCSRF<CSRFState & SessionState>({ secret: TEST_SECRET })
 		const request = buildRequest('/')
 		const state: CSRFState & SessionState = {}
 		const response = await runChain(
@@ -1624,7 +1558,7 @@ describe('createCSRF', () => {
 	})
 
 	it('mutating happy path: header submission matches the cookie and is accepted', async () => {
-		const csrf = createCSRF<CSRFState & SessionState>({ secret: SECRET })
+		const csrf = createCSRF<CSRFState & SessionState>({ secret: TEST_SECRET })
 		const mintState: CSRFState & SessionState = {}
 		const mintResponse = await runChain(
 			[csrf],
@@ -1652,7 +1586,7 @@ describe('createCSRF', () => {
 	})
 
 	it('mutating happy path: field submission matches the cookie and is accepted', async () => {
-		const csrf = createCSRF<CSRFState & SessionState>({ secret: SECRET })
+		const csrf = createCSRF<CSRFState & SessionState>({ secret: TEST_SECRET })
 		const mintState: CSRFState & SessionState = {}
 		const mintResponse = await runChain(
 			[csrf],
@@ -1681,7 +1615,7 @@ describe('createCSRF', () => {
 	})
 
 	it('a missing submitted token throws HTTPError 403', async () => {
-		const csrf = createCSRF<CSRFState & SessionState>({ secret: SECRET })
+		const csrf = createCSRF<CSRFState & SessionState>({ secret: TEST_SECRET })
 		const request = buildRequest('/', { method: 'POST' })
 		const context = createTestContext(request, {})
 		await expect(csrf(request, context, async () => new Response())).rejects.toMatchObject({
@@ -1690,7 +1624,7 @@ describe('createCSRF', () => {
 	})
 
 	it('a mismatched submitted token throws HTTPError 403', async () => {
-		const csrf = createCSRF<CSRFState & SessionState>({ secret: SECRET })
+		const csrf = createCSRF<CSRFState & SessionState>({ secret: TEST_SECRET })
 		const mintResponse = await runChain(
 			[csrf],
 			createEchoTerminal(),
@@ -1710,7 +1644,7 @@ describe('createCSRF', () => {
 	})
 
 	it('SESSION-BOUND: a token minted under session A replayed under session B is rejected with 403; A-on-A is accepted', async () => {
-		const csrf = createCSRF<CSRFState & SessionState>({ secret: SECRET })
+		const csrf = createCSRF<CSRFState & SessionState>({ secret: TEST_SECRET })
 		const sessionA: SessionInterface = buildSession('session-a')
 		const sessionB: SessionInterface = buildSession('session-b')
 
@@ -1748,7 +1682,7 @@ describe('createCSRF', () => {
 	})
 
 	it('sessionless fallback still works (no session on state)', async () => {
-		const csrf = createCSRF<CSRFState & SessionState>({ secret: SECRET })
+		const csrf = createCSRF<CSRFState & SessionState>({ secret: TEST_SECRET })
 		const mintState: CSRFState & SessionState = {}
 		const mintResponse = await runChain(
 			[csrf],
@@ -1775,7 +1709,7 @@ describe('createCSRF', () => {
 	})
 
 	it('auto-Secure: the double-submit cookie carries Secure when connection.encrypted is true, omits it when false', async () => {
-		const csrf = createCSRF<CSRFState & SessionState & ConnectionState>({ secret: SECRET })
+		const csrf = createCSRF<CSRFState & SessionState & ConnectionState>({ secret: TEST_SECRET })
 
 		const secureState: CSRFState & SessionState & ConnectionState = {
 			connection: { ip: '203.0.113.1', encrypted: true },
@@ -1801,7 +1735,7 @@ describe('createCSRF', () => {
 	})
 })
 
-// ── Composition (the §5 canonical onion, end-to-end) ─────────────────────
+// ── Composition (the canonical onion, end-to-end) ─────────────────────────
 
 describe('composition', () => {
 	it('error body compressed: boundary sits INSIDE compression, so a rendered error body is still compressible', async () => {
@@ -1886,8 +1820,10 @@ describe('composition', () => {
 
 	it('bearer -> limiter token-key idiom: the limiter keys off the bearer-stashed token', async () => {
 		const clock = createManualClock()
-		const token = await signToken('user-1', { secret: SECRET })
-		const bearer = createBearer<BearerState & ClientState & ConnectionState>({ secret: SECRET })
+		const token = await signToken('user-1', { secret: TEST_SECRET })
+		const bearer = createBearer<BearerState & ClientState & ConnectionState>({
+			secret: TEST_SECRET,
+		})
 		const limiter = createLimiter<BearerState & ClientState & ConnectionState>({
 			max: 1,
 			window: 1_000,
@@ -1904,7 +1840,7 @@ describe('composition', () => {
 
 	it('body -> csrf field read: csrf reads the field the body battery cached', async () => {
 		const body = createBody<BodyState & CSRFState & SessionState>()
-		const csrf = createCSRF<CSRFState & SessionState>({ secret: SECRET })
+		const csrf = createCSRF<CSRFState & SessionState>({ secret: TEST_SECRET })
 		const mintState: CSRFState & SessionState = {}
 		const mintResponse = await runChain(
 			[csrf],
@@ -1934,7 +1870,7 @@ describe('composition', () => {
 	it('session -> csrf binding: the csrf battery binds to the session resolved upstream', async () => {
 		const transport = createTestTransport()
 		const session = createSession<SessionInterface, CSRFState & SessionState>({ transport })
-		const csrf = createCSRF<CSRFState & SessionState>({ secret: SECRET })
+		const csrf = createCSRF<CSRFState & SessionState>({ secret: TEST_SECRET })
 
 		const mintRequest = buildRequest('/')
 		const mintState: CSRFState & SessionState = {}
@@ -1980,8 +1916,8 @@ describe('transports', () => {
 		expect(response.headers.has('x-session')).toBe(false)
 	})
 
-	it('createCookieTransport signs and reads back a session id via a real cookie round-trip', async () => {
-		const transport = createCookieTransport({ secret: SECRET })
+	it('createCookieTransport signs and reads back a session id through a real cookie round-trip', async () => {
+		const transport = createCookieTransport({ secret: TEST_SECRET })
 		const response = new Response()
 		await transport.write(response, 'session-id-1', false)
 		const setCookie = response.headers.get('set-cookie') ?? ''

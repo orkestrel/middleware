@@ -1,16 +1,21 @@
 import { describe, expect, it } from 'vitest'
-import { ContentTooLargeError } from '@orkestrel/server'
+import { ContentTooLargeError, signToken, verifyToken } from '@orkestrel/server'
 import {
 	buildRequest,
 	buildSession,
+	buildStore,
+	compressibleBody,
 	createEchoTerminal,
 	createManualClock,
 	createRecordingNext,
 	createRecordingTerminal,
 	createTestContext,
+	createTestTransport,
+	decompress,
 	ECHO_MARKER,
 	runChain,
 	TEST_BODY_LIMIT,
+	TEST_SECRET,
 } from './setup.js'
 
 // ── tests/setup.ts — the host-independent middleware harness ──────────────────
@@ -220,5 +225,90 @@ describe('buildSession', () => {
 		expect(first.state.get('mark')).toBe('first')
 		expect(second.state.get('mark')).toBe('second')
 		expect([...first.state.keys()]).toEqual(['mark'])
+	})
+})
+
+describe('TEST_SECRET', () => {
+	it('signs and verifies a token through the peer, so every battery shares one real secret', async () => {
+		const token = await signToken('user-1', { secret: TEST_SECRET })
+		expect(await verifyToken(token, TEST_SECRET)).toBe('user-1')
+		expect(await verifyToken(token, `${TEST_SECRET}-other`)).toBeUndefined()
+	})
+})
+
+describe('compressibleBody', () => {
+	it('returns exactly the requested length of one repeated character', () => {
+		expect(compressibleBody(0)).toBe('')
+		expect(compressibleBody(4)).toBe('aaaa')
+		expect(compressibleBody(2048)).toHaveLength(2048)
+		expect(new Set(compressibleBody(2048)).size).toBe(1)
+	})
+})
+
+describe('decompress', () => {
+	it('reads back text the platform compressed, from an ArrayBuffer and from a view over one', async () => {
+		const original = compressibleBody(1024)
+		const source = new Response(original).body
+		if (source === null) throw new Error('the encoded body carried no stream')
+		const gzipped = await new Response(
+			source.pipeThrough(new CompressionStream('gzip')),
+		).arrayBuffer()
+		expect(await decompress(gzipped, 'gzip')).toBe(original)
+		expect(await decompress(new Uint8Array(gzipped), 'gzip')).toBe(original)
+	})
+
+	it('rejects when the bytes are not the coding it was told to read', async () => {
+		const notGzip = new TextEncoder().encode('plain text, never compressed')
+		await expect(decompress(notGzip, 'gzip')).rejects.toBeDefined()
+	})
+})
+
+describe('createTestTransport', () => {
+	it('round-trips an id through its own header and records every write and clear', async () => {
+		const transport = createTestTransport()
+		const response = new Response(null)
+		expect(await transport.read(buildRequest('/'))).toBeUndefined()
+
+		await transport.write(response, 'session-1', false)
+		expect(response.headers.get('x-test-session')).toBe('session-1')
+		expect(transport.written).toHaveLength(1)
+		expect(transport.written[0]?.id).toBe('session-1')
+		expect(
+			await transport.read(buildRequest('/', { headers: { 'x-test-session': 'session-1' } })),
+		).toBe('session-1')
+
+		transport.clear(response)
+		expect(response.headers.get('x-test-session')).toBeNull()
+		expect(transport.cleared).toHaveLength(1)
+	})
+})
+
+describe('buildStore', () => {
+	it('pairs a live table with a store that reads and writes the very rows the table holds', async () => {
+		const { table, store } = buildStore()
+		await store.set(buildSession('id-1', 'first'), 0)
+		// The row is read back off the table directly, so the assertion does not
+		// travel the same path the store wrote it through.
+		expect(await table.get('id-1')).toMatchObject({ id: 'id-1', seen: 0, created: 0 })
+		expect((await store.get('id-1', 0))?.state.get('mark')).toBe('first')
+	})
+
+	it('applies the given limits, so an idle session is evicted at its boundary', async () => {
+		const untouched = buildStore({ ttl: 1_000 })
+		await untouched.store.set(buildSession('id-1'), 0)
+		expect(await untouched.store.get('id-1', 1_000)).toBeUndefined()
+
+		// A store built with no limits keeps the same row at the same instant,
+		// so the preceding eviction is the given `ttl` and not the default.
+		const unlimited = buildStore()
+		await unlimited.store.set(buildSession('id-1'), 0)
+		expect(await unlimited.store.get('id-1', 1_000)).toBeDefined()
+	})
+
+	it('allocates an independent table per call', async () => {
+		const first = buildStore()
+		const second = buildStore()
+		await first.store.set(buildSession('id-1'), 0)
+		expect(await second.store.get('id-1', 0)).toBeUndefined()
 	})
 })

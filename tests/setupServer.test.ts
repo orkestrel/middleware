@@ -8,11 +8,14 @@ import {
 	statSync,
 } from 'node:fs'
 import { open } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
 import { waitForCondition } from '@orkestrel/test'
 import { createScratch } from '@orkestrel/test/server'
 import {
 	buildCancelTrackingMultipartRequest,
+	buildChunkedStream,
 	buildDirectoryIndexFixture,
 	buildMultipartBody,
 	buildMultipartRequest,
@@ -23,6 +26,8 @@ import {
 	detectClosedHandle,
 	JPEG_MAGIC,
 	PNG_MAGIC,
+	resolveSecondDevicePath,
+	SECOND_DEVICE_CANDIDATES,
 } from './setupServer.js'
 
 // ── tests/setupServer.ts — the Node-only fixtures ─────────────────────────────
@@ -283,5 +288,65 @@ describe('buildCancelTrackingMultipartRequest', () => {
 
 		await reader.cancel()
 		expect(cancelled.value).toBe(true)
+	})
+})
+
+describe('buildChunkedStream', () => {
+	it('delivers the payload in order, in chunks no larger than asked, then closes', async () => {
+		const payload = Uint8Array.from({ length: 200 }, (_value, index) => index % 256)
+		const reader = buildChunkedStream(payload, 64).getReader()
+		const sizes: number[] = []
+		const collected: number[] = []
+		for (;;) {
+			const { done, value } = await reader.read()
+			if (done) break
+			if (value === undefined) throw new Error('the chunked stream enqueued no bytes')
+			sizes.push(value.byteLength)
+			collected.push(...value)
+		}
+		// Transcribed against the payload itself, never against a second call to
+		// the builder, so the assertion cannot pass by agreeing with the helper.
+		expect(Uint8Array.from(collected)).toEqual(payload)
+		expect(sizes).toEqual([64, 64, 64, 8])
+	})
+
+	it('closes at once for an empty payload', async () => {
+		const reader = buildChunkedStream(new Uint8Array(0)).getReader()
+		expect(await reader.read()).toEqual({ done: true, value: undefined })
+	})
+})
+
+describe('resolveSecondDevicePath', () => {
+	it('never resolves a path on the reference own device, and answers only from the declared candidates', () => {
+		const root = createScratch({ prefix: 'middleware-device-' })
+		try {
+			const device = statSync(root.path).dev
+			const other = resolveSecondDevicePath(root.path)
+			// Read the answer's device off the host rather than off the helper, so
+			// a result on the reference device fails here whatever the helper
+			// believed. On a single-device host the reading is `undefined`, which
+			// is the inapplicable answer a caller gates on.
+			const otherDevice = other === undefined ? undefined : statSync(other).dev
+			expect(otherDevice).not.toBe(device)
+			expect(other === undefined || SECOND_DEVICE_CANDIDATES.includes(other)).toBe(true)
+			expect(other === undefined || statSync(other).isDirectory()).toBe(true)
+			expect(other).not.toBe(root.path)
+		} finally {
+			root.destroy()
+		}
+	})
+
+	it('reads the host temporary directory as a candidate', () => {
+		expect(SECOND_DEVICE_CANDIDATES).toContain(tmpdir())
+		expect(SECOND_DEVICE_CANDIDATES.every((candidate) => candidate.length > 0)).toBe(true)
+	})
+
+	it('resolves undefined for a reference the host cannot read', () => {
+		const root = createScratch({ prefix: 'middleware-device-' })
+		try {
+			expect(resolveSecondDevicePath(join(root.path, 'no-such-directory'))).toBeUndefined()
+		} finally {
+			root.destroy()
+		}
 	})
 })

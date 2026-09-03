@@ -16,11 +16,11 @@ npm install @orkestrel/middleware @orkestrel/server
 
 ## Requirements
 
-- Node.js >= 24
+- Node.js >= 22.12.0
 - `@orkestrel/server` as a peer dependency (the seam and substrate are
   imported, never bundled)
-- ESM core (`.`); a CJS node face (`./server`) for the node-bound batteries
-  (`createStatic`, `createMultipart`)
+- Dual ESM and CommonJS entries: the core (`.`) and the node face (`./server`),
+  which carries the node-bound batteries
 
 ## Usage
 

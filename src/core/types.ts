@@ -162,8 +162,8 @@ export interface CorsOptions {
  * Configures `createDeadline` — the application-level per-request deadline.
  *
  * @remarks
- * - `ms` — the deadline in milliseconds, armed via `@orkestrel/timeout` and
- *   linked to the request's `signal` via `@orkestrel/abort`'s `linkSignal`.
+ * - `ms` — the deadline in milliseconds, armed through `@orkestrel/timeout` and
+ *   linked to the request's `signal` through `@orkestrel/abort`'s `linkSignal`.
  * - `status` — the response status returned when the deadline fires before
  *   the downstream chain settles; defaults to {@link DEFAULT_DEADLINE_STATUS}.
  */
@@ -223,7 +223,7 @@ export interface BearerOptions {
  * - `max` — the number of requests admitted per key per `window`.
  * - `window` — the window length in milliseconds.
  * - `capacity` — the maximum number of distinct keys tracked before the
- *   least-recently-used key is evicted (true LRU — every access, not just
+ *   least-recently-used key is evicted (true LRU — every access, not only
  *   insertion, refreshes recency); defaults to {@link DEFAULT_LIMITER_CAPACITY}.
  * - `key` — derives the bucket key from the request; defaults to the
  *   bearer-token-then-client-IP idiom (see the battery's guide).
@@ -447,6 +447,16 @@ export interface SessionSnapshot {
 }
 
 /**
+ * Rebuilds a session entity from an untrusted stored snapshot, or resolves `undefined` when the value is malformed.
+ *
+ * @remarks
+ * The step {@link DatabaseSessionStore} is constructed with, and the seam a
+ * consumer implements to restore its own session entity from a persisted row.
+ * `createDatabaseSessionStore` supplies `createRestoredSession` as that step.
+ */
+export type SessionRestoreFunction = (value: unknown) => SessionInterface | undefined
+
+/**
  * Describes the transport seam `createSession`'s `transport` option implements — how a
  * session id travels to and from the client (a signed cookie, a header, …).
  *
@@ -457,7 +467,7 @@ export interface SessionSnapshot {
  * called only when a session is freshly minted or regenerated; `clear` is
  * called on `destroy()`. `write`'s `encrypted` flag is the request's resolved
  * transport security (derived from `context.url.protocol`) so a cookie
- * transport can resolve its own `Secure` attribute via `resolveSecure`
+ * transport can resolve its own `Secure` attribute through `resolveSecure`
  * without re-deriving connection facts itself.
  */
 export interface SessionTransportInterface {

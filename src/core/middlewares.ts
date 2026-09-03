@@ -362,7 +362,7 @@ export function createCors<TState>(options?: CorsOptions): MiddlewareHandler<TSt
  * @remarks
  * MUST sit OUTSIDE `createBody` in the chain — it reconstructs the inbound
  * `Request` (to link its `signal` to the deadline `signal`), which throws if
- * the body was already consumed upstream (e.g. by `createBody`'s cached read).
+ * the body was already consumed upstream (for example by `createBody`'s cached read).
  *
  * @example
  * ```ts
@@ -638,8 +638,7 @@ export function createLimiter<TState extends BearerState & ClientState & Connect
  * @remarks
  * The shipped `MiddlewareContext.body()` is a parameterless, server-owned
  * cache (`ServerOptions.limit` governs its size cap) — this battery carries
- * no `limit`/`decompression` options (a deliberate break from the deleted old
- * `createBodyParser` surface, which configured them itself). `state.body` is
+ * no `limit`/`decompression` options. `state.body` is
  * stashed from the SAME awaited call the 400 check reads — `context.body()`
  * is never invoked twice.
  *
@@ -858,7 +857,7 @@ export function createCSRF<TState extends CSRFState & SessionState & ConnectionS
 
 /**
  * Scopes a battery to run ONLY on a set of exact pathnames — elsewhere it
- * steps aside via `next()`.
+ * steps aside through `next()`.
  *
  * @typeParam TState - The consumer's opaque per-request state type
  * @param paths - One pathname, or a set of pathnames, matched exactly against `context.url.pathname`
@@ -883,7 +882,7 @@ export function only<TState>(
 
 /**
  * Scopes a battery to run everywhere EXCEPT a set of exact pathnames — there
- * it steps aside via `next()`.
+ * it steps aside through `next()`.
  *
  * @typeParam TState - The consumer's opaque per-request state type
  * @param paths - One pathname, or a set of pathnames, matched exactly against `context.url.pathname`

@@ -1,13 +1,14 @@
 import type {
 	SessionInterface,
 	SessionLimits,
+	SessionRestoreFunction,
 	SessionRow,
 	SessionStoreInterface,
 } from '../types.js'
 import type { Guard } from '@orkestrel/contract'
 import type { TableInterface } from '@orkestrel/database'
-import { sessionExpired, snapshotSession, validateSessionLimits } from '../helpers.js'
 import type { Session } from '../Session.js'
+import { sessionExpired, snapshotSession, validateSessionLimits } from '../helpers.js'
 
 /**
  * Implements a durable {@link SessionStoreInterface} over an `@orkestrel/database`
@@ -50,14 +51,14 @@ export class DatabaseSessionStore<
 > implements SessionStoreInterface<S> {
 	readonly #table: TableInterface<SessionRow>
 	readonly #guard: Guard<S>
-	readonly #restore: (value: unknown) => SessionInterface | undefined
+	readonly #restore: SessionRestoreFunction
 	readonly #ttl: number | undefined
 	readonly #lifetime: number | undefined
 
 	constructor(
 		table: TableInterface<SessionRow>,
 		guard: Guard<S>,
-		restore: (value: unknown) => SessionInterface | undefined,
+		restore: SessionRestoreFunction,
 		options?: SessionLimits,
 	) {
 		validateSessionLimits(options)

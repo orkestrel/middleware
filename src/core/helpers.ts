@@ -280,13 +280,13 @@ export async function compressBytes(
  * Skips a `HEAD` request, a `204`/`304` or otherwise bodyless response, an
  * `event-stream` response (SSE — buffering would hang the connection), and a
  * response that already carries the header the caller is about to set
- * (`skipHeader`, e.g. `Content-Encoding` for compression, `ETag` for the
+ * (`skipHeader`, for example `Content-Encoding` for compression, `ETag` for the
  * ETag battery).
  *
  * @param method - The request's HTTP method
  * @param response - The candidate response
  * @param skipHeader - The response header whose presence means "already handled"
- * @returns True if the response should be left untouched; false otherwise
+ * @returns True if the response must be left untouched; false otherwise
  *
  * @example
  * ```ts
@@ -392,10 +392,10 @@ export function rebuildResponse(
  * `options.encodings` → {@link isCompressionNegotiated} → `isCompressibleType`
  * on `Content-Type` → a fast skip when the response already carries a
  * numeric `Content-Length` BELOW `options.threshold` (avoids buffering a
- * body known too small to be worth compressing) → buffer via
+ * body known too small to be worth compressing) → buffer through
  * `response.arrayBuffer()` → a threshold passthrough when the buffered size
  * is still below `options.threshold` → `options.compress` → set
- * `Content-Encoding` and a fresh `Content-Length` via {@link rebuildResponse}.
+ * `Content-Encoding` and a fresh `Content-Length` through {@link rebuildResponse}.
  * Returns `response` unchanged (aside from the `Vary` stamp) on any skip.
  *
  * @param request - The inbound `Request` (read for `Accept-Encoding`)

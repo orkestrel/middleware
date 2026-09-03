@@ -1,10 +1,10 @@
 import type { MultipartBody } from '@src/core'
 import type {
+	ByteRange,
 	MultipartLimits,
 	MultipartLimitsInput,
 	PartHeaders,
 	UploadedFile,
-	UploadedFileInput,
 } from './types.js'
 import type { FileHandle } from 'node:fs/promises'
 import type { Encoding } from '@orkestrel/server'
@@ -13,7 +13,7 @@ import { copyFile, readFile, realpath, rename, unlink } from 'node:fs/promises'
 import { extname, isAbsolute, join, normalize, relative, resolve, sep } from 'node:path'
 import { promisify } from 'node:util'
 import { deflate as zlibDeflate, gzip as zlibGzip } from 'node:zlib'
-import { isRecord } from '@orkestrel/contract'
+import { isError } from '@orkestrel/contract'
 import {
 	DEFAULT_CONTENT_TYPE,
 	DEFAULT_MULTIPART_FIELD_SIZE,
@@ -368,11 +368,11 @@ export function matchesBytes(bytes: Uint8Array, signature: readonly number[], of
  *
  * @example
  * ```ts
- * multipartBoundary('multipart/form-data; boundary=abc123') // 'abc123'
- * multipartBoundary('application/json') // undefined
+ * extractMultipartBoundary('multipart/form-data; boundary=abc123') // 'abc123'
+ * extractMultipartBoundary('application/json') // undefined
  * ```
  */
-export function multipartBoundary(contentType: string | null): string | undefined {
+export function extractMultipartBoundary(contentType: string | null): string | undefined {
 	if (contentType === null) return undefined
 	const [type, ...params] = contentType.split(';').map((part) => part.trim())
 	if (type === undefined || type.toLowerCase() !== 'multipart/form-data') return undefined
@@ -462,7 +462,7 @@ export function parsePartHeaders(block: string): PartHeaders {
  * createUploadedFile({ field: 'avatar', name: 'a.png', size: 1024, mime: 'image/png', validated: true, status: 'staged', path: '/tmp/x' })
  * ```
  */
-export function createUploadedFile(input: UploadedFileInput): UploadedFile {
+export function createUploadedFile(input: UploadedFile): UploadedFile {
 	return Object.freeze({ ...input })
 }
 
@@ -494,7 +494,7 @@ export async function unlinkStagedFiles(body: MultipartBody): Promise<void> {
 }
 
 /**
- * Adapts a `node:fs` read stream over `path` (or an already-open
+ * Adapts a `node:fs` read stream over a file path (or an already-open
  * `FileHandle`) into a DOM-compatible `ReadableStream<Uint8Array>` — the
  * single shared node↔web stream bridge every static-file and uploaded-file
  * response body routes through.
@@ -505,24 +505,23 @@ export async function unlinkStagedFiles(body: MultipartBody): Promise<void> {
  * the web `ReadableStream` invokes exactly when its internal queue has room
  * for more data. Exactly one disk chunk is read and enqueued per `pull` —
  * never more — so a slow or stalled consumer (a stalled HTTP connection)
- * simply stops triggering `pull` calls and the source stops reading ahead;
+ * stops triggering `pull` calls and the source stops reading ahead;
  * this is genuine consumer backpressure, not the "naturally backpressured"
  * `for await`/`enqueue` pattern (which does not block on a slow consumer at
- * all, since `enqueue` returns synchronously). The controller is closed on
+ * all, because `enqueue` returns synchronously). The controller is closed on
  * iterator completion and errored (never thrown into the process) on a
- * mid-stream read failure. Cancelling the returned `ReadableStream` (e.g. the
- * consumer aborts the response) calls the iterator's `return()`, which
+ * mid-stream read failure. Cancelling the returned `ReadableStream` (for
+ * example the consumer aborts the response) calls the iterator's `return()`, which
  * destroys the underlying node read stream so the file descriptor is
- * released. When `path` is a `FileHandle`, `FileHandle.createReadStream`'s
+ * released. When `source` is a `FileHandle`, `FileHandle.createReadStream`'s
  * default `autoClose` closes the handle on every terminal path (end, error,
- * or `destroy()` via the iterator's `return()`) — the caller never needs a
- * separate `handle.close()` for a handle passed here.
+ * or `destroy()` through the iterator's `return()`) — the caller never needs a
+ * separate `handle.close()` for a `FileHandle` passed as `source`.
  *
  * @param source - The absolute on-disk file path to stream, or an already-open
- * `FileHandle` (e.g. one already `fstat`'d so the served bytes match the
+ * `FileHandle` (for example one already `fstat`'d so the served bytes match the
  * headers computed from that same `fstat`)
- * @param range - An optional inclusive byte range (`start`/`end`, both
- * 0-indexed and inclusive, matching `node:fs`'s `createReadStream` options)
+ * @param range - An optional inclusive byte range; see {@link ByteRange}
  * @returns A `ReadableStream<Uint8Array>` valid as a fetch `BodyInit`
  *
  * @example
@@ -532,7 +531,7 @@ export async function unlinkStagedFiles(body: MultipartBody): Promise<void> {
  */
 export function streamFile(
 	source: string | FileHandle,
-	range?: { readonly start: number; readonly end: number },
+	range?: ByteRange,
 ): ReadableStream<Uint8Array> {
 	const stream =
 		typeof source === 'string'
@@ -604,7 +603,9 @@ export async function readUploadedFile(file: UploadedFile): Promise<Uint8Array> 
  * @remarks
  * Attempts a `rename` first; on a cross-device error (`EXDEV`) falls back to
  * `copyFile` + `unlink`. Returns a new frozen record with `status: 'moved'`
- * and `path: destination` — the input record is never mutated.
+ * and `path: destination` — the input record is never mutated. The suite
+ * drives the `EXDEV` fallback only on a host whose device probe finds a
+ * second filesystem, so a single-device host leaves that branch unproven.
  *
  * @param file - The {@link UploadedFile} record to move
  * @param destination - The final on-disk path
@@ -622,7 +623,10 @@ export async function moveUploadedFile(
 	try {
 		await rename(file.path, destination)
 	} catch (error) {
-		if (isRecord(error) && error.code === 'EXDEV') {
+		// `isRecord` refuses a class instance, and every `node:fs` rejection is
+		// an `Error` instance, so the cross-device branch must narrow with
+		// `isError` to be reachable at all.
+		if (isError(error) && 'code' in error && error.code === 'EXDEV') {
 			await copyFile(file.path, destination)
 			await unlink(file.path)
 		} else {

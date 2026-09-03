@@ -19,12 +19,16 @@ import type { SessionInterface } from './types.js'
  * ```
  */
 export class Session implements SessionInterface {
-	readonly id: string
+	readonly #id: string
 	readonly #state: Map<string, unknown>
 
 	constructor(id: string) {
-		this.id = id
+		this.#id = id
 		this.#state = new Map()
+	}
+
+	get id(): string {
+		return this.#id
 	}
 
 	get state(): ReadonlyMap<string, unknown> {

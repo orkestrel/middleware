@@ -1,7 +1,7 @@
 import type { MultipartBody } from '@src/core'
 import type { MultipartOptions } from './types.js'
 import { MultipartError } from './errors.js'
-import { multipartBoundary, resolveMultipartLimits } from './helpers.js'
+import { extractMultipartBoundary, resolveMultipartLimits } from './helpers.js'
 import { MultipartParser } from './MultipartParser.js'
 
 /**
@@ -9,7 +9,7 @@ import { MultipartParser } from './MultipartParser.js'
  * the mid-stream state machine `createMultipart` drives.
  *
  * @remarks
- * Reads `request.body` chunk by chunk via its `ReadableStream` reader —
+ * Reads `request.body` chunk by chunk through its `ReadableStream` reader —
  * NEVER buffers the whole body — enforcing every {@link MultipartLimits} cap
  * the instant it is exceeded (reading stops, every already-staged temp file
  * is deleted, throws {@link MultipartError} with code `'limit'`). Each file
@@ -53,7 +53,7 @@ export async function parseMultipartRequest(
 	request: Request,
 	options: MultipartOptions = {},
 ): Promise<MultipartBody | undefined> {
-	const boundary = multipartBoundary(request.headers.get('content-type'))
+	const boundary = extractMultipartBoundary(request.headers.get('content-type'))
 	if (boundary === undefined) return undefined
 	if (request.body === null) throw new MultipartError('malformed', 'multipart request has no body')
 

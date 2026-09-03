@@ -2,11 +2,11 @@ import { Session } from '@src/core'
 import { describe, expect, it } from 'vitest'
 
 // ============================================================================
-//  @orkestrel/middleware — Session entity unit tests (§16 mirror).
+//  @orkestrel/middleware — Session entity unit tests.
 // ============================================================================
 
 describe('Session', () => {
-	it('carries the given id as a readonly public field', () => {
+	it('publishes the given id through a readonly getter', () => {
 		const session = new Session('abc123')
 		expect(session.id).toBe('abc123')
 	})
