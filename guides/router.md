@@ -1,7 +1,7 @@
 # Router
 
-> This package's ONE guide, covering all three faces (AGENTS §22 — one guide
-> per package): the pure, environment-agnostic core — a registry-and-match
+> This package's ONE guide, covering its faces (one guide per package): the
+> pure, environment-agnostic core — a registry-and-match
 > engine (`Router`) plus a fetch-standard, method-dimensioned dispatcher
 > (`Dispatcher`) layered over one internal `Router<RouteRecord<TState>>` —
 > the browser navigation face (`Navigator`), and the node adapter face
@@ -9,8 +9,8 @@
 > shared machine both `Navigator` and `Dispatcher` compose —
 > literal-over-param-over-wildcard precedence, trailing-slash folding,
 > tolerant percent-decoding, and the `answers` native-override seam all come
-> from this single engine (AGENTS §21 "one engine, native overrides"); the
-> core-first story is what makes the other two faces thin. Source:
+> from this single engine (one engine, native overrides only for a genuine faster path); the
+> core-first story is what makes the browser and server faces thin. Source:
 > [`src/core`](../src/core), [`src/browser`](../src/browser),
 > [`src/server`](../src/server). Surfaced through the `@orkestrel/router`
 > barrel (aliased `@src/core` / `@src/browser` / `@src/server` inside this
@@ -58,38 +58,54 @@ Browser and server usage appear under [Patterns](#patterns).
 
 ### Constants
 
-| API             | Kind  | Summary                                                                  |
-| --------------- | ----- | ------------------------------------------------------------------------ |
-| `METHODS`       | const | The seven registrable HTTP methods (`GET`…`OPTIONS`) as a `ReadonlySet`. |
-| `TIER_LITERAL`  | const | The highest path-segment specificity tier (a literal segment).           |
-| `TIER_PARAM`    | const | The middle path-segment specificity tier (a `:name` param).              |
-| `TIER_WILDCARD` | const | The lowest path-segment specificity tier (a final `*name` wildcard).     |
+| API             | Kind  | Summary                                                              |
+| --------------- | ----- | -------------------------------------------------------------------- |
+| `METHOD_LIST`   | const | The registrable HTTP methods as a frozen, ordered literal tuple.     |
+| `METHODS`       | const | The registrable HTTP methods (`GET`…`OPTIONS`) as a `ReadonlySet`.   |
+| `TIER_LITERAL`  | const | The highest path-segment specificity tier (a literal segment).       |
+| `TIER_PARAM`    | const | The middle path-segment specificity tier (a `:name` param).          |
+| `TIER_WILDCARD` | const | The lowest path-segment specificity tier (a final `*name` wildcard). |
 
 ### Helpers
 
-| API                     | Kind     | Summary                                                                         |
-| ----------------------- | -------- | ------------------------------------------------------------------------------- |
-| `escapeRegExp`          | function | Escape regex metacharacters in a literal string.                                |
-| `canonicalizePath`      | function | Strip one trailing slash off a path pattern (except `/` and `''`).              |
-| `computeDispatchKey`    | function | Compute the canonical method-and-path key for a dispatcher route.               |
-| `compilePath`           | function | Compile a path pattern into an anchored regex + ordered param names.            |
-| `decodeParam`           | function | URL-decode one captured param, tolerating a malformed `%` escape.               |
-| `matchPath`             | function | Extract decoded params from a compiled path against a pathname, or `undefined`. |
-| `classifySegment`       | function | Classify one path segment into its specificity tier.                            |
-| `parseMethod`           | function | Narrow a raw `request.method` string into a typed `Method`, or `undefined`.     |
-| `computeSpecificity`    | function | Compute a path's per-segment specificity vector.                                |
-| `compareSpecificity`    | function | Compare two paths by specificity for a descending sort.                         |
-| `joinPaths`             | function | Join a group prefix and a route path into one `/`-prefixed path.                |
-| `route`                 | function | Identity pass-through pinning a `RouteInput`'s literal `Path` at the call site. |
-| `computeNavigationKey`  | function | Compute the canonical nested-route key used by a `Navigator`.                   |
-| `extractHashPath`       | function | Extract the `/`-prefixed pathname from a `location.hash` value.                 |
-| `resolveLocationPath`   | function | Resolve the `/`-prefixed pathname to match for the current location.            |
-| `findAnchor`            | function | Find the nearest enclosing `<a>` element a DOM event originated from.           |
-| `isEncryptedSocket`     | function | Whether a `node:http` connection socket is TLS-encrypted.                       |
-| `buildRequest`          | function | Build a fetch `Request` from a `node:http` `IncomingMessage`.                   |
-| `sendResponse`          | function | Write a fetch `Response` back to a `node:http` `ServerResponse`.                |
-| `handleListenerRequest` | function | Handle and write one dispatcher request at the Node transport boundary.         |
-| `createListener`        | function | Create a `node:http` request listener over a core `DispatcherInterface`.        |
+| API                    | Kind     | Summary                                                                         |
+| ---------------------- | -------- | ------------------------------------------------------------------------------- |
+| `escapeRegExp`         | function | Escape regex metacharacters in a literal string.                                |
+| `canonicalizePath`     | function | Strip one trailing slash off a path pattern (except `/` and `''`).              |
+| `computeDispatchKey`   | function | Compute the canonical method-and-path key for a dispatcher route.               |
+| `compilePath`          | function | Compile a path pattern into an anchored regex + ordered param names.            |
+| `decodeParam`          | function | URL-decode one captured param, tolerating a malformed `%` escape.               |
+| `matchPath`            | function | Extract decoded params from a compiled path against a pathname, or `undefined`. |
+| `classifySegment`      | function | Classify one path segment into its specificity tier.                            |
+| `computeSpecificity`   | function | Compute a path's per-segment specificity vector.                                |
+| `compareSpecificity`   | function | Compare two paths by specificity for a descending sort.                         |
+| `joinPaths`            | function | Join a group prefix and a route path into one `/`-prefixed path.                |
+| `defineRoute`          | function | Identity pass-through pinning a `RouteInput`'s literal `Path` at the call site. |
+| `computeNavigationKey` | function | Compute the canonical nested-route key used by a `Navigator`.                   |
+| `extractHashPath`      | function | Extract the `/`-prefixed pathname from a `location.hash` value.                 |
+| `resolveLocationPath`  | function | Resolve the `/`-prefixed pathname to match for the current location.            |
+| `findAnchor`           | function | Find the nearest enclosing `<a>` element a DOM event originated from.           |
+| `buildRequest`         | function | Build a fetch `Request` from a `node:http` `IncomingMessage`.                   |
+| `sendResponse`         | function | Write a fetch `Response` back to a `node:http` `ServerResponse`.                |
+
+### Parsers
+
+| API           | Kind     | Summary                                                                     |
+| ------------- | -------- | --------------------------------------------------------------------------- |
+| `parseMethod` | function | Narrow a raw `request.method` string into a typed `Method`, or `undefined`. |
+
+### Guards
+
+| API                 | Kind     | Summary                                                   |
+| ------------------- | -------- | --------------------------------------------------------- |
+| `isEncryptedSocket` | function | Whether a `node:http` connection socket is TLS-encrypted. |
+
+### Handlers
+
+| API                     | Kind     | Summary                                                                  |
+| ----------------------- | -------- | ------------------------------------------------------------------------ |
+| `handleListenerRequest` | function | Handle and write one dispatcher request at the Node transport boundary.  |
+| `createListener`        | function | Create a `node:http` request listener over a core `DispatcherInterface`. |
 
 ### Entities
 
@@ -119,17 +135,17 @@ Browser and server usage appear under [Patterns](#patterns).
 | `RouterOptions`          | interface | `{ entries?; sensitive?; key? }` — options for `createRouter` / the constructor.                    |
 | `RouterInterface`        | interface | `count` data member + `add` / `match` / `entries` / `group` / `clear`.                              |
 | `GroupInterface`         | interface | `prefix` data member + `add` / `group`, forwarding to the owning router.                            |
-| `Method`                 | type      | The seven registrable HTTP methods (`'GET' \| 'POST' \| … \| 'OPTIONS'`).                           |
+| `Method`                 | type      | The registrable HTTP methods (`'GET' \| 'POST' \| … \| 'OPTIONS'`).                                 |
 | `RouteContext`           | interface | `{ params; pattern; url; state }` — the ambient context a `RouteHandler` receives.                  |
 | `RouteHandler`           | type      | `(request, context) => Response \| Promise<Response>` — one route's handler.                        |
 | `RouteInput`             | interface | `{ method; path; handler; name? }` — one `Dispatcher.add` registration input.                       |
 | `RouteRecord`            | interface | `{ method; handler; name? }` — the `meta` payload a `Dispatcher` stores in its `Router`.            |
 | `DispatchResult`         | type      | `'matched' \| 'unmethoded' \| 'unmatched'` discriminated union — `Dispatcher.match`'s outcome.      |
-| `DispatcherEventMap`     | type      | `{ match: […]; miss: […] }` — the `Dispatcher`'s AGENTS §13 event map.                              |
+| `DispatcherEventMap`     | type      | `{ match: […]; miss: […] }` — the `Dispatcher`'s event map.                                         |
 | `DispatcherOptions`      | interface | `{ routes?; sensitive?; unmatched?; unmethoded?; on?; error? }` — options for `createDispatcher`.   |
 | `DispatcherInterface`    | interface | `router` / `emitter` data members + `add` / `group` / `match` / `handle` / `destroy`.               |
 | `DispatchGroupInterface` | interface | `prefix` data member + `add` / `group`, forwarding to the owning dispatcher.                        |
-| `NavigatorEventMap`      | type      | `{ navigate: [match: RouterMatch<Meta>] }` — the `Navigator`'s AGENTS §13 event map.                |
+| `NavigatorEventMap`      | type      | `{ navigate: [match: RouterMatch<Meta>] }` — the `Navigator`'s event map.                           |
 | `NavigatorOptions`       | interface | `{ routes; history?; base?; fallback?; guard?; intercept?; sensitive?; on?; error? }`.              |
 | `NavigatorInterface`     | interface | `router` / `emitter` / `active` data members + `start` / `stop` / `navigate` / `match` / `destroy`. |
 | `RequestOptions`         | interface | `{ origin?: string; response?: ServerResponse }` — URL and disconnect options for `buildRequest`.   |
@@ -140,54 +156,56 @@ The `count` member of `RouterInterface`, the `prefix` members of
 `GroupInterface` / `DispatchGroupInterface`, the `router` / `emitter`
 members of `DispatcherInterface`, and the `router` / `emitter` / `active`
 members of `NavigatorInterface` are all `readonly` data members (Surface
-rows, above) — the call-signature methods of `RouterInterface`,
-`DispatcherInterface`, and `NavigatorInterface` are documented under
-[Methods](#methods).
+rows, preceding) — the call-signature methods of `RouterInterface`,
+`GroupInterface`, `DispatcherInterface`, `DispatchGroupInterface`, and
+`NavigatorInterface` are documented under [Methods](#methods).
 
 ## Methods
 
-The public methods of `RouterInterface`, `DispatcherInterface`, and
-`NavigatorInterface` — every call-signature member listed (their `readonly`
-data members stay Surface rows). `Router`, `Dispatcher`, and `Navigator`
-implement their interfaces exactly, so this doubles as each class's
-instance-method surface (AGENTS §22).
+The public methods of `RouterInterface`, `GroupInterface`,
+`DispatcherInterface`, `DispatchGroupInterface`, and `NavigatorInterface` —
+every call-signature member listed (their `readonly` data members stay
+Surface rows). `Router`, `Group`, `Dispatcher`, `DispatchGroup`, and
+`Navigator` implement their interfaces exactly, so this doubles as each
+class's instance-method surface.
 
 #### `RouterInterface`
 
-`add` registers one/many entries (§9.2 batch), compiling each path once;
+`add` registers one/many entries (batch registration), compiling each path once;
 `match` resolves the most-specific matching entry, optionally filtered by the
 `answers` seam; `entries` lists all entries, or only those matching a
 pathname (the Allow-set source); `group` scopes a prefixed registration
-handle; `clear` is the §10 reset.
+handle; `clear` drops every entry, leaving the router reusable.
 
-| Method    | Returns                    | Behavior                                                                          |
-| --------- | -------------------------- | --------------------------------------------------------------------------------- |
-| `add`     | `void`                     | Register one entry, or many (§9.2 batch); throws `TypeError` on a malformed path. |
-| `match`   | `RouterMatch \| undefined` | Resolve the most-specific matching entry for a pathname, or `undefined`.          |
-| `entries` | `readonly RouteEntry[]`    | All registered entries, or only those whose path matches a given pathname.        |
-| `group`   | `GroupInterface`           | A prefix-scoped registration handle over this router.                             |
-| `clear`   | `void`                     | Drop every entry (§10); the router stays usable.                                  |
+| Method    | Returns                    | Behavior                                                                                        |
+| --------- | -------------------------- | ----------------------------------------------------------------------------------------------- |
+| `add`     | `void`                     | Register one entry, or many (batch registration); throws a `ContractError` on a malformed path. |
+| `match`   | `RouterMatch \| undefined` | Resolve the most-specific matching entry for a pathname, or `undefined`.                        |
+| `entries` | `readonly RouteEntry[]`    | All registered entries, or only those whose path matches a given pathname.                      |
+| `group`   | `GroupInterface`           | A prefix-scoped registration handle over this router.                                           |
+| `clear`   | `void`                     | Drop every entry; the router stays usable.                                                      |
 
 #### `DispatcherInterface`
 
-`add` registers one/many route inputs (§9.2 batch); `group` scopes a
+`add` registers one/many route inputs (batch registration); `group` scopes a
 prefixed registration handle; `match` is the raw method+pathname decision;
 `handle` runs the full fetch dispatch (auto-`HEAD`, auto-`OPTIONS`,
-`unmatched`/`unmethoded` responders); `destroy` is the §10 teardown.
+`unmatched`/`unmethoded` responders); `destroy` tears down the `#emitter`,
+leaving the underlying router registered.
 
-| Method    | Returns                  | Behavior                                                                                        |
-| --------- | ------------------------ | ----------------------------------------------------------------------------------------------- |
-| `add`     | `void`                   | Register one route input, or many (§9.2 batch); throws `TypeError` on a malformed registration. |
-| `group`   | `DispatchGroupInterface` | A prefix-scoped registration handle over this dispatcher.                                       |
-| `match`   | `DispatchResult`         | The raw `'matched' \| 'unmethoded' \| 'unmatched'` decision for a method + pathname pair.       |
-| `handle`  | `Promise<Response>`      | The full dispatch: parse, match, run the handler (or the `unmatched`/`unmethoded` responder).   |
-| `destroy` | `void`                   | Tear down the `#emitter`; the underlying `router` is left registered (not cleared).             |
+| Method    | Returns                  | Behavior                                                                                                      |
+| --------- | ------------------------ | ------------------------------------------------------------------------------------------------------------- |
+| `add`     | `void`                   | Register one route input, or many (batch registration); throws a `ContractError` on a malformed registration. |
+| `group`   | `DispatchGroupInterface` | A prefix-scoped registration handle over this dispatcher.                                                     |
+| `match`   | `DispatchResult`         | The raw `'matched' \| 'unmethoded' \| 'unmatched'` decision for a method + pathname pair.                     |
+| `handle`  | `Promise<Response>`      | The full dispatch: parse, match, run the handler (or the `unmatched`/`unmethoded` responder).                 |
+| `destroy` | `void`                   | Tear down the `#emitter`; the underlying `router` is left registered (not cleared).                           |
 
 #### `NavigatorInterface`
 
 `start` begins listening and resolves the current location now; `stop` stops
 listening; `navigate` navigates programmatically; `match` is a pure lookup
-with no side effects; `destroy` is the §10 teardown.
+with no side effects; `destroy` tears down the `#emitter`.
 
 | Method     | Returns                    | Behavior                                                                                          |
 | ---------- | -------------------------- | ------------------------------------------------------------------------------------------------- |
@@ -197,6 +215,28 @@ with no side effects; `destroy` is the §10 teardown.
 | `match`    | `RouterMatch \| undefined` | A pure lookup through the underlying `Router` — no location read, no fallback, no guard, no emit. |
 | `destroy`  | `void`                     | `stop()` plus tear down the `#emitter`.                                                           |
 
+#### `GroupInterface`
+
+`add` registers one/many entries on the owning router with this group's
+prefix composed onto each path; `group` nests a further prefix onto this
+one. A group holds no registry of its own.
+
+| Method  | Returns          | Behavior                                                                                            |
+| ------- | ---------------- | --------------------------------------------------------------------------------------------------- |
+| `add`   | `void`           | Register one entry, or many, on the owning router with this group's prefix composed onto each path. |
+| `group` | `GroupInterface` | A nested group whose prefix is this prefix followed by the given one.                               |
+
+#### `DispatchGroupInterface`
+
+`add` registers one/many route inputs on the owning dispatcher with this
+group's prefix composed onto each path; `group` nests a further prefix onto
+this one. The dispatcher's own registration guard still applies.
+
+| Method  | Returns                  | Behavior                                                                                                      |
+| ------- | ------------------------ | ------------------------------------------------------------------------------------------------------------- |
+| `add`   | `void`                   | Register one route input, or many, on the owning dispatcher with this group's prefix composed onto each path. |
+| `group` | `DispatchGroupInterface` | A nested group whose prefix is this prefix followed by the given one.                                         |
+
 ## Contract
 
 These invariants hold across `src/core` / `src/browser` / `src/server` ↔
@@ -205,21 +245,23 @@ These invariants hold across `src/core` / `src/browser` / `src/server` ↔
 1. **DOC ↔ SOURCE bijection.** Every `function` / `class` / `interface` /
    `type` / `const` row in the `## Surface` tables is a real export of its
    source directory, and every export appears as a Surface row — exhaustive,
-   both directions (AGENTS §22).
+   both directions.
 2. **DOC ↔ SOURCE method bijection.** The `## Methods` tables list exactly
-   `RouterInterface`'s, `DispatcherInterface`'s, and `NavigatorInterface`'s
-   public methods — exhaustive, both directions — and `Router` / `Dispatcher`
-   / `Navigator` expose the same public methods, no more (AGENTS §22).
-3. **Path grammar.** Three segment kinds: literal (`/users`), param
+   `RouterInterface`'s, `GroupInterface`'s, `DispatcherInterface`'s,
+   `DispatchGroupInterface`'s, and `NavigatorInterface`'s public methods —
+   exhaustive, both directions — and `Router` / `Group` / `Dispatcher` /
+   `DispatchGroup` / `Navigator` expose the same public methods, no more.
+3. **Path grammar.** Segment kinds: literal (`/users`), param
    (`:name`, one segment), wildcard (`*name`, final segment only, captures
    the rest of the path including slashes). A wildcard anywhere but the
-   final segment throws `TypeError` at compile time (§14 boundary guard).
-4. **Precedence tiers.** Literal (`TIER_LITERAL`, 2) > param (`TIER_PARAM`, 1)
-   > wildcard (`TIER_WILDCARD`, 0), compared left-to-right at the earliest
-   > differing segment; registration-order-independent. A shorter pattern that
-   > is a prefix of a longer one ranks below it. Equal-specificity ties (only
-   > possible between distinct wildcard shapes) resolve to the earliest
-   > registered.
+   final segment throws a `ContractError` at compile time, guarded at the boundary.
+4. **Precedence tiers.** A literal segment (`TIER_LITERAL`, 2) outranks a
+   param (`TIER_PARAM`, 1), which outranks a wildcard (`TIER_WILDCARD`, 0).
+   Two matching routes compare left to right, and the higher tier at the
+   earliest differing segment wins, independent of registration order. A
+   shorter pattern that is a prefix of a longer one ranks below it. An
+   equal-specificity tie, possible only between distinct wildcard shapes,
+   resolves to the earliest registered.
 5. **Trailing slash is insensitive.** A single trailing slash on the request
    path is always optional, folded both at registration (`canonicalizePath`)
    and at match time — except the root `/` and the empty pattern, which are
@@ -227,10 +269,13 @@ These invariants hold across `src/core` / `src/browser` / `src/server` ↔
 6. **Case-sensitive by default.** `sensitive: true` (`Router`/`Dispatcher`
    construction) is the default; `sensitive: false` folds case during
    matching without altering the pattern's own stored casing.
-7. **Dedup via `key`.** When `RouterOptions.key` is set, an entry whose
-   computed key already exists REPLACES the prior entry in place (last write
+7. **Dedup with `key`.** When `RouterOptions.key` is set, an entry whose
+   computed key already exists replaces the prior entry in place (last write
    wins, no engine rebuild); `Dispatcher` always constructs its internal
-   `Router` with `key: (entry) => \`${entry.meta.method} ${entry.path}\``.
+   `Router` with `key: computeDispatchKey`, which pairs the route's method
+   with `canonicalizePath(entry.path)`, so two registrations differing only
+   by a trailing slash replace each other while different methods stay
+   distinct.
 8. **The `answers` seam.** `RouterInterface.match`'s optional
    `AnswerHandler<Meta>` predicate is the single native-override point both
    faces compose differently: the `Dispatcher` passes a method-check, the
@@ -248,13 +293,15 @@ These invariants hold across `src/core` / `src/browser` / `src/server` ↔
     (intended).** A final `*name` wildcard captures ANY trailing slash on the
     request path into its own captured value (`/files/a/b/` → `rest: 'a/b/'`)
     — unlike a `:name` param segment, whose own trailing slash is folded away
-    by the shared trailing-slash-insensitivity rule (§5 above). This is
+    by the shared trailing-slash-insensitivity rule stated earlier. This is
     deliberate: the wildcard's capture is "the rest of the path, verbatim,"
     including whatever trailing slash the caller sent.
 11. **Event map.** `DispatcherEventMap` carries `match` (emitted on every
-    dispatch that resolves to a handler, including derived `HEAD`/`OPTIONS`)
-    and `miss` (emitted on every non-matching dispatch, tagged
-    `'unmatched'`/`'unmethoded'` via its `reason` field) — AGENTS §13, no
+    dispatch the dispatcher answers, the derived `HEAD` and `OPTIONS` cases
+    included; for a derived `OPTIONS` answer the `pattern` is the
+    most-specific pattern the pathname resolved to) and `miss` (emitted on
+    every non-matching dispatch, tagged
+    `'unmatched'`/`'unmethoded'` through its `status` field) — no
     `error`/`observerError` domain event (listener errors route through the
     emitter's own `error` option).
 12. **Headless by design.** No `render`/`outlet`. The `Navigator` resolves,
@@ -265,7 +312,7 @@ These invariants hold across `src/core` / `src/browser` / `src/server` ↔
     `canonicalizePath` (last write wins, replace-in-place). `Navigator` never
     rebuilds matching logic of its own.
 14. **The history toggle.** `history: false` (default) reads/writes
-    `location.hash` and binds `hashchange`; `history: true` reads/writes via
+    `location.hash` and binds `hashchange`; `history: true` reads/writes through
     `pushState`/`popstate`, with an optional `base` path prefix stripped
     before matching and prepended when navigating. `intercept: true`
     (history mode only) adds same-origin `<a>` click interception — a plain
@@ -311,14 +358,14 @@ These invariants hold across `src/core` / `src/browser` / `src/server` ↔
 21. **Transport-level 500 is a last resort, not an error policy.**
     `createListener`'s handler wraps `dispatcher.handle` in a try/catch purely
     for the CONNECTION: when nothing has been sent yet, it writes a bare `500`
-    head and ends the response (never leaking a hanging socket); once headers
+    head and ends the response (never leaking a hanging socket); after headers
     are already sent, it destroys the connection outright. The router still
     owns no error POLICY — a consumer wanting mapped error responses installs
     its own boundary around `dispatcher.handle` directly; a handler throw is
     NEVER silently swallowed into a generic response by the core `Dispatcher`
-    itself (§9 above).
+    itself, as stated earlier.
 22. **Streaming both ways.** `buildRequest` streams a body-carrying method's
-    message into the `Request` via a manual `ReadableStream` pump — a `for
+    message into the `Request` through a manual `ReadableStream` pump — a `for
 await` loop over the `IncomingMessage` enqueueing each chunk, with
     `duplex: 'half'` set as Node's fetch implementation requires for a
     streamed request body; `sendResponse` streams a non-`null` `Response`
@@ -331,7 +378,7 @@ await` loop over the `IncomingMessage` enqueueing each chunk, with
 23. **Header fidelity.** `buildRequest` copies every incoming header
     (multi-value headers comma-joined, except `set-cookie`, appended
     individually); `sendResponse` writes every outgoing header and re-derives
-    `set-cookie` via `Headers.getSetCookie()` so multiple response cookies
+    `set-cookie` through `Headers.getSetCookie()` so multiple response cookies
     stay distinct instead of collapsing into one comma-joined header.
 
 ## Patterns
@@ -407,7 +454,7 @@ import { createDispatcher } from '@orkestrel/router'
 const dispatcher = createDispatcher({
 	on: {
 		match: (method, pattern) => console.log('matched', method, pattern),
-		miss: (method, pathname, reason) => console.log('missed', method, pathname, reason),
+		miss: (method, pathname, status) => console.log('missed', method, pathname, status),
 	},
 })
 dispatcher.add({ method: 'GET', path: '/health', handler: () => new Response('ok') })
@@ -416,16 +463,16 @@ await dispatcher.handle(new Request('http://x/missing'), undefined) // logs a 'm
 
 ### Typing a route input at the registration site
 
-`route(...)` is a pure identity pass-through with a `const Path extends
+`defineRoute(...)` is a pure identity pass-through with a `const Path extends
 string` generic — wrapping a route literal in it pins `Path` to the LITERAL
 string at the call site (instead of the widened `string` a bare intermediate
 binding would get), so `context.params` types correctly through
 `PathParams` even when the input is built before the `add` call:
 
 ```ts
-import { createDispatcher, route } from '@orkestrel/router'
+import { createDispatcher, defineRoute } from '@orkestrel/router'
 
-const input = route({
+const input = defineRoute({
 	method: 'GET',
 	path: '/users/:id',
 	handler: (_request, context) => new Response(context.params.id), // typed string
@@ -435,12 +482,12 @@ const dispatcher = createDispatcher()
 dispatcher.add(input)
 ```
 
-A heterogeneous `RouteInput[]` built by collecting several `route(...)`
+A heterogeneous `RouteInput[]` built by collecting several `defineRoute(...)`
 results still widens each element's `Path` to `string` the moment the array
 type is inferred — TypeScript has no per-element literal-preserving array
-type. The realistic ceiling `route` raises is PER-CALL typing at the
-registration site (a single `route({...})` or a direct `add({...})` call),
-not a stored, still-literal-typed array of route records.
+type. The realistic ceiling `defineRoute` raises is PER-CALL typing at the
+registration site (a single `defineRoute({...})` or a direct `add({...})`
+call), not a stored, still-literal-typed array of route records.
 
 ### Introspection and reset
 
@@ -480,8 +527,8 @@ const navigator = createNavigator({
 })
 navigator.emitter.on('navigate', (match) => (document.title = match.meta.title))
 navigator.start()
-navigator.navigate('/about')
-navigator.active?.path // '/about'
+navigator.match('/about')?.meta.title // 'About' — a pure lookup, no location read
+navigator.navigate('/about') // sets location.hash; `active` updates after the hashchange fires
 navigator.stop()
 navigator.destroy() // stop() plus tear down the #emitter
 ```
@@ -503,7 +550,7 @@ navigator.start() // binds popstate + same-origin <a> click interception
 ### Guarding navigation (auth walls)
 
 A guard may veto synchronously or asynchronously; a superseded guard's
-verdict is discarded via its own `signal`.
+verdict is discarded through its own `signal`.
 
 ```ts
 import { createNavigator } from '@orkestrel/router/browser'
@@ -585,11 +632,12 @@ const server = http.createServer((incoming, response) => {
 
 ### Practices
 
-- **One engine, two seams** — compose `Router` directly for a method-less
-  consumer (a `Navigator`), or through `Dispatcher` for method-dimensioned
-  fetch dispatch; never rebuild the matching logic per face (AGENTS §21).
-- **Guard the registration boundary, not the hot path** — `add` throws on a
-  malformed entry; `match`/`handle` carry zero guards (AGENTS §14).
+- **One engine, one seam per face** — compose `Router` directly for a
+  method-less consumer (a `Navigator`), or through `Dispatcher` for
+  method-dimensioned fetch dispatch; never rebuild the matching logic per
+  face.
+- **Guard the registration boundary, not the hot path** — `add` throws a
+  `ContractError` on a malformed entry; `match`/`handle` carry zero guards.
 - **Let handler throws propagate** — the dispatcher is not an error
   boundary; a consuming server installs its own around `handle`.
 - **Dedup with `key`, not manual lookups** — pass a `key` function instead of
@@ -617,7 +665,7 @@ const server = http.createServer((incoming, response) => {
 - [`tests/src/core/Router.test.ts`](../tests/src/core/Router.test.ts) —
   registration boundary guard, method-less matching, order-independent
   literal-over-param-over-wildcard precedence, wildcard capture, the
-  `answers` seam, `entries()` (all + filtered), dedup via `key`, case
+  `answers` seam, `entries()` (all + filtered), dedup through `key`, case
   sensitivity, and `RouterInterface` conformance.
 - [`tests/src/core/Group.test.ts`](../tests/src/core/Group.test.ts) —
   `Group` direct construction, prefix composition and nesting, batch
@@ -637,36 +685,48 @@ const server = http.createServer((incoming, response) => {
   trailing-slash folding, case sensitivity, the wildcard-not-final throw),
   `decodeParam` (including a malformed `%` escape), `matchPath`,
   `classifySegment` (the literal-vs-param classification fix regression
-  case), `computeSpecificity`, `compareSpecificity`, `joinPaths`, and `route`
-  (identity pass-through, literal `Path` preservation at the call site).
+  case), `computeSpecificity`, `compareSpecificity`, `joinPaths`, and
+  `defineRoute` (identity pass-through, literal `Path` preservation at the
+  call site).
+- [`tests/src/core/parsers.test.ts`](../tests/src/core/parsers.test.ts) —
+  `parseMethod` narrowing every registrable verb, rejecting an unknown verb
+  and the wrong casing, and accepting exactly the verbs `METHOD_LIST`
+  declares.
 - [`tests/src/core/factories.test.ts`](../tests/src/core/factories.test.ts) —
   `createRouter`/`createDispatcher` round-trips and factory return-type
   assertions.
 - [`tests/src/browser/Navigator.test.ts`](../tests/src/browser/Navigator.test.ts) —
   hash and history modes, `navigate()`/`active`/`navigate` event, fallback
   semantics, guard veto (sync + async, including supersede-discard), link
-  interception on/off, `start`/`stop`/`destroy` idempotence, and
-  `NavigatorInterface` conformance.
+  interception on/off, `start`/`stop`/`destroy` idempotence,
+  `NavigatorInterface` conformance, and the transcriptions of this guide's
+  `@orkestrel/router/browser` fences.
 - [`tests/src/browser/factories.test.ts`](../tests/src/browser/factories.test.ts) —
   `createNavigator` returns a working `NavigatorInterface`.
 - [`tests/src/browser/helpers.test.ts`](../tests/src/browser/helpers.test.ts) —
   `computeNavigationKey`, `extractHashPath`, `resolveLocationPath` (hash + history, with/without
   `base`), and `findAnchor` (including a click on a styled child inside an
   anchor).
+- [`tests/src/server/validators.test.ts`](../tests/src/server/validators.test.ts) —
+  `isEncryptedSocket` on an encrypted socket, a plain record, and every
+  off-shape value.
 - [`tests/src/server/helpers.test.ts`](../tests/src/server/helpers.test.ts) —
-  `isEncryptedSocket`, `buildRequest` fidelity (method, URL from `Host`,
-  headers including multi-value and `set-cookie`, body streaming, the
-  incomplete-request and complete-request response-side disconnect aborts,
-  plus normal-response signal/listener cleanup), `sendResponse` (status,
-  headers including `set-cookie`, streamed and empty bodies, a destroyed
-  target mid-stream), `handleListenerRequest`, and `createListener` end-to-end
-  round-trips over real `node:http` sockets.
+  `buildRequest` fidelity (method, URL from `Host`, headers including
+  multi-value and `set-cookie`, body streaming, the incomplete-request and
+  complete-request response-side disconnect aborts, plus normal-response
+  signal/listener cleanup) and `sendResponse` (status, headers including
+  `set-cookie`, streamed and empty bodies, a destroyed target mid-stream)
+  over real `node:http` sockets.
+- [`tests/src/server/handlers.test.ts`](../tests/src/server/handlers.test.ts) —
+  `handleListenerRequest` at the transport boundary and `createListener`
+  end-to-end round-trips (matched, 404, 405, auto-HEAD, auto-OPTIONS, a
+  handler throw, and per-request state) over real `node:http` sockets.
 
 ## See also
 
-- [`AGENTS.md`](../AGENTS.md) — the rules; §13 the Emitter pattern, §14
-  contract & validation architecture, §21 "one engine, native overrides",
-  §22 documentation-as-contracts.
+- [`AGENTS.md`](../AGENTS.md) — the rules: the Emitter pattern, the
+  contract & validation architecture, one engine with native overrides,
+  and documentation as contracts.
 - [`abort.md`](abort.md) — `@orkestrel/abort`, the supersede-safe guard
   cancellation primitive the Navigator composes, and the client-disconnect
   cancellation primitive the Listener composes.
