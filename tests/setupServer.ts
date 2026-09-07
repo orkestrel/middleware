@@ -16,14 +16,14 @@ import { createScratch } from '@orkestrel/test/server'
 // setup (this package has no protocol-upgrade concept) with the fixtures this
 // package's node-face suites actually need.
 
-/** A real PNG magic-byte header (8 bytes) — the shortest genuine PNG signature. */
+/** Carries a real PNG magic-byte header (8 bytes) — the shortest genuine PNG signature. */
 export const PNG_MAGIC = Uint8Array.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a])
 
-/** A real JPEG magic-byte header (3 bytes) — the shortest genuine JPEG signature. */
+/** Carries a real JPEG magic-byte header (3 bytes) — the shortest genuine JPEG signature. */
 export const JPEG_MAGIC = Uint8Array.from([0xff, 0xd8, 0xff])
 
 /**
- * The directories a second-filesystem probe reads, in the order it reads them.
+ * Lists the directories a second-filesystem probe reads, in the order it reads them.
  *
  * @remarks
  * `/dev/shm` is a tmpfs on a Linux host that mounts one, and the host temporary
@@ -71,14 +71,14 @@ export function resolveSecondDevicePath(reference: string): string | undefined {
 	return undefined
 }
 
-/** A map-backed in-memory asset source with a readonly record of requested keys. */
+/** Pairs a map-backed in-memory asset source with a readonly record of requested keys. */
 export interface AssetSourceFixtureInterface {
 	readonly source: AssetSourceInterface
 	readonly paths: readonly string[]
 }
 
 /**
- * Build an inert in-memory asset source for `createAssets` tests.
+ * Builds an inert in-memory asset source for `createAssets` tests.
  *
  * @param assets - The exact key-to-asset records the source exposes
  * @param fallback - Optional asset returned for every key absent from `assets`
@@ -102,7 +102,7 @@ export function createAssetSource(
 	}
 }
 
-/** A scratch-backed static fixture tree — the seeded directory plus its known file paths, ready for `createStatic` tests. */
+/** Holds a scratch-backed static fixture tree — the seeded directory plus its known file paths, ready for `createStatic` tests. */
 export interface StaticFixtureInterface {
 	readonly scratch: ScratchInterface
 	readonly indexPath: string
@@ -115,7 +115,7 @@ export interface StaticFixtureInterface {
 }
 
 /**
- * Build a real scratch-directory static-file fixture: nested directories, an
+ * Builds a real scratch-directory static-file fixture: nested directories, an
  * `index.html`, a dotfile, a binary file with real PNG magic bytes, a large
  * file (for Range tests), and a Windows-reserved-device-name file alongside
  * a merely reserved-LOOKING one — the seeded tree `createStatic`'s node-face
@@ -170,7 +170,7 @@ export function buildStaticFixture(): StaticFixtureInterface {
 	}
 }
 
-/** A scratch-backed fixture with a symlink INSIDE root pointing IN-root, and one pointing OUTSIDE root — for `createStatic`'s symlink-escape matrix. */
+/** Holds a scratch-backed fixture with a symlink INSIDE root pointing IN-root, and one pointing OUTSIDE root — for `createStatic`'s symlink-escape matrix. */
 export interface SymlinkFixtureInterface {
 	readonly scratch: ScratchInterface
 	readonly insideTarget: string
@@ -180,7 +180,7 @@ export interface SymlinkFixtureInterface {
 }
 
 /**
- * Build a real scratch-directory fixture with two symlinks: one inside the
+ * Builds a real scratch-directory fixture with two symlinks: one inside the
  * scratch root pointing to another file inside it (still served normally), and
  * one inside the scratch root pointing to a file OUTSIDE it (the escape
  * `createStatic` must refuse) — POSIX-only; the platform-gated caller is
@@ -223,7 +223,7 @@ export function buildSymlinkFixture(): SymlinkFixtureInterface {
 	}
 }
 
-/** A scratch-backed fixture with a subdirectory whose `index.html` is a symlink pointing OUTSIDE root — for `createStatic`'s directory-index symlink-escape case. */
+/** Holds a scratch-backed fixture with a subdirectory whose `index.html` is a symlink pointing OUTSIDE root — for `createStatic`'s directory-index symlink-escape case. */
 export interface DirectoryIndexFixtureInterface {
 	readonly scratch: ScratchInterface
 	readonly subdir: string
@@ -231,7 +231,7 @@ export interface DirectoryIndexFixtureInterface {
 }
 
 /**
- * Build a real scratch-directory fixture with a subdirectory whose
+ * Builds a real scratch-directory fixture with a subdirectory whose
  * `index.html` is a symlink to a file OUTSIDE the scratch root — the
  * directory-index escape `createStatic` must refuse; the platform-gated caller
  * is responsible for `it.runIf(process.platform !== 'win32')`.
@@ -310,14 +310,14 @@ export async function detectClosedHandle(handle: FileHandle): Promise<boolean> {
 	}
 }
 
-/** A `Request` carrying a real multipart body over a single-chunk stream, with an observable `cancelled` flag. */
+/** Pairs a `Request` carrying a real multipart body over a single-chunk stream with an observable `cancelled` flag. */
 export interface CancelTrackingRequestInterface {
 	readonly request: Request
 	readonly cancelled: { value: boolean }
 }
 
 /**
- * Build a multipart `Request` whose body is a CHUNKED, pull-driven
+ * Builds a multipart `Request` whose body is a CHUNKED, pull-driven
  * `ReadableStream` that records whether it was cancelled — the observable
  * hook `parseMultipartRequest`'s reader-cancellation contract needs, held here
  * so no suite reimplements the stream. Chunked
@@ -372,7 +372,7 @@ export function buildCancelTrackingMultipartRequest(
 	return { request: new Request('http://test.local/upload', init), cancelled }
 }
 
-/** One part of a real `multipart/form-data` body — either a text field or a file. */
+/** Names one part of a real `multipart/form-data` body — either a text field or a file. */
 export type MultipartPartInput =
 	| { readonly kind: 'field'; readonly name: string; readonly value: string }
 	| {
@@ -384,7 +384,7 @@ export type MultipartPartInput =
 	  }
 
 /**
- * Compose a real `multipart/form-data` request body from a list of parts —
+ * Composes a real `multipart/form-data` request body from a list of parts —
  * a genuine wire-format payload built on the framework's own boundary grammar
  * rather than a fabricated shortcut, with a caller-controllable `boundary` so
  * malformed-boundary test cases stay explicit.
@@ -438,7 +438,7 @@ export function buildMultipartBody(
 }
 
 /**
- * Build a `ReadableStream` that feeds `bytes` in fixed-size chunks.
+ * Builds a `ReadableStream` that feeds `bytes` in fixed-size chunks.
  *
  * @param bytes - The full payload the stream delivers, in order
  * @param chunkSize - The byte size fed per pull; defaults to 64
@@ -468,7 +468,7 @@ export function buildChunkedStream(bytes: Uint8Array, chunkSize = 64): ReadableS
 }
 
 /**
- * Build a `Request` carrying a real multipart body — composes
+ * Builds a `Request` carrying a real multipart body — composes
  * {@link buildMultipartBody} with a `POST` request the multipart battery can
  * stream-parse.
  *

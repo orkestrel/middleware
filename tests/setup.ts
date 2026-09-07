@@ -20,14 +20,14 @@ import { createDatabaseSessionStore, isSession, Session, sessionColumns } from '
 // primitives `@orkestrel/server` and vitest already provide (`compose`,
 // `readBody`) rather than re-deriving them.
 
-/** The default request-body byte cap the test harness's {@link createTestContext} applies. */
+/** Limits a test request's body to the default byte cap the test harness's {@link createTestContext} applies. */
 export const TEST_BODY_LIMIT = 1_048_576
 
-/** The signing secret every bearer, CSRF, and cookie-transport scenario shares. */
+/** Signs every bearer, CSRF, and cookie-transport scenario — the secret each one shares. */
 export const TEST_SECRET = 'test-secret'
 
 /**
- * Build a `Request` for a test — a tiny, centralized request builder so
+ * Builds a `Request` for a test — a tiny, centralized request builder so
  * scenario setup stays uniform across the battery suite.
  *
  * @param path - The request path (and optional query), joined onto a fixed test origin
@@ -44,7 +44,7 @@ export function buildRequest(path: string, init?: RequestInit): Request {
 }
 
 /**
- * Build a {@link MiddlewareContext} over a `Request` — `url`/`method` derived
+ * Builds a {@link MiddlewareContext} over a `Request` — `url`/`method` derived
  * from the request, a given `state` object threaded through in place, and a
  * `body()` backed by the peer's `readBody`, so no suite reimplements the
  * substrate's body-collection pipeline.
@@ -76,11 +76,11 @@ export function createTestContext<TState>(
 	}
 }
 
-/** The marker body {@link createEchoTerminal}'s default `Response` carries, for chain-reached assertions. */
+/** Marks {@link createEchoTerminal}'s default `Response` body, for chain-reached assertions. */
 export const ECHO_MARKER = 'echo'
 
 /**
- * Build a terminal handler for {@link runChain} that returns a fixed marker
+ * Builds a terminal handler for {@link runChain} that returns a fixed marker
  * `Response` — the default innermost handler for a composition scenario that
  * doesn't need its own route logic.
  *
@@ -98,7 +98,7 @@ export function createEchoTerminal<TState>(
 	return async () => new Response(ECHO_MARKER, { status })
 }
 
-/** A terminal handler that also RECORDS every request/context it was reached with — for asserting the chain reached the terminal, and with what. */
+/** Records every request/context this terminal handler was reached with — for asserting the chain reached the terminal, and with what. */
 export interface RecordingTerminalInterface<TState> {
 	readonly calls: ReadonlyArray<{
 		readonly request: Request
@@ -109,7 +109,7 @@ export interface RecordingTerminalInterface<TState> {
 }
 
 /**
- * Build a {@link RecordingTerminalInterface} — a real terminal handler, not a
+ * Builds a {@link RecordingTerminalInterface} — a real terminal handler, not a
  * mock, that records each invocation's `request` and `context` before answering
  * with the echo marker.
  *
@@ -139,7 +139,7 @@ export function createRecordingTerminal<TState>(status = 200): RecordingTerminal
 	}
 }
 
-/** A recording {@link NextFunction} — a real downstream continuation that records each call's substituted `request` before answering with a fixed `Response`. */
+/** Records each call's substituted `request` before answering with a fixed `Response` — a recording {@link NextFunction}, a real downstream continuation. */
 export interface RecordingNextInterface {
 	readonly calls: ReadonlyArray<Request | undefined>
 	readonly count: number
@@ -147,7 +147,7 @@ export interface RecordingNextInterface {
 }
 
 /**
- * Build a {@link RecordingNextInterface} — a real `NextFunction` recorder for
+ * Builds a {@link RecordingNextInterface} — a real `NextFunction` recorder for
  * driving a SINGLE middleware in isolation (without a full `compose` chain),
  * recording each call's optional substituted `Request`.
  *
@@ -178,7 +178,7 @@ export function createRecordingNext(response?: Response): RecordingNextInterface
 }
 
 /**
- * Run an ordered middleware chain around a `terminal` handler against one
+ * Runs an ordered middleware chain around a `terminal` handler against one
  * `request`/`context` — a thin invocation of `@orkestrel/server`'s own
  * `compose`, so test files call one helper instead of re-deriving the
  * invocation shape everywhere.
@@ -204,7 +204,7 @@ export function runChain<TState>(
 	return compose(middleware, terminal)(request, context)
 }
 
-/** A manually-advanced clock for limiter/session determinism, so no suite sleeps on the wall clock. */
+/** Advances a clock by hand for limiter/session determinism, so no suite sleeps on the wall clock. */
 export interface ManualClockInterface {
 	readonly clock: () => number
 	advance(ms: number): void
@@ -212,7 +212,7 @@ export interface ManualClockInterface {
 }
 
 /**
- * Build a {@link ManualClockInterface} — an injectable `() => number` time
+ * Builds a {@link ManualClockInterface} — an injectable `() => number` time
  * source a test advances explicitly, replacing every wall-clock sleep in the
  * limiter/session suites so each one stays deterministic and fast.
  *
@@ -240,7 +240,7 @@ export function createManualClock(start = 0): ManualClockInterface {
 }
 
 /**
- * Build a {@link Session} carrying one optional state entry — the scenario
+ * Builds a {@link Session} carrying one optional state entry — the scenario
  * builder every session proof drives, so a store or battery test states an id
  * and one distinguishing value instead of re-deriving the entity.
  *
@@ -286,7 +286,7 @@ export async function decompress(
 }
 
 /**
- * Build a body of `length` highly compressible bytes.
+ * Builds a body of `length` highly compressible bytes.
  *
  * @param length - The body's character length
  * @returns A single repeated character, so every codec clears its threshold
@@ -300,14 +300,14 @@ export function compressibleBody(length: number): string {
 	return 'a'.repeat(length)
 }
 
-/** A {@link SessionTransportInterface} that records every `write` and `clear` it was driven with. */
+/** Records every `write` and `clear` a {@link SessionTransportInterface} was driven with. */
 export interface RecordingTransportInterface extends SessionTransportInterface {
 	readonly written: ReadonlyArray<{ readonly response: Response; readonly id: string }>
 	readonly cleared: readonly Response[]
 }
 
 /**
- * Build a {@link RecordingTransportInterface} — a real header-backed session
+ * Builds a {@link RecordingTransportInterface} — a real header-backed session
  * transport that records each `write` and `clear` instead of standing in for one.
  *
  * @returns A {@link RecordingTransportInterface} carrying its own `x-test-session` header
@@ -340,14 +340,14 @@ export function createTestTransport(): RecordingTransportInterface {
 	}
 }
 
-/** A real in-memory database table paired with the {@link SessionStoreInterface} built over it. */
+/** Pairs a real in-memory database table with the {@link SessionStoreInterface} built over it. */
 export interface SessionStoreFixtureInterface {
 	readonly table: TableInterface<SessionRow>
 	readonly store: SessionStoreInterface<SessionInterface>
 }
 
 /**
- * Build a durable session store over a real in-memory database table — the
+ * Builds a durable session store over a real in-memory database table — the
  * scenario builder every `DatabaseSessionStore` proof drives, so a case states
  * its limits and reads the table directly rather than re-deriving the wiring.
  *

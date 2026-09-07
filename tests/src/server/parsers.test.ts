@@ -275,8 +275,8 @@ describe('parseMultipartRequest', () => {
 		const boundary = 'preamble-bnd'
 		const chunkSize = 4096
 		// Deliberately far larger than the cap ever lets through, so
-		// a passing "rejected before the source was exhausted" assertion is
-		// robust rather than tightly coupled to the exact chunk arithmetic.
+		// a passing "rejected before the source was exhausted" assertion holds
+		// for any chunk size rather than coupling to the exact chunk arithmetic.
 		const totalChunks = 100_000
 		let sent = 0
 		let rejectedDuringFeed = false

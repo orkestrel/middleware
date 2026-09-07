@@ -2,7 +2,7 @@ import { integerShape, jsonShape, stringShape } from '@orkestrel/contract'
 
 /**
  * Holds the `@orkestrel/database` column shape for a
- * {@link import('./types.js').SessionRow} table — pass as-is to
+ * {@link import('./types.js').SessionRow} table. Pass it as-is to
  * `createDatabase({ tables: { sessions: sessionColumns } })` so an app
  * declaring a durable session table never hand-writes the shape.
  *
