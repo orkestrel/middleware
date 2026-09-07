@@ -1,7 +1,10 @@
 import type { MultipartErrorCode, StaticOptions } from './types.js'
 import type { Encoding } from '@orkestrel/server'
 
-/** Holds the HTTP status `createMultipart` renders for each {@link MultipartErrorCode}. */
+/**
+ * Holds the HTTP status `createMultipart` renders for each {@link MultipartErrorCode}:
+ * `'limit'` is 413, `'malformed'` is 400, and `'rejected'` is 415.
+ */
 export const MULTIPART_STATUS: Readonly<Record<MultipartErrorCode, number>> = Object.freeze({
 	limit: 413,
 	malformed: 400,
@@ -18,44 +21,44 @@ export const MULTIPART_ERROR_BRAND: unique symbol = Symbol.for(
 	'@orkestrel/middleware.MultipartError',
 )
 
-/** Names `createStatic`'s default directory-index filename. */
+/** Names `'index.html'`, `createStatic`'s default directory-index filename. */
 export const DEFAULT_STATIC_INDEX = 'index.html'
 
-/** Names `createStatic`'s `fallback: true` default excluded path prefix. */
+/** Names `'/api'`, `createStatic`'s `fallback: true` default excluded path prefix. */
 export const DEFAULT_STATIC_FALLBACK_EXCLUDE = '/api'
 
-/** Names `createStatic`'s default policy for a path carrying a dotfile segment. */
+/** Names `'ignore'`, `createStatic`'s default policy for a path carrying a dotfile segment. */
 export const DEFAULT_STATIC_DOTFILES: NonNullable<StaticOptions['dotfiles']> = 'ignore'
 
 /**
- * Lists the content-codings the node face's `createCompression` offers — the two
- * `node:zlib` guarantees on every Node runtime, so this face never
+ * Lists `['gzip', 'deflate']`, the content-codings the node face's `createCompression`
+ * offers — what `node:zlib` guarantees on every Node runtime, so this face never
  * feature-detects.
  */
 export const NODE_COMPRESSION_ENCODINGS: readonly Encoding[] = Object.freeze(['gzip', 'deflate'])
 
-/** Names the MIME type served when a file extension has no known mapping. */
+/** Names `'application/octet-stream'`, the MIME type served when a file extension has no known mapping. */
 export const DEFAULT_CONTENT_TYPE = 'application/octet-stream'
 
-/** Holds `createMultipart`'s default per-file byte-size cap. */
+/** Holds `10_485_760`, `createMultipart`'s default per-file byte-size cap. */
 export const DEFAULT_MULTIPART_FILE_SIZE = 10_485_760
 
-/** Holds `createMultipart`'s default maximum file-part count. */
+/** Holds `10`, `createMultipart`'s default maximum file-part count. */
 export const DEFAULT_MULTIPART_FILE_COUNT = 10
 
-/** Holds `createMultipart`'s default per-field byte-size cap. */
+/** Holds `65_536`, `createMultipart`'s default per-field byte-size cap. */
 export const DEFAULT_MULTIPART_FIELD_SIZE = 65_536
 
-/** Holds `createMultipart`'s default maximum field-part count. */
+/** Holds `100`, `createMultipart`'s default maximum field-part count. */
 export const DEFAULT_MULTIPART_FIELD_COUNT = 100
 
-/** Holds `createMultipart`'s default combined request-body byte-size cap. */
+/** Holds `52_428_800`, `createMultipart`'s default combined request-body byte-size cap. */
 export const DEFAULT_MULTIPART_TOTAL = 52_428_800
 
-/** Holds the maximum bytes a single multipart part's header block may occupy before it is malformed. */
+/** Holds `16_384`, the maximum bytes a single multipart part's header block may occupy before it is malformed. */
 export const MULTIPART_MAX_HEADER_BLOCK = 16_384
 
-/** Holds the maximum bytes scanned before the first multipart boundary is found before it is malformed. */
+/** Holds `65_536`, the maximum bytes scanned before the first multipart boundary is found before it is malformed. */
 export const MULTIPART_MAX_PREAMBLE = 65_536
 
 /**

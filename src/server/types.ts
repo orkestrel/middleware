@@ -24,7 +24,7 @@ export interface Asset {
  */
 export interface AssetSourceInterface {
 	/**
-	 * Reads one asset representation.
+	 * Reads one identity or Brotli asset representation for a validated relative key.
 	 *
 	 * @param path - The validated relative asset path
 	 * @returns The asset, or `undefined` when the path is absent
@@ -100,7 +100,7 @@ export interface MultipartLimitsInput {
 }
 
 /**
- * Describes the per-category size/count caps `createMultipart` enforces MID-STREAM — the
+ * Describes the per-category size/count caps `createMultipart` enforces mid-stream — the
  * effective limits, every documented default already applied.
  *
  * @remarks

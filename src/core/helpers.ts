@@ -160,7 +160,7 @@ export function matchesTrustedEntry(address: string, entry: string): boolean {
 }
 
 /**
- * Walks `X-Forwarded-For` right-to-left and resolves the first UNTRUSTED hop
+ * Walks `X-Forwarded-For` right-to-left and resolves the first untrusted hop
  * address — `createForwarded`'s core algorithm.
  *
  * @remarks
@@ -328,7 +328,7 @@ export function isCompressionNegotiated(
 
 /**
  * Resolves an opt-in, value-bearing security header — `string | boolean`
- * (default OFF, `true` uses the secure default), the shape `createSecurity`'s
+ * (off by default, `true` uses the secure default), the shape `createSecurity`'s
  * `coep`/`hsts` options use, distinct from the plain value-or-`false` shape
  * `resolveSecurityHeader` (the peer substrate) handles.
  *
@@ -463,7 +463,7 @@ export function transferSessionState(from: SessionInterface, to: SessionInterfac
 }
 
 /**
- * Determines whether a request is a CORS PREFLIGHT — an `OPTIONS` request
+ * Determines whether a request is a CORS preflight — an `OPTIONS` request
  * carrying an `Access-Control-Request-Method` header.
  *
  * @param method - The request's HTTP method

@@ -1,12 +1,12 @@
 import type { Encoding } from '@orkestrel/server'
 
-/** Holds the default minimum buffered body size (bytes) `createCompression` will compress. */
+/** Holds `1024`, the default minimum buffered body size in bytes `createCompression` will compress. */
 export const DEFAULT_COMPRESSION_THRESHOLD = 1024
 
 /**
- * Lists the default content-codings `createCompression` offers, in preference order —
- * intersected at construction with what the runtime's `CompressionStream`
- * actually supports.
+ * Lists `['gzip', 'deflate']`, the default content-codings `createCompression` offers in
+ * preference order — intersected at construction with what the runtime's
+ * `CompressionStream` actually supports.
  *
  * @remarks
  * The shipped `@orkestrel/server` peer's {@link Encoding} union is
@@ -17,38 +17,38 @@ export const DEFAULT_COMPRESSION_THRESHOLD = 1024
  */
 export const DEFAULT_COMPRESSION_ENCODINGS: readonly Encoding[] = Object.freeze(['gzip', 'deflate'])
 
-/** Holds the default `X-Frame-Options` value `createSecurity` sets. */
+/** Holds `'DENY'`, the default `X-Frame-Options` value `createSecurity` sets. */
 export const DEFAULT_FRAME_OPTIONS = 'DENY'
 
 /**
  * Holds the default `Content-Security-Policy` value `createSecurity` sets — a custom
- * `csp` option REPLACES this wholesale, never merges.
+ * `csp` option replaces this wholesale, never merges.
  */
 export const DEFAULT_CSP =
 	"default-src 'self'; base-uri 'self'; object-src 'none'; frame-ancestors 'self'; form-action 'self'"
 
-/** Holds the default `Referrer-Policy` value `createSecurity` sets. */
+/** Holds `'strict-origin-when-cross-origin'`, the default `Referrer-Policy` value `createSecurity` sets. */
 export const DEFAULT_REFERRER_POLICY = 'strict-origin-when-cross-origin'
 
 /** Holds the default `Permissions-Policy` value `createSecurity` sets. */
 export const DEFAULT_PERMISSIONS_POLICY = 'camera=(), microphone=(), geolocation=()'
 
-/** Holds the default `Cross-Origin-Opener-Policy` value `createSecurity` sets. */
+/** Holds `'same-origin'`, the default `Cross-Origin-Opener-Policy` value `createSecurity` sets. */
 export const DEFAULT_COOP = 'same-origin'
 
-/** Holds the default `Cross-Origin-Resource-Policy` value `createSecurity` sets. */
+/** Holds `'same-origin'`, the default `Cross-Origin-Resource-Policy` value `createSecurity` sets. */
 export const DEFAULT_CORP = 'same-origin'
 
-/** Holds the default `Origin-Agent-Cluster` value `createSecurity` sets. */
+/** Holds `'?1'`, the default `Origin-Agent-Cluster` value `createSecurity` sets. */
 export const DEFAULT_CLUSTER = '?1'
 
-/** Holds the value `createSecurity` sets for `Cross-Origin-Embedder-Policy` when `coep: true`. */
+/** Holds `'require-corp'`, the value `createSecurity` sets for `Cross-Origin-Embedder-Policy` when `coep: true`. */
 export const DEFAULT_COEP = 'require-corp'
 
-/** Holds the value `createSecurity` sets for `Strict-Transport-Security` when `hsts: true`. */
+/** Holds `'max-age=31536000; includeSubDomains'`, the value `createSecurity` sets for `Strict-Transport-Security` when `hsts: true`. */
 export const DEFAULT_HSTS = 'max-age=31536000; includeSubDomains'
 
-/** Names the default header `createSecurity` mints/echoes a request identifier into. */
+/** Names `'x-request-id'`, the default header `createSecurity` mints or echoes a request identifier into. */
 export const DEFAULT_IDENTIFIER_HEADER = 'x-request-id'
 
 /** Lists the default methods `createCors` advertises on a preflight response. */
@@ -67,40 +67,40 @@ export const DEFAULT_CORS_HEADERS: readonly string[] = Object.freeze([
 	'Authorization',
 ])
 
-/** Holds the default response status `createDeadline` returns when its deadline fires first. */
+/** Holds `503`, the default response status `createDeadline` returns when its deadline fires first. */
 export const DEFAULT_DEADLINE_STATUS = 503
 
-/** Names the default header `createBearer` reads the token from. */
+/** Names `'authorization'`, the default header `createBearer` reads the token from. */
 export const DEFAULT_BEARER_HEADER = 'authorization'
 
-/** Names the default scheme prefix `createBearer` strips before verification. */
+/** Names `'Bearer'`, the default scheme prefix `createBearer` strips before verification. */
 export const DEFAULT_BEARER_SCHEME = 'Bearer'
 
-/** Holds the default maximum number of distinct rate-limit keys `createLimiter` tracks before LRU eviction. */
+/** Holds `10_000`, the default maximum number of distinct rate-limit keys `createLimiter` tracks before LRU eviction. */
 export const DEFAULT_LIMITER_CAPACITY = 10_000
 
-/** Holds the default maximum number of distinct session ids `createMemorySessionStore` tracks before LRU (by last write) eviction. */
+/** Holds `10_000`, the default maximum number of distinct session ids `createMemorySessionStore` tracks before LRU (by last write) eviction. */
 export const DEFAULT_SESSION_CAPACITY = 10_000
 
 /** Holds the default 429 body message `createLimiter` sends when a key is over budget. */
 export const DEFAULT_LIMITER_MESSAGE = 'rate limit exceeded'
 
-/** Names the default cookie `createCookieTransport` writes the signed session id under. */
+/** Names `'session'`, the default cookie `createCookieTransport` writes the signed session id under. */
 export const DEFAULT_SESSION_COOKIE = 'session'
 
-/** Names the default header `createHeaderTransport` carries the session id in. */
+/** Names `'session-id'`, the default header `createHeaderTransport` carries the session id in. */
 export const DEFAULT_SESSION_HEADER = 'session-id'
 
-/** Names the default signed cookie `createCSRF` writes the CSRF token under. */
+/** Names `'csrf'`, the default signed cookie `createCSRF` writes the CSRF token under. */
 export const DEFAULT_CSRF_COOKIE = 'csrf'
 
-/** Names the default header `createCSRF` reads a mutating request's submitted token from. */
+/** Names `'x-csrf-token'`, the default header `createCSRF` reads a mutating request's submitted token from. */
 export const DEFAULT_CSRF_HEADER = 'x-csrf-token'
 
-/** Names the default body field `createCSRF` falls back to reading a mutating request's submitted token from. */
+/** Names `'_csrf'`, the default body field `createCSRF` falls back to reading a mutating request's submitted token from. */
 export const DEFAULT_CSRF_FIELD = '_csrf'
 
-/** Lists the default methods `createCSRF` treats as safe (mint instead of verify). */
+/** Lists `['GET', 'HEAD', 'OPTIONS']`, the default methods `createCSRF` treats as safe (mint instead of verify). */
 export const DEFAULT_CSRF_SAFE_METHODS: readonly string[] = Object.freeze([
 	'GET',
 	'HEAD',

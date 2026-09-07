@@ -1,12 +1,19 @@
 # @orkestrel/middleware
 
-Batteries for the `@orkestrel/server` middleware seam — the frozen
-`MiddlewareHandler<TState>` / `compose` contract and its substrate ship
-policy-free; this package supplies the policies the server deliberately does
-not: boundary rendering, telemetry, compression, security headers, CORS,
-deadlines, trusted-proxy client facts, ETag, bearer auth, rate limiting, body
-parsing, sessions, CSRF, static files, and multipart uploads — each a typed
-`options => MiddlewareHandler<TState>` factory over the shipped seam.
+> Batteries for the `@orkestrel/server` middleware seam:
+> `create{Noun}(options) => MiddlewareHandler<TState>` factories for error
+> boundaries, telemetry, compression, security headers, CORS, deadlines,
+> trusted-proxy client facts, ETag, bearer authentication, rate limiting, body
+> parsing, sessions, and CSRF in the fetch-native core, plus in-memory assets,
+> static files, streaming multipart uploads, and a `node:zlib` compression
+> sibling in the node face.
+
+Mount the batteries your threat model needs over the `compose` seam: each one
+closes over its guarded options and returns a `MiddlewareHandler<TState>`, and
+its position in the chain decides what it can see. Read
+[`guides/middleware.md`](guides/middleware.md) for the ordering doctrine and
+the security acceptance bar before you fix an order. Part of the `@orkestrel`
+line.
 
 ## Install
 

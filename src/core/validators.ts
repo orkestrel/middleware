@@ -10,8 +10,8 @@ import { isRecord, isString } from '@orkestrel/contract'
  * Determines whether a value implements {@link SessionInterface} — a total
  * structural guard: an `id` string, a `state` `Map`, and the `set`, `delete`,
  * and `clear` mutators. Prototype-agnostic — accepts a plain object, a
- * null-prototype object, AND a class instance (a real `Session`), since a
- * restored/stored session is routinely a class instance, not a literal.
+ * null-prototype object, and a class instance (a real `Session`), because a
+ * restored or stored session is routinely a class instance rather than a literal.
  *
  * @param value - The candidate value
  * @returns True if `value` is shaped like a {@link SessionInterface}; false otherwise

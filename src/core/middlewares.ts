@@ -96,9 +96,20 @@ import { computeBodyETag, matchesETag } from '@orkestrel/server'
  * @returns A `MiddlewareHandler<TState>`
  * @throws {TypeError} When `options.expose` or `options.report` is malformed
  *
- * @example
+ * @example Mount a battery
  * ```ts
+ * import { createBoundary, createSecurity } from '@orkestrel/middleware'
+ * import type { IdentifierState } from '@orkestrel/middleware'
+ * import { compose } from '@orkestrel/server'
+ *
+ * interface State extends IdentifierState {}
+ *
  * const boundary = createBoundary({ expose: false })
+ * const security = createSecurity({ hsts: true })
+ *
+ * const handle = compose<State>([boundary, security], async (_request, context) => {
+ * 	return Response.json({ identifier: context.state.identifier })
+ * })
  * ```
  */
 export function createBoundary<TState>(options?: BoundaryOptions): MiddlewareHandler<TState> {
@@ -207,7 +218,8 @@ export function createCompression<TState>(options?: CompressionOptions): Middlew
 }
 
 /**
- * Creates the security-headers + request-identifier battery.
+ * Creates the security-headers + request-identifier battery — sets each documented
+ * header default, and mints or echoes a request identifier.
  *
  * @typeParam TState - The consumer's opaque per-request state type, must carry {@link IdentifierState}
  * @param options - See {@link SecurityOptions}
@@ -307,7 +319,8 @@ export function createSecurity<TState extends IdentifierState>(
 }
 
 /**
- * Creates the Cross-Origin Resource Sharing battery.
+ * Creates the Cross-Origin Resource Sharing battery — answers a preflight itself, and
+ * reflects an allow-listed origin or serves the configured wildcard.
  *
  * @typeParam TState - The consumer's opaque per-request state type
  * @param options - See {@link CorsOptions}
@@ -414,7 +427,8 @@ export function createDeadline<TState>(options: DeadlineOptions): MiddlewareHand
 }
 
 /**
- * Creates the trusted-proxy client-IP resolver battery.
+ * Creates the trusted-proxy client-IP resolver battery — walks `X-Forwarded-For` past
+ * the hops its options declare trusted.
  *
  * @typeParam TState - The consumer's opaque per-request state type, must carry {@link ClientState} and {@link ConnectionState}
  * @param options - See {@link ForwardedOptions}
@@ -453,7 +467,7 @@ export function createForwarded<TState extends ClientState & ConnectionState>(
 }
 
 /**
- * Creates the dynamic response `ETag` + conditional GET battery.
+ * Creates the dynamic response `ETag` + conditional GET battery (RFC 7232).
  *
  * @typeParam TState - The consumer's opaque per-request state type
  * @param options - See {@link ETagOptions}
@@ -490,7 +504,8 @@ export function createETag<TState>(options?: ETagOptions): MiddlewareHandler<TSt
 }
 
 /**
- * Creates the bearer-token authentication battery.
+ * Creates the bearer-token authentication battery — reads the token from its header and
+ * verifies it with `verifyToken`.
  *
  * @typeParam TState - The consumer's opaque per-request state type, must carry {@link BearerState}
  * @param options - See {@link BearerOptions}
@@ -535,7 +550,8 @@ export function createBearer<TState extends BearerState>(
 }
 
 /**
- * Creates the fixed-window rate-limiting battery.
+ * Creates the fixed-window rate-limiting battery — checks a key's budget before
+ * consuming it, so one window admits exactly `max` requests.
  *
  * @typeParam TState - The consumer's opaque per-request state type, must carry {@link BearerState}, {@link ClientState}, and {@link ConnectionState}
  * @param options - See {@link LimiterOptions}
@@ -856,8 +872,8 @@ export function createCSRF<TState extends CSRFState & SessionState & ConnectionS
 }
 
 /**
- * Scopes a battery to run ONLY on a set of exact pathnames — elsewhere it
- * steps aside through `next()`.
+ * Scopes a battery to a set of exact pathnames and nowhere else — outside that set
+ * it steps aside through `next()`.
  *
  * @typeParam TState - The consumer's opaque per-request state type
  * @param paths - One pathname, or a set of pathnames, matched exactly against `context.url.pathname`
@@ -881,8 +897,8 @@ export function only<TState>(
 }
 
 /**
- * Scopes a battery to run everywhere EXCEPT a set of exact pathnames — there
- * it steps aside through `next()`.
+ * Scopes a battery to every pathname outside a set of exact ones — on that set it
+ * steps aside through `next()`.
  *
  * @typeParam TState - The consumer's opaque per-request state type
  * @param paths - One pathname, or a set of pathnames, matched exactly against `context.url.pathname`

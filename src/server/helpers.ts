@@ -26,7 +26,7 @@ import {
 } from './constants.js'
 
 /**
- * Checks whether `pathname` is `prefix` itself or lies under it on a SEGMENT
+ * Checks whether `pathname` is `prefix` itself or lies under it on a segment
  * boundary — the shared under-path test `resolveStaticPath`'s prefix strip
  * and `createStatic`'s SPA-fallback `exclude` both apply, so `exclude:
  * '/api'` matches `/api` and `/api/x` but never `/apifoo`.
@@ -88,7 +88,7 @@ export function resolveStaticFallbackPath(
 
 /**
  * Checks whether `child` is `parent` itself or lies inside it on-disk — the
- * FILESYSTEM containment predicate `createStatic` applies to `fs.realpath`
+ * filesystem containment predicate `createStatic` applies to `fs.realpath`
  * output (never to a URL pathname — that is {@link isUnderPath}'s job).
  *
  * @remarks
@@ -116,11 +116,11 @@ export function isContainedPath(child: string, parent: string): boolean {
 }
 
 /**
- * Resolves a request pathname to an on-disk path UNDER `root`, or `undefined`
+ * Resolves a request pathname to an on-disk path under `root`, or `undefined`
  * when it cannot — the traversal guard, whose algorithm and order are exact:
  * strip `prefix` on a segment boundary → `decodeURIComponent` (a
  * malformed escape refuses, never throws) → reject a NUL byte → strip the
- * leading path separator FIRST (so a leading `..` survives `normalize` as a
+ * leading path separator first (so a leading `..` survives `normalize` as a
  * genuine climbing segment) → `normalize` → refuse any Windows reserved-
  * device-name segment ({@link isReservedDeviceName}) → `resolve` and require
  * the result under `root`.

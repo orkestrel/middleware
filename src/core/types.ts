@@ -311,8 +311,21 @@ export interface ClientState {
 export interface SessionInterface {
 	readonly id: string
 	readonly state: ReadonlyMap<string, unknown>
+	/**
+	 * Writes one key's value into the session's state.
+	 *
+	 * @param key - The state key to write
+	 * @param value - The value to store under `key`
+	 */
 	set(key: string, value: unknown): void
+	/**
+	 * Removes one key from the session's state.
+	 *
+	 * @param key - The state key to remove
+	 * @returns True when the session held `key`; false otherwise
+	 */
 	delete(key: string): boolean
+	/** Empties the state, leaving the session and its id alive. */
 	clear(): void
 }
 
@@ -327,7 +340,9 @@ export interface SessionInterface {
  * carries the session's `state` over, and invalidates the old id.
  */
 export interface SessionControlInterface {
+	/** Mints a fresh id, carries the session's `state` over, and invalidates the old id. */
 	regenerate(): void
+	/** Ends the session — deletes it from the store and clears its transport. */
 	destroy(): void
 }
 
@@ -377,8 +392,28 @@ export interface BodyState {
  * constructed with.
  */
 export interface SessionStoreInterface<S extends SessionInterface> {
+	/**
+	 * Reads a session by id, applying the idle and absolute expiry against `now`.
+	 *
+	 * @param id - The session id to read
+	 * @param now - The caller's clock reading the expiry is measured against
+	 * @returns The stored session, or `undefined` when it is absent or expired
+	 */
 	get(id: string, now: number): Promise<S | undefined>
+	/**
+	 * Persists a session under its own `id`, refreshing its idle window.
+	 *
+	 * @param session - The session to persist, keyed by its own `id`
+	 * @param now - The caller's clock reading stamped as the session's `seen`
+	 * @returns A promise that resolves once the session is stored
+	 */
 	set(session: S, now: number): Promise<void>
+	/**
+	 * Removes a session by id — a no-op on an absent id, never throws.
+	 *
+	 * @param id - The session id to remove
+	 * @returns A promise that resolves once the id is absent from the store
+	 */
 	delete(id: string): Promise<void>
 }
 
@@ -471,8 +506,24 @@ export type SessionRestoreFunction = (value: unknown) => SessionInterface | unde
  * without re-deriving connection facts itself.
  */
 export interface SessionTransportInterface {
+	/**
+	 * Reads the incoming session id from the request — `undefined` on any failure.
+	 *
+	 * @param request - The inbound request the credential travels on
+	 * @returns The session id, or `undefined` when none is present or readable
+	 */
 	read(request: Request): string | undefined | Promise<string | undefined>
+	/**
+	 * Writes a freshly minted or regenerated session id onto the response, together with
+	 * the request's encrypted-transport fact.
+	 *
+	 * @param response - The outgoing response the credential is written onto
+	 * @param id - The session id carried to the client
+	 * @param encrypted - Whether the request arrived over an encrypted transport
+	 * @returns Nothing, or a promise that resolves once the credential is written
+	 */
 	write(response: Response, id: string, encrypted: boolean): void | Promise<void>
+	/** Clears the transport's credential on `destroy()`. */
 	clear(response: Response): void
 }
 
