@@ -52,7 +52,7 @@ export function isUnderPath(pathname: string, prefix: string): boolean {
  * fallback.
  *
  * @remarks
- * `GET` and `HEAD` are both eligible, and resolve the SAME shell: `HEAD` is
+ * `GET` and `HEAD` are both eligible, and resolve the same shell: `HEAD` is
  * defined as `GET` without a body (RFC 9110 §9.3.2), so a navigation probe
  * that answered `404` while its `GET` answered `200` would report a resource
  * the very next request serves.
@@ -92,7 +92,7 @@ export function resolveStaticFallbackPath(
  * output (never to a URL pathname — that is {@link isUnderPath}'s job).
  *
  * @remarks
- * Argument order is `(child, parent)` — deliberately the OPPOSITE conceptual
+ * Argument order is `(child, parent)` — deliberately the opposite conceptual
  * order from {@link isUnderPath}`(pathname, prefix)`, so a call site cannot
  * casually swap one predicate in for the other. Built on `path.relative`,
  * this is separator-correct on both POSIX (`/`) and win32 (`\`) — unlike a
@@ -121,9 +121,9 @@ export function isContainedPath(child: string, parent: string): boolean {
  * strip `prefix` on a segment boundary → `decodeURIComponent` (a
  * malformed escape refuses, never throws) → reject a NUL byte → strip the
  * leading path separator first (so a leading `..` survives `normalize` as a
- * genuine climbing segment) → `normalize` → refuse any Windows reserved-
- * device-name segment ({@link isReservedDeviceName}) → `resolve` and require
- * the result under `root`.
+ * genuine climbing segment) → `normalize` → refuse any Windows
+ * reserved-device-name segment ({@link isReservedDeviceName}) → `resolve` and
+ * require the result under `root`.
  *
  * @param root - The absolute root directory every result must resolve under
  * @param prefix - An optional URL path prefix stripped on a segment boundary
@@ -201,7 +201,7 @@ export async function resolveContainedRealPath(
  *
  * @remarks
  * Normalizes superscript digits (`¹²³` → `123`) first, strips trailing dots
- * and spaces (Windows drops them), takes the STEM before the first `.`,
+ * and spaces (Windows drops them), takes the stem before the first `.`,
  * upper-cases it, and tests it against {@link RESERVED_DEVICE_NAMES}
  * (`CON PRN AUX NUL COM1-9 LPT1-9`) — an exact-stem match only, so
  * `console.js` and `nullable.css` are never flagged.
@@ -500,7 +500,7 @@ export async function unlinkStagedFiles(body: MultipartBody): Promise<void> {
  * response body routes through.
  *
  * @remarks
- * PULL-driven, not push-driven: the underlying node stream's async iterator
+ * Pull-driven, not push-driven: the underlying node stream's async iterator
  * is only advanced (`iterator.next()`) from inside `pull(controller)`, which
  * the web `ReadableStream` invokes exactly when its internal queue has room
  * for more data. Exactly one disk chunk is read and enqueued per `pull` —

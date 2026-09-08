@@ -18,7 +18,7 @@ import { isFiniteNumber, isFunction } from '@orkestrel/contract'
  * @remarks
  * `get` evicts a session whose idle time (`now - seen >= ttl`) or
  * absolute lifetime (`now - created >= lifetime`) has elapsed — the
- * lifetime check fires EVEN IF the session was continuously touched, since
+ * lifetime check fires even if the session was continuously touched, because
  * `created` is stamped once at the first `set` and preserved across every
  * later re-`set` of the same id. A live read touches `seen`. `delete` of
  * an absent id is a no-op.

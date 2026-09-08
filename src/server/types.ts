@@ -19,7 +19,7 @@ export interface Asset {
  * @remarks
  * A successful result is cached by `createAssets`; later source changes do
  * not alter that path's response. A miss may be read again on a later request.
- * `read` therefore owes a BOUNDED key set: that cache retains every
+ * `read` therefore owes a bounded key set: that cache retains every
  * successful result for the factory's lifetime and evicts nothing.
  */
 export interface AssetSourceInterface {
@@ -36,7 +36,7 @@ export interface AssetSourceInterface {
  * Configures `createAssets` — in-memory identity/Brotli asset serving.
  *
  * @remarks
- * - `source` — the required in-memory asset reader. It MUST answer a bounded
+ * - `source` — the required in-memory asset reader. It must answer a bounded
  *   key set and return `undefined` for every key outside it, because
  *   `createAssets` retains every successful result for the factory's lifetime
  *   and evicts nothing. A `source` that synthesizes a representation for an
@@ -51,14 +51,14 @@ export interface AssetOptions {
  * Configures `createStatic` — node `fs`-backed static file serving.
  *
  * @remarks
- * - `root` — the directory every request resolves under, resolved once at
- *   construction. REQUIRED.
+ * - `root` — the required directory every request resolves under, resolved
+ *   once at construction.
  * - `prefix` — a URL path prefix stripped (on a segment boundary) before
  *   resolving under `root`.
  * - `index` — the filename served for a directory hit and by the SPA
  *   fallback; defaults to {@link DEFAULT_STATIC_INDEX}. The fallback serves
- *   it whatever `dotfiles` is set to, because this path is operator-
- *   configured rather than request-derived.
+ *   it whatever `dotfiles` is set to, because this path is
+ *   operator-configured rather than request-derived.
  * - `dotfiles` — the policy for a path with a dotfile segment: `'ignore'`
  *   (falls through to `next()`), `'deny'` (403), or `'allow'` (serves it);
  *   defaults to {@link DEFAULT_STATIC_DOTFILES}.
@@ -67,7 +67,7 @@ export interface AssetOptions {
  * - `fallback` — SPA fallback: `false` (default, off), `true` (on, excluding
  *   {@link DEFAULT_STATIC_FALLBACK_EXCLUDE}), or `{ exclude }` for a custom
  *   excluded prefix. An eligible `GET` or `HEAD` navigation miss answers with
- *   `index` through the SAME handle-`fstat` header block a directly requested
+ *   `index` through the same handle-`fstat` header block a directly requested
  *   file answers through, so `cache`, `etag`, conditional revalidation,
  *   `HEAD`, and ranges are identical on both routes; `index` reaches the
  *   client through this route whatever `dotfiles` is set to.
@@ -127,7 +127,7 @@ export interface MultipartLimits {
  *
  * @remarks
  * - `limits` — see {@link MultipartLimitsInput}.
- * - `allowed` — a MIME allow-list validated against SNIFFED (not merely
+ * - `allowed` — a MIME allow-list validated against sniffed (not merely
  *   declared) bytes; an empty array allows nothing. Omitted ⇒ no type
  *   rejection.
  * - `directory` — the directory staged files are written to; defaults to
@@ -164,13 +164,13 @@ export type UploadStatus = 'staged' | 'moved'
  *
  * @remarks
  * - `field` — the multipart field name the file was submitted under.
- * - `name` — the client-declared filename (METADATA ONLY — never used to
+ * - `name` — the client-declared filename (metadata only — never used to
  *   build a filesystem path).
  * - `size` — the file's byte size.
- * - `mime` — the SNIFFED (magic-byte-detected) MIME type when a signature
+ * - `mime` — the sniffed (magic-byte-detected) MIME type when a signature
  *   matches; otherwise the part's declared `Content-Type`; otherwise
  *   {@link DEFAULT_CONTENT_TYPE}. Read `validated` to tell which.
- * - `validated` — `true` when a signature matched AND the sniffed type equals
+ * - `validated` — `true` when a signature matched and the sniffed type equals
  *   the declared `Content-Type`, so `mime` is the sniffed fact. `false` means
  *   `mime` may be the client-declared value.
  * - `status` — see {@link UploadStatus}.

@@ -47,10 +47,8 @@ const handle = compose<State>([boundary, security], async (_request, context) =>
 ```
 
 Each battery is a typed `options => MiddlewareHandler<TState>` factory that composes with
-the others through the frozen `@orkestrel/server` seam — mount boundary, telemetry,
-compression, security headers, CORS, rate limiting, sessions (with `MemorySessionStore` or
-`DatabaseSessionStore` over `@orkestrel/database`), CSRF, static files, and multipart uploads
-in any combination, scoped with `only()` / `except()` where needed.
+the others through the frozen `@orkestrel/server` seam, in any combination, scoped with
+`only()` and `except()` where needed.
 
 ## Guides
 

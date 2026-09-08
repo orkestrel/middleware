@@ -168,12 +168,12 @@ export function createAssets<TState>(options: AssetOptions): MiddlewareHandler<T
  * battery, answering conditional, ranged, and SPA-fallback requests.
  *
  * @remarks
- * Containment is enforced on CANONICAL paths, not merely the lexically
+ * Containment is enforced on canonical paths, not merely the lexically
  * resolved one: `options.root` is canonicalized once (memoized) and every
  * request's candidate path is re-canonicalized (`fs.realpath`) before it is
  * served, so a symlink whose target escapes `root` is refused (falls through
  * to `next()`) even though the lexical path resolved inside `root`. A
- * symlink that resolves to a target still INSIDE `root` is unaffected and
+ * symlink that resolves to a target still inside `root` is unaffected and
  * still serves normally. A dangling symlink (`realpath` throws `ENOENT`) or
  * any other `realpath` failure is treated as a miss — this battery never
  * throws or 500s on a symlink surprise. On a streamed response (a 200 or 206
@@ -324,7 +324,7 @@ export function createStatic<TState>(options: StaticOptions): MiddlewareHandler<
 				await shellHandle.close().catch(() => {})
 				return next()
 			}
-			// The shell answers through the SAME response block the primary path
+			// The shell answers through the same response block the primary path
 			// uses, so `cache`, `etag`, conditional revalidation, `HEAD`, and
 			// ranges are computed from the shell handle's own `fstat` and cannot
 			// diverge between a served file and the shell served in its place.
@@ -396,7 +396,7 @@ export function createStatic<TState>(options: StaticOptions): MiddlewareHandler<
  * {@link MultipartError} this battery's parser throws is re-thrown as an
  * {@link HTTPError} carrying the same status/message, so `createBoundary`
  * (or any HTTPError-aware renderer) maps it correctly without depending on
- * this node face's error type. Fail-closed on the DOWNSTREAM handler too: if
+ * this node face's error type. Fail-closed on the downstream handler too: if
  * `next()` throws, every still-`'staged'` uploaded file is unlinked
  * (best-effort) before the error is re-thrown, so an unhandled downstream
  * failure never leaks temp files. A normal return leaves staged files

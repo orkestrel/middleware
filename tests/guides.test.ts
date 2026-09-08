@@ -1,6 +1,6 @@
 // The consumer-side guides-parity drop-in: runs `@orkestrel/guide`'s checks against
 // this repo's own `guides/README.md` manifest. The constants that follow are this
-// package's own, and are the only part a sibling package changes.
+// package's own, as is the executed section that closes the file.
 
 import { describe, expect, it } from 'vitest'
 import {
@@ -21,6 +21,10 @@ import {
 import { readFileSync } from 'node:fs'
 import { requireValue } from '@orkestrel/test'
 import { readInventory } from '@orkestrel/test/server'
+import { compose } from '@orkestrel/server'
+import type { IdentifierState } from '@src/core'
+import { createBoundary, createSecurity } from '@src/core'
+import { buildRequest, createTestContext } from './setup.js'
 
 /** Every fence language this package's guides are allowed to use. */
 const FENCE_LANGUAGES = Object.freeze(['ts'])
@@ -260,3 +264,56 @@ for (const entry of manifest) {
 		})
 	})
 }
+
+// The EXECUTED half. Every preceding check reads a name — from the guide text or
+// from the barrel — and a name that resolves proves nothing about the sentence
+// beside it, so a fence whose comment claims a value the code contradicts passes
+// all of them. The cases here run the flagship fences and assert the values their
+// comments claim. Change a fence, change the transcription beside it. Each
+// transcription imports through `@src/core` where the fence imports through
+// `@orkestrel/middleware`: the barrel is the same surface, and the published
+// specifier is this package's own name.
+describe('flagship fences', () => {
+	const guideText = requireValue(files[GUIDE_SPEC], `Missing file: ${GUIDE_SPEC}`)
+
+	it('answers with the request identifier the composed security battery stamped', async () => {
+		// Transcribed from the titled `Mount a battery` fence and driven over one real
+		// request. The fence carries no comment claiming a value, so what it claims is
+		// what it builds: the composed chain reaches the handler, and the handler reads
+		// the identifier `createSecurity` stashed rather than an absent one. The
+		// response header is bound beside the body, because a stashed identifier the
+		// response never carries would satisfy the body on its own.
+		interface State extends IdentifierState {}
+
+		const boundary = createBoundary({ expose: false })
+		const security = createSecurity({ hsts: true })
+
+		const handle = compose<State>([boundary, security], async (_request, context) => {
+			return Response.json({ identifier: context.state.identifier })
+		})
+
+		const request = buildRequest('/')
+		const response = await handle(request, createTestContext<State>(request, {}))
+		const stamped = response.headers.get('x-request-id')
+
+		expect(response.status).toBe(200)
+		expect(stamped).not.toBeNull()
+		await expect(response.json()).resolves.toEqual({ identifier: stamped })
+		expect(response.headers.get('strict-transport-security')).toBe(
+			'max-age=31536000; includeSubDomains',
+		)
+	})
+
+	it('carries the fence lines the transcriptions copy', () => {
+		// The presence guards beside the transcriptions: they prove the transcribed
+		// lines are still the documented ones, and nothing about behavior. Binding the
+		// construction lines alone would leave the demonstration free to move under the
+		// transcription, so every line a case copies is bound.
+		expect(guideText).toContain('const boundary = createBoundary({ expose: false })')
+		expect(guideText).toContain('const security = createSecurity({ hsts: true })')
+		expect(guideText).toContain(
+			'const handle = compose<State>([boundary, security], async (_request, context) => {',
+		)
+		expect(guideText).toContain('return Response.json({ identifier: context.state.identifier })')
+	})
+})

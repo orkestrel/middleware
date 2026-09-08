@@ -21,7 +21,8 @@ export const DEFAULT_COMPRESSION_ENCODINGS: readonly Encoding[] = Object.freeze(
 export const DEFAULT_FRAME_OPTIONS = 'DENY'
 
 /**
- * Holds the default `Content-Security-Policy` value `createSecurity` sets — a custom
+ * Holds `"default-src 'self'; base-uri 'self'; object-src 'none'; frame-ancestors 'self'; form-action 'self'"`,
+ * the default `Content-Security-Policy` value `createSecurity` sets — a custom
  * `csp` option replaces this wholesale, never merges.
  */
 export const DEFAULT_CSP =
@@ -30,7 +31,7 @@ export const DEFAULT_CSP =
 /** Holds `'strict-origin-when-cross-origin'`, the default `Referrer-Policy` value `createSecurity` sets. */
 export const DEFAULT_REFERRER_POLICY = 'strict-origin-when-cross-origin'
 
-/** Holds the default `Permissions-Policy` value `createSecurity` sets. */
+/** Holds `'camera=(), microphone=(), geolocation=()'`, the default `Permissions-Policy` value `createSecurity` sets. */
 export const DEFAULT_PERMISSIONS_POLICY = 'camera=(), microphone=(), geolocation=()'
 
 /** Holds `'same-origin'`, the default `Cross-Origin-Opener-Policy` value `createSecurity` sets. */
@@ -82,7 +83,7 @@ export const DEFAULT_LIMITER_CAPACITY = 10_000
 /** Holds `10_000`, the default maximum number of distinct session ids `createMemorySessionStore` tracks before LRU (by last write) eviction. */
 export const DEFAULT_SESSION_CAPACITY = 10_000
 
-/** Holds the default 429 body message `createLimiter` sends when a key is over budget. */
+/** Holds `'rate limit exceeded'`, the default 429 body message `createLimiter` sends when a key is over budget. */
 export const DEFAULT_LIMITER_MESSAGE = 'rate limit exceeded'
 
 /** Names `'session'`, the default cookie `createCookieTransport` writes the signed session id under. */

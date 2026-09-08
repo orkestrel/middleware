@@ -30,7 +30,7 @@ import { sessionExpired, snapshotSession, validateSessionLimits } from '../helpe
  * {@link MemorySessionStore}. `delete` of an absent id is a no-op (the
  * table's `remove` contract).
  *
- * A malformed-snapshot or failed-guard `undefined` LEAVES the row in place —
+ * A malformed-snapshot or failed-guard `undefined` leaves the row in place —
  * unlike the expired path, which removes it. This is deliberate: a
  * caller-contextual guard may reject a session that is still perfectly
  * valid for another flow reading the same table (a differently-shaped `S`,

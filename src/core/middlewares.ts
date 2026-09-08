@@ -373,7 +373,7 @@ export function createCors<TState>(options?: CorsOptions): MiddlewareHandler<TSt
  * @throws {TypeError} When `options.ms` or `options.status` is malformed
  *
  * @remarks
- * MUST sit OUTSIDE `createBody` in the chain — it reconstructs the inbound
+ * Mount this battery outside `createBody` in the chain — it reconstructs the inbound
  * `Request` (to link its `signal` to the deadline `signal`), which throws if
  * the body was already consumed upstream (for example by `createBody`'s cached read).
  *
@@ -655,7 +655,7 @@ export function createLimiter<TState extends BearerState & ClientState & Connect
  * The shipped `MiddlewareContext.body()` is a parameterless, server-owned
  * cache (`ServerOptions.limit` governs its size cap) — this battery carries
  * no `limit`/`decompression` options. `state.body` is
- * stashed from the SAME awaited call the 400 check reads — `context.body()`
+ * stashed from the same awaited call the 400 check reads — `context.body()`
  * is never invoked twice.
  *
  * @example

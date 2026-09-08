@@ -115,7 +115,7 @@ export function buildRateLimitPolicyField(max: number, window: number): string {
  * never claims full CIDR generality beyond IPv4.
  *
  * @remarks
- * An IPv6 `trusted` roster entry is compared as an EXACT string — it must be
+ * An IPv6 `trusted` roster entry is compared as an exact string — it must be
  * supplied in canonical form (no zero-compression normalization, no case
  * folding) by the caller; this function performs no IPv6 normalization of
  * its own.
@@ -166,7 +166,7 @@ export function matchesTrustedEntry(address: string, entry: string): boolean {
  * @remarks
  * Parses `X-Forwarded-For` only. With `proxies` set, trusts exactly that
  * many hops counted from the right (the closest to this server) and returns
- * the next one left of them; with `trusted` set, trusts every CONSECUTIVE
+ * the next one left of them; with `trusted` set, trusts every consecutive
  * hop from the right that matches one of the roster
  * ({@link matchesTrustedEntry}) and returns the first hop that does not. If
  * the rightmost hop (the immediate sender) does not match the roster, the
@@ -176,7 +176,7 @@ export function matchesTrustedEntry(address: string, entry: string): boolean {
  * socket peer).
  *
  * @param header - The raw `X-Forwarded-For` header value (comma-separated hops), if present
- * @param trust - The {@link ForwardedOptions} form in force — a trusted hop COUNT or a `trusted` CIDR/exact roster
+ * @param trust - The {@link ForwardedOptions} form in force — a trusted hop count or a `trusted` CIDR/exact roster
  * @returns The first untrusted hop address, or `undefined` when none qualifies
  *
  * @example
@@ -272,16 +272,17 @@ export async function compressBytes(
 }
 
 /**
- * Checks whether a response is eligible for the compression/ETag buffering pipeline
+ * Checks whether a response must skip the compression and ETag buffering pipeline
  * — the shared cheap-skip predicate both batteries apply before ever touching
- * `response.arrayBuffer()`.
+ * `response.arrayBuffer()`, true for a `HEAD` request, a `204`/`304` or
+ * otherwise bodyless response, an `event-stream` response, and a response
+ * already carrying the header the caller is about to set.
  *
  * @remarks
- * Skips a `HEAD` request, a `204`/`304` or otherwise bodyless response, an
- * `event-stream` response (SSE — buffering would hang the connection), and a
- * response that already carries the header the caller is about to set
- * (`skipHeader`, for example `Content-Encoding` for compression, `ETag` for the
- * ETag battery).
+ * Buffering an `event-stream` response would hang the connection, so SSE skips
+ * whatever its size. `skipHeader` is the header whose presence already answers
+ * the question — `Content-Encoding` for compression, `ETag` for the ETag
+ * battery.
  *
  * @param method - The request's HTTP method
  * @param response - The candidate response
@@ -391,7 +392,7 @@ export function rebuildResponse(
  * even when a later skip declines to compress) → `negotiateEncoding` over
  * `options.encodings` → {@link isCompressionNegotiated} → `isCompressibleType`
  * on `Content-Type` → a fast skip when the response already carries a
- * numeric `Content-Length` BELOW `options.threshold` (avoids buffering a
+ * numeric `Content-Length` below `options.threshold` (avoids buffering a
  * body known too small to be worth compressing) → buffer through
  * `response.arrayBuffer()` → a threshold passthrough when the buffered size
  * is still below `options.threshold` → `options.compress` → set
@@ -582,7 +583,7 @@ export function validateSessionLimits(limits: SessionLimits | undefined): void {
  * @remarks
  * `state` is built on a null-prototype object (`Object.create(null)`), never
  * a `{}` literal — a session key literally named `__proto__` must round-trip
- * as an OWN enumerable property instead of hitting `Object.prototype`'s
+ * as an own enumerable property instead of hitting `Object.prototype`'s
  * `__proto__` accessor (which would silently drop the entry and risk
  * polluting the shared prototype).
  *

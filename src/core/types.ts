@@ -59,7 +59,7 @@ export interface TelemetryOptions {
  * - `threshold` — the minimum buffered body size (bytes) worth compressing;
  *   defaults to {@link DEFAULT_COMPRESSION_THRESHOLD}.
  * - `encodings` — the codings offered, in preference order, intersected at
- *   CONSTRUCTION with what the runtime's `CompressionStream` actually
+ *   construction with what the runtime's `CompressionStream` actually
  *   supports; defaults to {@link DEFAULT_COMPRESSION_ENCODINGS}.
  * - `filter` — an optional per-response opt-out predicate (the BREACH
  *   posture escape hatch); a response the predicate declines is never
@@ -121,11 +121,11 @@ export type SecurityIdentifierOptions = { readonly trust?: boolean } | false
  * - `coop` — `Cross-Origin-Opener-Policy`; default {@link DEFAULT_COOP}.
  * - `corp` — `Cross-Origin-Resource-Policy`; default {@link DEFAULT_CORP}.
  * - `cluster` — `Origin-Agent-Cluster`; default {@link DEFAULT_CLUSTER}.
- * - `coep` — `Cross-Origin-Embedder-Policy`; `string | boolean`, OFF by
+ * - `coep` — `Cross-Origin-Embedder-Policy`; `string | boolean`, off by
  *   default (opt-in, breaks cross-origin subresources); `true` → {@link DEFAULT_COEP}.
- * - `hsts` — `Strict-Transport-Security`; `string | boolean`, OFF by default
+ * - `hsts` — `Strict-Transport-Security`; `string | boolean`, off by default
  *   (opt-in, destructive if misconfigured); `true` → {@link DEFAULT_HSTS}.
- * - `identifier` — {@link SecurityIdentifierOptions}; ON by default (mints
+ * - `identifier` — {@link SecurityIdentifierOptions}; on by default (mints
  *   and stashes {@link IdentifierState}).
  */
 export interface SecurityOptions {
@@ -176,8 +176,8 @@ export interface DeadlineOptions {
  * Configures `createForwarded` — the trusted-proxy client-IP resolver.
  *
  * @remarks
- * Construction requires EXACTLY ONE of the two forms (a `TypeError` guards
- * both-set and neither-set):
+ * Construction requires either `proxies` or `trusted`, never both and never
+ * neither (a `TypeError` guards each):
  * - `proxies` — trust exactly this many hops from the right of
  *   `X-Forwarded-For` / `Forwarded`.
  * - `trusted` — trust every hop matching one of these CIDR entries.
@@ -205,9 +205,9 @@ export interface ETagOptions {
  *   token against (rotation-aware).
  * - `header` — the header the token is read from; defaults to
  *   {@link DEFAULT_BEARER_HEADER}.
- * - `scheme` — the scheme prefix stripped before verification (case-
- *   insensitive); defaults to {@link DEFAULT_BEARER_SCHEME}. An empty string
- *   means the whole header value is the raw token.
+ * - `scheme` — the scheme prefix stripped before verification
+ *   (case-insensitive); defaults to {@link DEFAULT_BEARER_SCHEME}. An empty
+ *   string means the whole header value is the raw token.
  */
 export interface BearerOptions {
 	readonly secret: TokenSecret
@@ -334,7 +334,7 @@ export interface SessionInterface {
  * session itself — the OWASP anti-fixation / logout primitives.
  *
  * @remarks
- * `regenerate` and `destroy` record intent SYNCHRONOUSLY when called; the
+ * `regenerate` and `destroy` record intent synchronously when called; the
  * store I/O and transport write happen after the handler's `next()` returns
  * (`destroy` supersedes a prior `regenerate`). `regenerate` mints a new id,
  * carries the session's `state` over, and invalidates the old id.
@@ -497,7 +497,7 @@ export type SessionRestoreFunction = (value: unknown) => SessionInterface | unde
  *
  * @remarks
  * `read` is total (a malformed/tampered credential resolves `undefined`,
- * never throws). `write` and `clear` mutate the RETURNED `Response` on the
+ * never throws). `write` and `clear` mutate the returned `Response` on the
  * way out — the returning onion makes "before send" automatic. `write` is
  * called only when a session is freshly minted or regenerated; `clear` is
  * called on `destroy()`. `write`'s `encrypted` flag is the request's resolved
@@ -539,10 +539,10 @@ export interface SessionTransportInterface {
  *   `createMemorySessionStore({ ttl, lifetime, capacity, evict })`.
  * - `ttl` — the idle timeout in milliseconds.
  * - `lifetime` — the absolute session lifetime in milliseconds from mint.
- * - `capacity` — the maximum number of distinct session ids the DEFAULT
+ * - `capacity` — the maximum number of distinct session ids the default
  *   memory store tracks before LRU eviction; ignored when `store` is
  *   provided. Defaults to {@link DEFAULT_SESSION_CAPACITY}.
- * - `evict` — invoked with a session id evicted by the DEFAULT memory
+ * - `evict` — invoked with a session id evicted by the default memory
  *   store's own policy; ignored when `store` is provided. It is a
  *   notification sink only — it must never call back into the store
  *   (no re-entrant `get`/`set`); mutations during eviction are unsupported.
