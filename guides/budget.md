@@ -1,14 +1,15 @@
 # Budget
 
-> The cost primitive: a cumulative consumption tally against a ceiling that exposes an `AbortSignal` firing the moment the budget is **exhausted**. You charge a `Budget<T>` as work spends — `consume(value)` adds to a running `consumed` total — and race its `signal` against that work to cap how much it may burn (tokens, bytes, calls). When `consumed` crosses `max`, `signal` aborts; fold it into a loop's bound so the loop stops generating after the budget is spent.
->
-> This is the substrate's third bounding signal, a peer to a cancellation signal (fires on `abort()`) and a deadline signal (fires on expiry). All three are plain `AbortSignal`s by design, so an agent loop combines them into one bound with `AbortSignal.any([abort, timeout, budget])` and reacts to whichever trips first — cancel, deadline, or cost. A budget deliberately carries no Emitter, clock, or I/O: its native signal is the complete observation boundary. It is a functional counter with a signal bolted to its ceiling — nothing more, so the surface stays small.
->
-> Source: [`src/core`](../src/core). Surfaced through the `@src/core` barrel.
+> The cost primitive: a cumulative consumption tally against a ceiling that exposes an
+> `AbortSignal` firing the moment `consumed` reaches `max`.
+
+A budget handle is what an agent loop holds to keep a whole run inside one cost limit, in place of a cost check written at every call site. Hand its `signal` to the work, race that signal against a call, or fold it into a loop's bound. You define what is spent — tokens, bytes, dollars, or calls — so the same handle covers a provider's token usage and a pipeline's byte throughput.
+
+A budget is the substrate's third bounding signal, a peer to a cancellation signal (fires on `abort()`) and a deadline signal (fires on expiry). All three are plain `AbortSignal`s by design, so an agent loop combines them into one bound with `AbortSignal.any([abort, timeout, budget])` and reacts to whichever trips first — cancel, deadline, or cost. The primitive deliberately carries no Emitter, clock, or I/O: its native signal is the complete observation boundary. It is a functional counter with a signal bolted to its ceiling — nothing more, so the surface stays small. Source: [`src/core`](../src/core). Surfaced through the `@src/core` barrel.
 
 ## Surface
 
-Create a cost handle, `start()` it, and race its `signal` against work; `consume(value)` to charge the tally as work spends:
+Create a cost handle, `start()` it, and charge it as the work spends:
 
 ```ts
 import { createBudget } from '@orkestrel/budget'
@@ -20,49 +21,53 @@ budget.consume(4_000) // remaining 6_000
 budget.consume(7_000) // crosses 10_000 — fires `signal`
 ```
 
-**What happens:** `consume(value)` runs your consumer first, validates its result as a finite nonnegative charge, and atomically adds it to `consumed`; the moment cumulative `consumed` reaches `max`, `exhausted` flips `true` and `signal` fires — exactly once. A valid charge may overshoot the ceiling. A thrown consumer, invalid charge, or nonfinite cumulative overflow leaves the tally and signal unchanged. `consumed` is the lifetime spend and only ever grows after successful consumption. `start()` re-arms a fresh per-request `signal` WITHOUT resetting `consumed`, so the ceiling stays one running total across many requests; a budget already at or past `max` arms an immediately-aborted signal, bounding the next request from its first tick. `remaining` is `max - consumed` floored at zero, and `exhausted` is simply `consumed >= max` — both are live reads off the same counter.
+**What happens:** `consume(value)` runs your consumer first, validates its result as a finite nonnegative charge, and atomically adds it to `consumed`; the moment cumulative `consumed` reaches `max`, `exhausted` flips `true` and `signal` fires — exactly once. A valid charge may overshoot the ceiling. A thrown consumer, invalid charge, or nonfinite cumulative overflow leaves the tally and signal unchanged. `consumed` is the lifetime spend and only ever grows after successful consumption. `start()` re-arms a fresh per-request `signal` WITHOUT resetting `consumed`, so the ceiling stays one running total across many requests; a budget already at or past `max` arms an immediately-aborted signal, bounding the next request from its first tick. `remaining` is `max - consumed` floored at zero, and `exhausted` is `consumed >= max` — both are live reads off the same counter.
 
 **Options:** pass a parent `signal` to link an external cancel — the exposed `signal` then fires on EITHER exhaustion OR the parent aborting (through `AbortSignal.any`) and preserves the first reason. Pass a string `id` to label a handle for tracing, or omit it for a random UUID. Construction strictly requires a plain options record, a finite nonnegative `max`, a function `consumer`, and a native `AbortSignal` when `signal` is present. Invalid JavaScript-boundary input throws a structured `ContractError`. `max: 0` is derived as exhausted immediately, while its signal remains un-aborted until `start()` or `consume()` applies the ceiling.
 
 ### Factories
 
-| API                   | Kind     | Summary                                                                                                             |
-| --------------------- | -------- | ------------------------------------------------------------------------------------------------------------------- |
-| `createBudget`        | function | Create a `BudgetInterface<T>` for `max` with a `consumer`, optionally a trace `id` and a parent `signal`.           |
-| `createTokenConsumer` | function | Create a unary consumer that charges one selected `TokenUsage` field.                                               |
-| `createTokenBudget`   | function | Create a `BudgetInterface<TokenUsage>` charging a chosen `scope` field (`completion` default / `total` / `prompt`). |
+| API                   | Kind     | Summary                                                                                                                                                            |
+| --------------------- | -------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `createBudget`        | function | Creates a cumulative budget as a `BudgetInterface<T>` over a `max` ceiling and a `consumer`, whose native signal aborts the moment the tally reaches that ceiling. |
+| `createTokenConsumer` | function | Creates a validated unary consumer that charges one selected `TokenUsage` field.                                                                                   |
+| `createTokenBudget`   | function | Creates a token budget as a `BudgetInterface<TokenUsage>` charging one validated `scope` field per provider call.                                                  |
 
 ### Validators
 
-| API              | Kind     | Summary                                                                 |
-| ---------------- | -------- | ----------------------------------------------------------------------- |
-| `isBudgetAmount` | function | Guard a finite nonnegative numeric budget amount.                       |
-| `isBudgetSignal` | function | Guard a genuine native `AbortSignal` without throwing on hostile input. |
-| `isTokenScope`   | function | Guard a supported `TokenScope` field selector.                          |
-| `isTokenUsage`   | function | Guard three finite nonnegative token counts without throwing.           |
+In a guard table a `Shape` cell holds the type the guard narrows to.
+
+| API              | Kind     | Shape         | Summary                                                                                                                              |
+| ---------------- | -------- | ------------- | ------------------------------------------------------------------------------------------------------------------------------------ |
+| `isBudgetAmount` | function | `number`      | Determines whether a value is a finite nonnegative budget amount.                                                                    |
+| `isBudgetSignal` | function | `AbortSignal` | Determines whether a value is a genuine native `AbortSignal`, returning `false` rather than throwing on hostile input.               |
+| `isTokenScope`   | function | `TokenScope`  | Determines whether a value is a supported `TokenScope` field selector.                                                               |
+| `isTokenUsage`   | function | `TokenUsage`  | Determines whether a value is readable token usage carrying three finite nonnegative counts, returning `false` rather than throwing. |
 
 ### Helpers
 
-| API                          | Kind     | Summary                                                                                        |
-| ---------------------------- | -------- | ---------------------------------------------------------------------------------------------- |
-| `validateBudgetOptions`      | function | Validate once-read budget options and return a fresh copy omitting absent optional keys.       |
-| `validateTokenBudgetOptions` | function | Validate once-read token-budget options and return a fresh copy omitting absent optional keys. |
+| API                          | Kind     | Summary                                                                                                       |
+| ---------------------------- | -------- | ------------------------------------------------------------------------------------------------------------- |
+| `validateBudgetOptions`      | function | Validates and normalizes budget construction options into a fresh copy that omits absent optional keys.       |
+| `validateTokenBudgetOptions` | function | Validates and normalizes token-budget construction options into a fresh copy that omits absent optional keys. |
 
-### Entities
+### Classes
 
-| API      | Kind  | Summary                                                                                        |
-| -------- | ----- | ---------------------------------------------------------------------------------------------- |
-| `Budget` | class | A cumulative consumption tally whose `signal` fires when `consumed` reaches the `max` ceiling. |
+| API      | Kind  | Summary                                                                                                                                                        |
+| -------- | ----- | -------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `Budget` | class | Implements `BudgetInterface` over a private `AbortController` the instance owns, aborting the composed signal the moment `consumed` reaches the `max` ceiling. |
 
 ### Types
 
-| Type                 | Kind      | Shape                                                                                                                                |
-| -------------------- | --------- | ------------------------------------------------------------------------------------------------------------------------------------ |
-| `BudgetOptions`      | interface | `{ id?: string; max: number; consumer: (value: T) => number; signal?: AbortSignal }` — options for `createBudget` / the constructor. |
-| `TokenBudgetOptions` | interface | `{ id?: string; max: number; scope?: 'completion' \| 'total' \| 'prompt'; signal?: AbortSignal }` — options for `createTokenBudget`. |
-| `BudgetInterface`    | interface | `id` / `signal` / `max` / `consumed` / `remaining` / `exhausted` data members + the `start` / `consume` / `clear` methods.           |
-| `TokenScope`         | type      | `'completion' \| 'total' \| 'prompt'` — the exported token-usage field selector.                                                     |
-| `TokenUsage`         | interface | `{ prompt: number; completion: number; total: number }` — the canonical LLM cost unit, the typical `T` for an agent budget.          |
+A `Shape` cell holds an interface's data members as bare names in braces, `?` marking an optional member and `plus` introducing its call-signature members, and a type alias's own type literal with a union's arms escaped as `\|`.
+
+| Type                 | Kind      | Shape                                                                            | Summary                                                                                                                                                         |
+| -------------------- | --------- | -------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `BudgetOptions`      | interface | `{ id?, max, consumer, signal? }`                                                | Represents the options for constructing a cumulative budget, accepted by the `createBudget` function and the `Budget` constructor.                              |
+| `TokenBudgetOptions` | interface | `{ id?, max, scope?, signal? }`                                                  | Represents the options for constructing a token budget, accepted by the `createTokenBudget` function.                                                           |
+| `BudgetInterface`    | interface | `{ id, signal, max, consumed, remaining, exhausted } plus start, consume, clear` | Represents the cumulative cost handle contract: a lifetime tally, its validated ceiling, and the native signal that aborts when the tally reaches that ceiling. |
+| `TokenScope`         | type      | `'completion' \| 'total' \| 'prompt'`                                            | Names the token-usage field selected as the charge for a token budget.                                                                                          |
+| `TokenUsage`         | interface | `{ prompt, completion, total }`                                                  | Represents the canonical LLM cost unit: the finite nonnegative token counts reported for one provider call, and the typical `T` for an agent budget.            |
 
 The `id`, `signal`, `max`, `consumed`, `remaining`, and `exhausted` members of `BudgetInterface` are `readonly` data members (the preceding Surface rows) — its call-signature methods are documented under [Methods](#methods).
 
@@ -74,11 +79,11 @@ The public methods of `BudgetInterface` — every call-signature member listed (
 
 `start` is the begin-or-restart verb — it re-arms a fresh per-request `signal` without resetting the cumulative tally; `consume` charges the tally and trips `signal` at the ceiling; `clear` is the reset — it zeroes the tally AND re-arms a fresh `signal`.
 
-| Method    | Returns | Behavior                                                                                                                       |
-| --------- | ------- | ------------------------------------------------------------------------------------------------------------------------------ |
-| `start`   | `void`  | Re-arm a fresh `signal` for the next request WITHOUT resetting `consumed`; if already at/past `max`, arm it aborted.           |
-| `consume` | `void`  | Run the consumer first, validate and atomically add its charge, then trip `signal` at `max`; valid overshoot remains accepted. |
-| `clear`   | `void`  | Reset the tally to `0` AND re-arm a fresh non-aborted `signal` (the lifecycle reset) — start the next window from zero.        |
+| Method    | Returns | Summary                                                                                                                                                                                          |
+| --------- | ------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `start`   | `void`  | Re-arms a fresh per-request `signal` without resetting the cumulative tally, arming it already aborted when `consumed` has reached `max`.                                                        |
+| `consume` | `void`  | Runs the configured consumer first, then validates and atomically adds its charge, tripping `signal` the moment the tally reaches `max`; a valid charge that overshoots the ceiling is accepted. |
+| `clear`   | `void`  | Resets the tally to `0` and re-arms a fresh unaborted `signal`, opening the next window from zero.                                                                                               |
 
 ## Contract
 
@@ -179,7 +184,7 @@ budget.consume(200) // spends against the new window
 
 ## Tests
 
-- [`tests/guides.test.ts`](../tests/guides.test.ts) — the `## Surface` ↔ `src/core` bijection (value + type exports) and the `BudgetInterface` ↔ `Budget` method bijection.
+- [`tests/guides.test.ts`](../tests/guides.test.ts) — the `## Surface` ↔ `src/core` bijection (value + type exports), the `BudgetInterface` ↔ `Budget` method bijection, and the equality gate: every `Summary` cell against its declaration's description paragraph, the titled `Race work against the ceiling` fence against the `@example` block of that title (pinned so the titled pair cannot be retired silently), and the README pitch against this guide's tagline. It also runs the flagship fences and asserts the values their comments claim.
 - [`tests/src/core/Budget.test.ts`](../tests/src/core/Budget.test.ts) — strict construction, cumulative and atomic consumption, valid overshoot, thrown-consumer identity, numeric overflow, zero-ceiling semantics, lifecycle re-arming/reset, parent reason preservation, and public type shape.
 - [`tests/src/core/factories.test.ts`](../tests/src/core/factories.test.ts) — real generic/token factory behavior plus untyped scope, usage, options, hostile, and revoked boundary failures with exact structured errors.
 - [`tests/src/core/helpers.test.ts`](../tests/src/core/helpers.test.ts) — direct option-helper fresh-copy and optional-key omission, exactly-once property reads, hostile getter containment, generic preservation, and exact error taxonomy/context.
@@ -188,4 +193,4 @@ budget.consume(200) // spends against the new window
 ## See also
 
 - [`AGENTS.md`](../AGENTS.md) — the pointer to the `@orkestrel/scaffold` coding and orchestration authority.
-- [`../README.md`](README.md) — the guides index.
+- [`README.md`](README.md) — the guides index.
