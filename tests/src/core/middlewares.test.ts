@@ -105,7 +105,12 @@ describe('createBoundary', () => {
 	it('passes a successful response through unchanged', async () => {
 		const boundary = createBoundary()
 		const context = createTestContext(buildTestRequest('/'), {})
-		const response = await runChain([boundary], createEchoTerminal(), buildTestRequest('/'), context)
+		const response = await runChain(
+			[boundary],
+			createEchoTerminal(),
+			buildTestRequest('/'),
+			context,
+		)
 		expect(await response.text()).toBe(ECHO_MARKER)
 	})
 })
@@ -162,7 +167,12 @@ describe('createTelemetry', () => {
 			},
 		})
 		const context = createTestContext(buildTestRequest('/'), {})
-		const response = await runChain([telemetry], createEchoTerminal(), buildTestRequest('/'), context)
+		const response = await runChain(
+			[telemetry],
+			createEchoTerminal(),
+			buildTestRequest('/'),
+			context,
+		)
 		expect(await response.text()).toBe(ECHO_MARKER)
 	})
 })
@@ -316,7 +326,9 @@ describe('createCompression', () => {
 
 	it('rejects a q=0 coding through negotiation (nothing negotiated)', async () => {
 		const compression = createCompression<Record<string, never>>({ threshold: 16 })
-		const request = buildTestRequest('/', { headers: { 'accept-encoding': 'gzip;q=0, deflate;q=0' } })
+		const request = buildTestRequest('/', {
+			headers: { 'accept-encoding': 'gzip;q=0, deflate;q=0' },
+		})
 		const context = createTestContext(request, {})
 		const response = await runChain(
 			[compression],
@@ -335,7 +347,12 @@ describe('createSecurity', () => {
 	it('sets the full default header set including nosniff and cluster', async () => {
 		const security = createSecurity<{ identifier?: string }>()
 		const context = createTestContext(buildTestRequest('/'), {})
-		const response = await runChain([security], createEchoTerminal(), buildTestRequest('/'), context)
+		const response = await runChain(
+			[security],
+			createEchoTerminal(),
+			buildTestRequest('/'),
+			context,
+		)
 		expect(response.headers.get('x-content-type-options')).toBe('nosniff')
 		expect(response.headers.get('x-frame-options')).toBe('DENY')
 		expect(response.headers.get('origin-agent-cluster')).toBe('?1')
@@ -347,14 +364,24 @@ describe('createSecurity', () => {
 	it('csp option replaces the default wholesale', async () => {
 		const security = createSecurity<{ identifier?: string }>({ csp: "default-src 'none'" })
 		const context = createTestContext(buildTestRequest('/'), {})
-		const response = await runChain([security], createEchoTerminal(), buildTestRequest('/'), context)
+		const response = await runChain(
+			[security],
+			createEchoTerminal(),
+			buildTestRequest('/'),
+			context,
+		)
 		expect(response.headers.get('content-security-policy')).toBe("default-src 'none'")
 	})
 
 	it('csp: false omits the header entirely', async () => {
 		const security = createSecurity<{ identifier?: string }>({ csp: false })
 		const context = createTestContext(buildTestRequest('/'), {})
-		const response = await runChain([security], createEchoTerminal(), buildTestRequest('/'), context)
+		const response = await runChain(
+			[security],
+			createEchoTerminal(),
+			buildTestRequest('/'),
+			context,
+		)
 		expect(response.headers.has('content-security-policy')).toBe(false)
 	})
 
@@ -362,7 +389,12 @@ describe('createSecurity', () => {
 		const security = createSecurity<{ identifier?: string }>()
 		const state: { identifier?: string } = {}
 		const context = createTestContext(buildTestRequest('/'), state)
-		const response = await runChain([security], createEchoTerminal(), buildTestRequest('/'), context)
+		const response = await runChain(
+			[security],
+			createEchoTerminal(),
+			buildTestRequest('/'),
+			context,
+		)
 		expect(state.identifier).toBeTruthy()
 		expect(response.headers.get('x-request-id')).toBe(state.identifier)
 	})
@@ -380,7 +412,9 @@ describe('createSecurity', () => {
 	it('trust-echo matrix: a hostile incoming id (fails isValidRequestId) is regenerated, not echoed', async () => {
 		const security = createSecurity<{ identifier?: string }>({ identifier: { trust: true } })
 		const state: { identifier?: string } = {}
-		const request = buildTestRequest('/', { headers: { 'x-request-id': 'bad header with spaces!' } })
+		const request = buildTestRequest('/', {
+			headers: { 'x-request-id': 'bad header with spaces!' },
+		})
 		const context = createTestContext(request, state)
 		await runChain([security], createEchoTerminal(), request, context)
 		expect(state.identifier).not.toBe('bad header with spaces!')
@@ -399,7 +433,12 @@ describe('createSecurity', () => {
 		const security = createSecurity<{ identifier?: string }>({ identifier: false })
 		const state: { identifier?: string } = {}
 		const context = createTestContext(buildTestRequest('/'), state)
-		const response = await runChain([security], createEchoTerminal(), buildTestRequest('/'), context)
+		const response = await runChain(
+			[security],
+			createEchoTerminal(),
+			buildTestRequest('/'),
+			context,
+		)
 		expect(state.identifier).toBeUndefined()
 		expect(response.headers.has('x-request-id')).toBe(false)
 	})
@@ -407,7 +446,12 @@ describe('createSecurity', () => {
 	it('coep/hsts are opt-in: true uses the secure default, a string overrides, omitted stays off', async () => {
 		const security = createSecurity<{ identifier?: string }>({ coep: true, hsts: 'max-age=1' })
 		const context = createTestContext(buildTestRequest('/'), {})
-		const response = await runChain([security], createEchoTerminal(), buildTestRequest('/'), context)
+		const response = await runChain(
+			[security],
+			createEchoTerminal(),
+			buildTestRequest('/'),
+			context,
+		)
 		expect(response.headers.get('cross-origin-embedder-policy')).toBe('require-corp')
 		expect(response.headers.get('strict-transport-security')).toBe('max-age=1')
 	})
@@ -501,7 +545,12 @@ describe('createDeadline', () => {
 	it('a fast handler is unaffected and the timer is cleared', async () => {
 		const deadline = createDeadline<Record<string, never>>({ ms: 200 })
 		const context = createTestContext(buildTestRequest('/'), {})
-		const response = await runChain([deadline], createEchoTerminal(), buildTestRequest('/'), context)
+		const response = await runChain(
+			[deadline],
+			createEchoTerminal(),
+			buildTestRequest('/'),
+			context,
+		)
 		expect(await response.text()).toBe(ECHO_MARKER)
 	})
 
@@ -565,7 +614,9 @@ describe('createDeadline', () => {
 describe('createForwarded', () => {
 	it('proxies-count walk: trusts exactly N hops from the right', async () => {
 		const forwarded = createForwarded<ClientState & ConnectionState>({ proxies: 1 })
-		const request = buildTestRequest('/', { headers: { 'x-forwarded-for': '203.0.113.7, 10.0.0.1' } })
+		const request = buildTestRequest('/', {
+			headers: { 'x-forwarded-for': '203.0.113.7, 10.0.0.1' },
+		})
 		const state: ClientState & ConnectionState = {}
 		const context = createTestContext(request, state)
 		await runChain([forwarded], createEchoTerminal(), request, context)
@@ -574,7 +625,9 @@ describe('createForwarded', () => {
 
 	it('trusted-list walk: trusts consecutive hops matching the CIDR roster', async () => {
 		const forwarded = createForwarded<ClientState & ConnectionState>({ trusted: ['10.0.0.0/8'] })
-		const request = buildTestRequest('/', { headers: { 'x-forwarded-for': '203.0.113.7, 10.0.0.1' } })
+		const request = buildTestRequest('/', {
+			headers: { 'x-forwarded-for': '203.0.113.7, 10.0.0.1' },
+		})
 		const state: ClientState & ConnectionState = {}
 		const context = createTestContext(request, state)
 		await runChain([forwarded], createEchoTerminal(), request, context)
@@ -889,7 +942,12 @@ describe('createLimiter', () => {
 		const first = await runChain([limiter], createEchoTerminal(), buildTestRequest('/'), context)
 		const blocked = await runChain([limiter], createEchoTerminal(), buildTestRequest('/'), context)
 		clock.advance(1_000)
-		const afterRoll = await runChain([limiter], createEchoTerminal(), buildTestRequest('/'), context)
+		const afterRoll = await runChain(
+			[limiter],
+			createEchoTerminal(),
+			buildTestRequest('/'),
+			context,
+		)
 		expect(first.status).toBe(200)
 		expect(blocked.status).toBe(429)
 		expect(afterRoll.status).toBe(200)

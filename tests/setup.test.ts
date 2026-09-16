@@ -48,7 +48,10 @@ describe('buildTestRequest', () => {
 describe('createTestContext', () => {
 	it('derives the url and method from the request and threads the caller state object in place', () => {
 		const state = { seen: 0 }
-		const context = createTestContext(buildTestRequest('/users?limit=2', { method: 'DELETE' }), state)
+		const context = createTestContext(
+			buildTestRequest('/users?limit=2', { method: 'DELETE' }),
+			state,
+		)
 		expect(context.url.href).toBe('http://test.local/users?limit=2')
 		expect(context.url.pathname).toBe('/users')
 		expect(context.url.searchParams.get('limit')).toBe('2')
