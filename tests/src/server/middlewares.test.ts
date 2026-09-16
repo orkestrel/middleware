@@ -38,7 +38,7 @@ import {
 	createAssetSource,
 	PNG_MAGIC,
 } from '../../setupServer.js'
-import { buildRequest, createTestContext } from '../../setup.js'
+import { buildTestRequest, createTestContext } from '../../setup.js'
 
 // ── createAssets ─────────────────────────────────────────────────────────────
 
@@ -47,7 +47,7 @@ describe('createAssets', () => {
 		const bytes = new TextEncoder().encode('<!doctype html><title>Embedded</title>')
 		const source = createAssetSource(new Map([['index.html', { body: bytes }]]))
 		const handler = createAssets({ source: source.source })
-		const request = buildRequest('/')
+		const request = buildTestRequest('/')
 		const response = await handler(
 			request,
 			createTestContext(request, {}),
@@ -70,7 +70,7 @@ describe('createAssets', () => {
 		expect(await repeated.text()).toBe('<!doctype html><title>Embedded</title>')
 		expect(source.paths).toEqual(['index.html'])
 
-		const rangeRequest = buildRequest('/', { headers: { range: 'bytes=0-3' } })
+		const rangeRequest = buildTestRequest('/', { headers: { range: 'bytes=0-3' } })
 		const ranged = await handler(
 			rangeRequest,
 			createTestContext(rangeRequest, {}),
@@ -79,7 +79,7 @@ describe('createAssets', () => {
 		expect(ranged.status).toBe(200)
 		expect(await ranged.text()).toBe('<!doctype html><title>Embedded</title>')
 
-		const missingRequest = buildRequest('/missing.js')
+		const missingRequest = buildTestRequest('/missing.js')
 		const missing = await handler(
 			missingRequest,
 			createTestContext(missingRequest, {}),
@@ -96,7 +96,7 @@ describe('createAssets', () => {
 			new Map([['operator.js', { body: compressed, encoding: 'br' }]]),
 		)
 		const handler = createAssets({ source: source.source })
-		const identityRequest = buildRequest('/operator.js', {
+		const identityRequest = buildTestRequest('/operator.js', {
 			headers: { 'accept-encoding': 'identity' },
 		})
 		const identity = await handler(
@@ -107,7 +107,7 @@ describe('createAssets', () => {
 		expect(identity.headers.get('content-encoding')).toBeNull()
 		expect(await identity.text()).toBe('globalThis.embedded = true')
 
-		const brotliRequest = buildRequest('/operator.js', {
+		const brotliRequest = buildTestRequest('/operator.js', {
 			headers: { 'accept-encoding': 'gzip;q=1, br;q=0.8' },
 		})
 		const brotli = await handler(
@@ -120,7 +120,7 @@ describe('createAssets', () => {
 		expect(brotli.headers.get('etag')).toBe(identity.headers.get('etag'))
 		expect(new Uint8Array(await brotli.arrayBuffer())).toEqual(compressed)
 
-		const refusedRequest = buildRequest('/operator.js', {
+		const refusedRequest = buildTestRequest('/operator.js', {
 			headers: { 'accept-encoding': 'br;q=0, *;q=1' },
 		})
 		const refused = await handler(
@@ -140,7 +140,7 @@ describe('createAssets', () => {
 			new Map([['operator.js', { body: compressed, encoding: 'br' }]]),
 		)
 		const handler = createAssets({ source: source.source })
-		const firstRequest = buildRequest('/operator.js')
+		const firstRequest = buildTestRequest('/operator.js')
 		const first = await handler(
 			firstRequest,
 			createTestContext(firstRequest, {}),
@@ -149,7 +149,7 @@ describe('createAssets', () => {
 		const etag = first.headers.get('etag')
 		if (etag === null) throw new Error('expected an asset ETag')
 
-		const headRequest = buildRequest('/operator.js', {
+		const headRequest = buildTestRequest('/operator.js', {
 			method: 'HEAD',
 			headers: { 'accept-encoding': 'br' },
 		})
@@ -163,7 +163,7 @@ describe('createAssets', () => {
 		expect(head.headers.get('content-length')).toBe(String(compressed.byteLength))
 		expect(await head.text()).toBe('')
 
-		const cachedRequest = buildRequest('/operator.js', {
+		const cachedRequest = buildTestRequest('/operator.js', {
 			headers: { 'accept-encoding': 'br', 'if-none-match': etag },
 		})
 		const cached = await handler(
@@ -183,14 +183,14 @@ describe('createAssets', () => {
 		)
 		const handler = createAssets({ source: source.source })
 		const first = await handler(
-			buildRequest('/app.js'),
-			createTestContext(buildRequest('/app.js'), {}),
+			buildTestRequest('/app.js'),
+			createTestContext(buildTestRequest('/app.js'), {}),
 			async () => new Response('miss'),
 		)
 		expect(await first.text()).toBe('bounded')
 		const second = await handler(
-			buildRequest('/app.js'),
-			createTestContext(buildRequest('/app.js'), {}),
+			buildTestRequest('/app.js'),
+			createTestContext(buildTestRequest('/app.js'), {}),
 			async () => new Response('miss'),
 		)
 		expect(await second.text()).toBe('bounded')
@@ -199,14 +199,14 @@ describe('createAssets', () => {
 		expect(source.paths).toEqual(['app.js'])
 
 		const miss = await handler(
-			buildRequest('/absent.js'),
-			createTestContext(buildRequest('/absent.js'), {}),
+			buildTestRequest('/absent.js'),
+			createTestContext(buildTestRequest('/absent.js'), {}),
 			async () => new Response('miss'),
 		)
 		expect(await miss.text()).toBe('miss')
 		const missAgain = await handler(
-			buildRequest('/absent.js'),
-			createTestContext(buildRequest('/absent.js'), {}),
+			buildTestRequest('/absent.js'),
+			createTestContext(buildTestRequest('/absent.js'), {}),
 			async () => new Response('miss'),
 		)
 		expect(await missAgain.text()).toBe('miss')
@@ -217,7 +217,7 @@ describe('createAssets', () => {
 		const asset = { body: new TextEncoder().encode('asset') }
 		const source = createAssetSource(new Map([['nested/app shell.js', asset]]), asset)
 		const handler = createAssets({ source: source.source })
-		const validRequest = buildRequest('/nested/app%20shell.js')
+		const validRequest = buildTestRequest('/nested/app%20shell.js')
 		const valid = await handler(
 			validRequest,
 			createTestContext(validRequest, {}),
@@ -235,7 +235,7 @@ describe('createAssets', () => {
 			'/.secret',
 			'/nested/.secret/file.js',
 		]) {
-			const request = buildRequest(path)
+			const request = buildTestRequest(path)
 			const response = await handler(
 				request,
 				createTestContext(request, {}),
@@ -245,7 +245,7 @@ describe('createAssets', () => {
 		}
 		expect(source.paths).toEqual(['nested/app shell.js'])
 
-		const postRequest = buildRequest('/operator.js', { method: 'POST' })
+		const postRequest = buildTestRequest('/operator.js', { method: 'POST' })
 		const post = await handler(
 			postRequest,
 			createTestContext(postRequest, {}),
@@ -263,9 +263,9 @@ describe('createStatic', () => {
 		const fixture = buildStaticFixture()
 		try {
 			const handler = createStatic({ root: fixture.scratch.path, cache: 60 })
-			const context = createTestContext(buildRequest('/index.html'), {})
+			const context = createTestContext(buildTestRequest('/index.html'), {})
 			const response = await handler(
-				buildRequest('/index.html'),
+				buildTestRequest('/index.html'),
 				context,
 				async () => new Response('miss'),
 			)
@@ -282,9 +282,9 @@ describe('createStatic', () => {
 		const fixture = buildStaticFixture()
 		try {
 			const handler = createStatic({ root: fixture.scratch.path })
-			const context = createTestContext(buildRequest('/nested/deep/page.html'), {})
+			const context = createTestContext(buildTestRequest('/nested/deep/page.html'), {})
 			const response = await handler(
-				buildRequest('/nested/deep/page.html'),
+				buildTestRequest('/nested/deep/page.html'),
 				context,
 				async () => new Response('miss'),
 			)
@@ -299,7 +299,7 @@ describe('createStatic', () => {
 		const fixture = buildStaticFixture()
 		try {
 			const handler = createStatic({ root: fixture.scratch.path })
-			const request = buildRequest('/index.html', { method: 'HEAD' })
+			const request = buildTestRequest('/index.html', { method: 'HEAD' })
 			const context = createTestContext(request, {})
 			Object.defineProperty(context, 'method', { value: 'HEAD' })
 			const response = await handler(request, context, async () => new Response('miss'))
@@ -315,9 +315,9 @@ describe('createStatic', () => {
 		const fixture = buildStaticFixture()
 		try {
 			const handler = createStatic({ root: fixture.scratch.path })
-			const context = createTestContext(buildRequest('/nope.html'), {})
+			const context = createTestContext(buildTestRequest('/nope.html'), {})
 			let called = false
-			const response = await handler(buildRequest('/nope.html'), context, async () => {
+			const response = await handler(buildTestRequest('/nope.html'), context, async () => {
 				called = true
 				return new Response('miss', { status: 200 })
 			})
@@ -334,8 +334,8 @@ describe('createStatic', () => {
 			const ignoreHandler = createStatic({ root: fixture.scratch.path, dotfiles: 'ignore' })
 			let nextCalled = false
 			const ignoreResponse = await ignoreHandler(
-				buildRequest('/.env'),
-				createTestContext(buildRequest('/.env'), {}),
+				buildTestRequest('/.env'),
+				createTestContext(buildTestRequest('/.env'), {}),
 				async () => {
 					nextCalled = true
 					return new Response('miss')
@@ -347,16 +347,16 @@ describe('createStatic', () => {
 			const denyHandler = createStatic({ root: fixture.scratch.path, dotfiles: 'deny' })
 			await expect(
 				denyHandler(
-					buildRequest('/.env'),
-					createTestContext(buildRequest('/.env'), {}),
+					buildTestRequest('/.env'),
+					createTestContext(buildTestRequest('/.env'), {}),
 					async () => new Response('miss'),
 				),
 			).rejects.toSatisfy((error: unknown) => error instanceof HTTPError && error.status === 403)
 
 			const allowHandler = createStatic({ root: fixture.scratch.path, dotfiles: 'allow' })
 			const allowResponse = await allowHandler(
-				buildRequest('/.env'),
-				createTestContext(buildRequest('/.env'), {}),
+				buildTestRequest('/.env'),
+				createTestContext(buildTestRequest('/.env'), {}),
 				async () => new Response('miss'),
 			)
 			expect(allowResponse.status).toBe(200)
@@ -377,8 +377,8 @@ describe('createStatic', () => {
 			]) {
 				let nextCalled = false
 				const response = await handler(
-					buildRequest(path),
-					createTestContext(buildRequest(path), {}),
+					buildTestRequest(path),
+					createTestContext(buildTestRequest(path), {}),
 					async () => {
 						nextCalled = true
 						return new Response('fell through')
@@ -398,8 +398,8 @@ describe('createStatic', () => {
 			const handler = createStatic({ root: fixture.scratch.path })
 			let nextCalled = false
 			const reservedResponse = await handler(
-				buildRequest('/NUL.json'),
-				createTestContext(buildRequest('/NUL.json'), {}),
+				buildTestRequest('/NUL.json'),
+				createTestContext(buildTestRequest('/NUL.json'), {}),
 				async () => {
 					nextCalled = true
 					return new Response('miss')
@@ -409,8 +409,8 @@ describe('createStatic', () => {
 			expect(await reservedResponse.text()).toBe('miss')
 
 			const okResponse = await handler(
-				buildRequest('/nullable.css'),
-				createTestContext(buildRequest('/nullable.css'), {}),
+				buildTestRequest('/nullable.css'),
+				createTestContext(buildTestRequest('/nullable.css'), {}),
 				async () => new Response('miss'),
 			)
 			expect(okResponse.status).toBe(200)
@@ -495,8 +495,8 @@ describe('createStatic', () => {
 				etag: true,
 			})
 			const primary = await handler(
-				buildRequest('/index.html'),
-				createTestContext(buildRequest('/index.html'), {}),
+				buildTestRequest('/index.html'),
+				createTestContext(buildTestRequest('/index.html'), {}),
 				async () => new Response('miss'),
 			)
 			expect(primary.status).toBe(200)
@@ -630,8 +630,8 @@ describe('createStatic', () => {
 		try {
 			const handler = createStatic({ root: fixture.scratch.path })
 			const first = await handler(
-				buildRequest('/index.html'),
-				createTestContext(buildRequest('/index.html'), {}),
+				buildTestRequest('/index.html'),
+				createTestContext(buildTestRequest('/index.html'), {}),
 				async () => new Response('miss'),
 			)
 			const etag = first.headers.get('etag')
@@ -677,8 +677,8 @@ describe('createStatic', () => {
 		try {
 			const handler = createStatic({ root: fixture.scratch.path, etag: false })
 			const response = await handler(
-				buildRequest('/index.html'),
-				createTestContext(buildRequest('/index.html'), {}),
+				buildTestRequest('/index.html'),
+				createTestContext(buildTestRequest('/index.html'), {}),
 				async () => new Response('miss'),
 			)
 			expect(response.status).toBe(200)
@@ -698,8 +698,8 @@ describe('createStatic', () => {
 
 				let nextCalled = false
 				const escapeResponse = await handler(
-					buildRequest('/link-outside.html'),
-					createTestContext(buildRequest('/link-outside.html'), {}),
+					buildTestRequest('/link-outside.html'),
+					createTestContext(buildTestRequest('/link-outside.html'), {}),
 					async () => {
 						nextCalled = true
 						return new Response('miss', { status: 404 })
@@ -710,8 +710,8 @@ describe('createStatic', () => {
 				expect(await escapeResponse.text()).not.toContain('outside secret')
 
 				const insideResponse = await handler(
-					buildRequest('/link-inside.html'),
-					createTestContext(buildRequest('/link-inside.html'), {}),
+					buildTestRequest('/link-inside.html'),
+					createTestContext(buildTestRequest('/link-inside.html'), {}),
 					async () => new Response('miss'),
 				)
 				expect(insideResponse.status).toBe(200)
@@ -730,8 +730,8 @@ describe('createStatic', () => {
 				const handler = createStatic({ root: fixture.scratch.path })
 				let nextCalled = false
 				const response = await handler(
-					buildRequest('/sub/'),
-					createTestContext(buildRequest('/sub/'), {}),
+					buildTestRequest('/sub/'),
+					createTestContext(buildTestRequest('/sub/'), {}),
 					async () => {
 						nextCalled = true
 						return new Response('miss', { status: 404 })
@@ -755,7 +755,7 @@ describe('createStatic', () => {
 			})
 			try {
 				const handler = createStatic({ root: scratch.path, fallback: true })
-				const request = buildRequest('/missing-route', { headers: { accept: 'text/html' } })
+				const request = buildTestRequest('/missing-route', { headers: { accept: 'text/html' } })
 				const response = await handler(
 					request,
 					createTestContext(request, {}),

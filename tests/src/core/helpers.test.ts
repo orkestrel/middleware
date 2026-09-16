@@ -21,7 +21,7 @@ import {
 	validateSessionLimits,
 } from '@src/core'
 import { describe, expect, it } from 'vitest'
-import { buildRequest, buildSession, createTestContext, decompress } from '../../setup.js'
+import { buildTestRequest, buildSession, createTestContext, decompress } from '../../setup.js'
 
 // ============================================================================
 //  @orkestrel/middleware — core helpers.ts unit tests. Every scenario is built
@@ -363,7 +363,7 @@ describe('compressResponse', () => {
 		})
 		const result = await compressResponse(
 			request,
-			createTestContext(buildRequest('/'), {}),
+			createTestContext(buildTestRequest('/'), {}),
 			response,
 			{
 				threshold: 100,
@@ -385,7 +385,7 @@ describe('compressResponse', () => {
 		})
 		const result = await compressResponse(
 			request,
-			createTestContext(buildRequest('/'), {}),
+			createTestContext(buildTestRequest('/'), {}),
 			response,
 			{
 				threshold: 100_000,
@@ -406,7 +406,7 @@ describe('compressResponse', () => {
 		})
 		const result = await compressResponse(
 			request,
-			createTestContext(buildRequest('/'), {}),
+			createTestContext(buildTestRequest('/'), {}),
 			response,
 			{
 				threshold: 100,
@@ -426,7 +426,7 @@ describe('compressResponse', () => {
 		})
 		const result = await compressResponse(
 			request,
-			createTestContext(buildRequest('/'), {}),
+			createTestContext(buildTestRequest('/'), {}),
 			response,
 			{
 				threshold: 100,
@@ -446,7 +446,7 @@ describe('compressResponse', () => {
 		})
 		const result = await compressResponse(
 			request,
-			createTestContext(buildRequest('/'), {}),
+			createTestContext(buildTestRequest('/'), {}),
 			response,
 			{
 				threshold: 1,
@@ -467,7 +467,7 @@ describe('compressResponse', () => {
 		})
 		const result = await compressResponse(
 			request,
-			createTestContext(buildRequest('/'), {}),
+			createTestContext(buildTestRequest('/'), {}),
 			response,
 			{
 				threshold: 100_000,
@@ -483,7 +483,7 @@ describe('compressResponse', () => {
 		const request = new Request('https://example.test/')
 		const result = await compressResponse(
 			request,
-			createTestContext(buildRequest('/'), {}),
+			createTestContext(buildTestRequest('/'), {}),
 			response,
 			{
 				threshold: 100,
@@ -501,7 +501,7 @@ describe('compressResponse', () => {
 		})
 		const result = await compressResponse(
 			request,
-			createTestContext(buildRequest('/'), {}),
+			createTestContext(buildTestRequest('/'), {}),
 			response,
 			{
 				threshold: 100_000,
@@ -519,7 +519,7 @@ describe('compressResponse', () => {
 		})
 		const result = await compressResponse(
 			request,
-			createTestContext(buildRequest('/'), {}),
+			createTestContext(buildTestRequest('/'), {}),
 			response,
 			{
 				threshold: 100,
@@ -537,7 +537,7 @@ describe('compressResponse', () => {
 		})
 		const result = await compressResponse(
 			request,
-			createTestContext(buildRequest('/'), {}),
+			createTestContext(buildTestRequest('/'), {}),
 			response,
 			{
 				threshold: 100,
@@ -558,7 +558,7 @@ describe('compressResponse', () => {
 		})
 		const result = await compressResponse(
 			request,
-			createTestContext(buildRequest('/'), {}),
+			createTestContext(buildTestRequest('/'), {}),
 			response,
 			{
 				threshold: 100,

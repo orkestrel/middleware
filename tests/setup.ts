@@ -36,10 +36,10 @@ export const TEST_SECRET = 'test-secret'
  *
  * @example
  * ```ts
- * const request = buildRequest('/users', { method: 'POST', body: '{"name":"a"}' })
+ * const request = buildTestRequest('/users', { method: 'POST', body: '{"name":"a"}' })
  * ```
  */
-export function buildRequest(path: string, init?: RequestInit): Request {
+export function buildTestRequest(path: string, init?: RequestInit): Request {
 	return new Request(new URL(path, 'http://test.local/'), init)
 }
 
@@ -56,7 +56,7 @@ export function buildRequest(path: string, init?: RequestInit): Request {
  *
  * @example
  * ```ts
- * const context = createTestContext(buildRequest('/'), {})
+ * const context = createTestContext(buildTestRequest('/'), {})
  * ```
  */
 export function createTestContext<TState>(
@@ -119,7 +119,7 @@ export interface RecordingTerminalInterface<TState> {
  * @example
  * ```ts
  * const terminal = createRecordingTerminal()
- * await runChain([middleware], terminal.handler, buildRequest('/'), context)
+ * await runChain([middleware], terminal.handler, buildTestRequest('/'), context)
  * terminal.count // 1
  * ```
  */

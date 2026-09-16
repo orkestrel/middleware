@@ -55,7 +55,7 @@ await new GuideCommand({
 	const { compose } = await import('@orkestrel/server')
 	const { requireValue } = await import('@orkestrel/test')
 	const { createBoundary, createSecurity } = await import('@src/core')
-	const { buildRequest, createTestContext } = await import('./setup.js')
+	const { buildTestRequest, createTestContext } = await import('./setup.js')
 	const { describe, expect, it } = await import('vitest')
 	const sources = createSourceManager({ files, modules: MODULES })
 	const own = requireValue(
@@ -245,7 +245,7 @@ await new GuideCommand({
 				return Response.json({ identifier: context.state.identifier })
 			})
 
-			const request = buildRequest('/')
+			const request = buildTestRequest('/')
 			const response = await handle(request, createTestContext<State>(request, {}))
 			const stamped = response.headers.get('x-request-id')
 

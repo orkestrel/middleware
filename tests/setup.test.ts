@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { ContentTooLargeError, signToken, verifyToken } from '@orkestrel/server'
 import {
-	buildRequest,
+	buildTestRequest,
 	buildSession,
 	buildStore,
 	compressibleBody,
@@ -29,9 +29,9 @@ import {
 // `JSON.parse` — so an assertion cannot pass merely because the harness agrees
 // with itself.
 
-describe('buildRequest', () => {
+describe('buildTestRequest', () => {
 	it('joins the path and its query onto the fixed test origin and carries the init through', async () => {
-		const request = buildRequest('/users?limit=2', {
+		const request = buildTestRequest('/users?limit=2', {
 			method: 'POST',
 			headers: { 'content-type': 'application/json' },
 			body: '{"name":"ada"}',
@@ -40,15 +40,15 @@ describe('buildRequest', () => {
 		expect(request.method).toBe('POST')
 		expect(request.headers.get('content-type')).toBe('application/json')
 		expect(await request.text()).toBe('{"name":"ada"}')
-		expect(buildRequest('/').url).toBe('http://test.local/')
-		expect(buildRequest('/').method).toBe('GET')
+		expect(buildTestRequest('/').url).toBe('http://test.local/')
+		expect(buildTestRequest('/').method).toBe('GET')
 	})
 })
 
 describe('createTestContext', () => {
 	it('derives the url and method from the request and threads the caller state object in place', () => {
 		const state = { seen: 0 }
-		const context = createTestContext(buildRequest('/users?limit=2', { method: 'DELETE' }), state)
+		const context = createTestContext(buildTestRequest('/users?limit=2', { method: 'DELETE' }), state)
 		expect(context.url.href).toBe('http://test.local/users?limit=2')
 		expect(context.url.pathname).toBe('/users')
 		expect(context.url.searchParams.get('limit')).toBe('2')
@@ -61,7 +61,7 @@ describe('createTestContext', () => {
 	it('reads the request body once and answers every later call from the same promise', async () => {
 		const payload = '{"name":"ada","tags":["a","b"]}'
 		const context = createTestContext(
-			buildRequest('/users', {
+			buildTestRequest('/users', {
 				method: 'POST',
 				headers: { 'content-type': 'application/json' },
 				body: payload,
@@ -78,7 +78,7 @@ describe('createTestContext', () => {
 
 	it('caps the body it reads at the harness limit — reading at the cap, refusing one byte past it', async () => {
 		const atCap = createTestContext(
-			buildRequest('/upload', {
+			buildTestRequest('/upload', {
 				method: 'POST',
 				headers: { 'content-type': 'text/plain' },
 				body: 'a'.repeat(TEST_BODY_LIMIT),
@@ -90,7 +90,7 @@ describe('createTestContext', () => {
 		expect(value).toHaveLength(TEST_BODY_LIMIT)
 
 		const pastCap = createTestContext(
-			buildRequest('/upload', {
+			buildTestRequest('/upload', {
 				method: 'POST',
 				headers: { 'content-type': 'text/plain' },
 				body: 'a'.repeat(TEST_BODY_LIMIT + 1),
@@ -103,13 +103,13 @@ describe('createTestContext', () => {
 
 describe('createEchoTerminal', () => {
 	it('answers the marker body at the default status and at a requested one', async () => {
-		const context = createTestContext(buildRequest('/'), {})
-		const answered = await createEchoTerminal()(buildRequest('/'), context)
+		const context = createTestContext(buildTestRequest('/'), {})
+		const answered = await createEchoTerminal()(buildTestRequest('/'), context)
 		expect(answered.status).toBe(200)
 		expect(await answered.text()).toBe('echo')
 		expect(ECHO_MARKER).toBe('echo')
 
-		const created = await createEchoTerminal(201)(buildRequest('/'), context)
+		const created = await createEchoTerminal(201)(buildTestRequest('/'), context)
 		expect(created.status).toBe(201)
 		expect(await created.text()).toBe('echo')
 	})
@@ -118,9 +118,9 @@ describe('createEchoTerminal', () => {
 describe('createRecordingTerminal', () => {
 	it('records every request and context it is reached with and answers the marker', async () => {
 		const terminal = createRecordingTerminal<{ seen: number }>(202)
-		const firstRequest = buildRequest('/first')
+		const firstRequest = buildTestRequest('/first')
 		const firstContext = createTestContext(firstRequest, { seen: 1 })
-		const secondRequest = buildRequest('/second', { method: 'DELETE' })
+		const secondRequest = buildTestRequest('/second', { method: 'DELETE' })
 		const secondContext = createTestContext(secondRequest, { seen: 2 })
 
 		expect(terminal.count).toBe(0)
@@ -141,7 +141,7 @@ describe('createRecordingNext', () => {
 	it('records each substituted request and answers with the response it was given', async () => {
 		const downstream = new Response('downstream', { status: 202 })
 		const recording = createRecordingNext(downstream)
-		const substituted = buildRequest('/rewritten')
+		const substituted = buildTestRequest('/rewritten')
 
 		expect(await recording.next(substituted)).toBe(downstream)
 		expect(await recording.next()).toBe(downstream)
@@ -158,7 +158,7 @@ describe('createRecordingNext', () => {
 describe('runChain', () => {
 	it('runs the middleware outermost first around the terminal and returns the chain response', async () => {
 		const trail: string[] = []
-		const request = buildRequest('/orders')
+		const request = buildTestRequest('/orders')
 		const context = createTestContext(request, { trail })
 		const response = await runChain(
 			[
@@ -267,14 +267,14 @@ describe('createTestTransport', () => {
 	it('round-trips an id through its own header and records every write and clear', async () => {
 		const transport = createTestTransport()
 		const response = new Response(null)
-		expect(await transport.read(buildRequest('/'))).toBeUndefined()
+		expect(await transport.read(buildTestRequest('/'))).toBeUndefined()
 
 		await transport.write(response, 'session-1', false)
 		expect(response.headers.get('x-test-session')).toBe('session-1')
 		expect(transport.written).toHaveLength(1)
 		expect(transport.written[0]?.id).toBe('session-1')
 		expect(
-			await transport.read(buildRequest('/', { headers: { 'x-test-session': 'session-1' } })),
+			await transport.read(buildTestRequest('/', { headers: { 'x-test-session': 'session-1' } })),
 		).toBe('session-1')
 
 		transport.clear(response)
