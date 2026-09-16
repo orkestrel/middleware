@@ -24,7 +24,16 @@ import type {
 } from './types.js'
 import type { BudgetInterface } from '@orkestrel/budget'
 import type { MiddlewareHandler } from '@orkestrel/server'
-import { isBoolean, isFiniteNumber, isFunction, isRecord, isString } from '@orkestrel/contract'
+import {
+	isBoolean,
+	isError,
+	isFiniteNumber,
+	isFunction,
+	isInteger,
+	isArray,
+	isRecord,
+	isString,
+} from '@orkestrel/contract'
 import { linkSignal } from '@orkestrel/abort'
 import { createBudget } from '@orkestrel/budget'
 import {
@@ -134,7 +143,7 @@ export function createBoundary<TState>(options?: BoundaryOptions): MiddlewareHan
 			}
 			if (isHTTPError(error)) return new Response(error.message, { status: error.status })
 			const message = expose
-				? error instanceof Error
+				? isError(error)
 					? error.message
 					: String(error)
 				: 'internal server error'
@@ -201,7 +210,7 @@ export function createCompression<TState>(options?: CompressionOptions): Middlew
 		throw new TypeError('CompressionOptions.threshold must be a finite number when provided')
 	if (options?.filter !== undefined && !isFunction(options.filter))
 		throw new TypeError('CompressionOptions.filter must be a function when provided')
-	if (options?.encodings !== undefined && !Array.isArray(options.encodings))
+	if (options?.encodings !== undefined && !isArray(options.encodings))
 		throw new TypeError('CompressionOptions.encodings must be an array when provided')
 	const threshold = options?.threshold ?? DEFAULT_COMPRESSION_THRESHOLD
 	const encodings = detectEncodings(options?.encodings ?? DEFAULT_COMPRESSION_ENCODINGS)
@@ -333,16 +342,16 @@ export function createSecurity<TState extends IdentifierState>(
  * ```
  */
 export function createCors<TState>(options?: CorsOptions): MiddlewareHandler<TState> {
-	if (options?.origin !== undefined && !isString(options.origin) && !Array.isArray(options.origin))
+	if (options?.origin !== undefined && !isString(options.origin) && !isArray(options.origin))
 		throw new TypeError('CorsOptions.origin must be a string or string array when provided')
-	if (options?.methods !== undefined && !Array.isArray(options.methods))
+	if (options?.methods !== undefined && !isArray(options.methods))
 		throw new TypeError('CorsOptions.methods must be an array when provided')
-	if (options?.headers !== undefined && !Array.isArray(options.headers))
+	if (options?.headers !== undefined && !isArray(options.headers))
 		throw new TypeError('CorsOptions.headers must be an array when provided')
 	const origin = options?.origin ?? '*'
 	const methods = options?.methods ?? DEFAULT_CORS_METHODS
 	const headers = options?.headers ?? DEFAULT_CORS_HEADERS
-	const reflecting = Array.isArray(origin)
+	const reflecting = isArray(origin)
 	return async (request, context, next) => {
 		const requestOrigin = request.headers.get('origin') ?? undefined
 		const allowOrigin = resolveOrigin(origin, requestOrigin)
@@ -449,11 +458,11 @@ export function createForwarded<TState extends ClientState & ConnectionState>(
 		throw new TypeError('ForwardedOptions requires exactly one of proxies or trusted')
 	if (hasProxies) {
 		const proxies = options.proxies
-		if (!isFiniteNumber(proxies) || !Number.isInteger(proxies) || proxies < 1)
+		if (!isInteger(proxies) || proxies < 1)
 			throw new TypeError('ForwardedOptions.proxies must be a positive integer')
 	} else {
 		const trusted = options.trusted
-		if (!Array.isArray(trusted))
+		if (!isArray(trusted))
 			throw new TypeError('ForwardedOptions.trusted must be an array when provided')
 	}
 	const trust = hasProxies ? { proxies: options.proxies } : { trusted: options.trusted }
@@ -521,10 +530,7 @@ export function createETag<TState>(options?: ETagOptions): MiddlewareHandler<TSt
 export function createBearer<TState extends BearerState>(
 	options: BearerOptions,
 ): MiddlewareHandler<TState> {
-	if (
-		!isString(options.secret) &&
-		(!Array.isArray(options.secret) || !options.secret.every(isString))
-	)
+	if (!isString(options.secret) && (!isArray(options.secret) || !options.secret.every(isString)))
 		throw new TypeError('BearerOptions.secret must be a string or string array')
 	if (options.header !== undefined && !isString(options.header))
 		throw new TypeError('BearerOptions.header must be a string when provided')
@@ -566,16 +572,11 @@ export function createBearer<TState extends BearerState>(
 export function createLimiter<TState extends BearerState & ClientState & ConnectionState>(
 	options: LimiterOptions<TState>,
 ): MiddlewareHandler<TState> {
-	if (!isFiniteNumber(options.max) || !Number.isInteger(options.max) || options.max <= 0)
+	if (!isInteger(options.max) || options.max <= 0)
 		throw new TypeError('LimiterOptions.max must be a positive integer')
 	if (!isFiniteNumber(options.window) || options.window <= 0)
 		throw new TypeError('LimiterOptions.window must be a positive finite number')
-	if (
-		options.capacity !== undefined &&
-		(!isFiniteNumber(options.capacity) ||
-			!Number.isInteger(options.capacity) ||
-			options.capacity <= 0)
-	)
+	if (options.capacity !== undefined && (!isInteger(options.capacity) || options.capacity <= 0))
 		throw new TypeError('LimiterOptions.capacity must be a positive integer when provided')
 	if (options.key !== undefined && !isFunction(options.key))
 		throw new TypeError('LimiterOptions.key must be a function when provided')
@@ -814,10 +815,7 @@ export function createSession<
 export function createCSRF<TState extends CSRFState & SessionState & ConnectionState>(
 	options: CSRFOptions,
 ): MiddlewareHandler<TState> {
-	if (
-		!isString(options.secret) &&
-		(!Array.isArray(options.secret) || !options.secret.every(isString))
-	)
+	if (!isString(options.secret) && (!isArray(options.secret) || !options.secret.every(isString)))
 		throw new TypeError('CSRFOptions.secret must be a string or string array')
 	if (options.cookie !== undefined && !isString(options.cookie))
 		throw new TypeError('CSRFOptions.cookie must be a string when provided')
@@ -825,7 +823,7 @@ export function createCSRF<TState extends CSRFState & SessionState & ConnectionS
 		throw new TypeError('CSRFOptions.header must be a string when provided')
 	if (options.field !== undefined && !isString(options.field))
 		throw new TypeError('CSRFOptions.field must be a string when provided')
-	if (options.safe !== undefined && !Array.isArray(options.safe))
+	if (options.safe !== undefined && !isArray(options.safe))
 		throw new TypeError('CSRFOptions.safe must be an array when provided')
 
 	const secret = options.secret
@@ -889,7 +887,7 @@ export function only<TState>(
 	paths: string | readonly string[],
 	handler: MiddlewareHandler<TState>,
 ): MiddlewareHandler<TState> {
-	const matches = new Set(typeof paths === 'string' ? [paths] : paths)
+	const matches = new Set(isString(paths) ? [paths] : paths)
 	return async (request, context, next) => {
 		if (matches.has(context.url.pathname)) return handler(request, context, next)
 		return next()
@@ -914,7 +912,7 @@ export function except<TState>(
 	paths: string | readonly string[],
 	handler: MiddlewareHandler<TState>,
 ): MiddlewareHandler<TState> {
-	const matches = new Set(typeof paths === 'string' ? [paths] : paths)
+	const matches = new Set(isString(paths) ? [paths] : paths)
 	return async (request, context, next) => {
 		if (matches.has(context.url.pathname)) return next()
 		return handler(request, context, next)

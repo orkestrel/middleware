@@ -13,7 +13,7 @@ import { copyFile, readFile, realpath, rename, unlink } from 'node:fs/promises'
 import { extname, isAbsolute, join, normalize, relative, resolve, sep } from 'node:path'
 import { promisify } from 'node:util'
 import { deflate as zlibDeflate, gzip as zlibGzip } from 'node:zlib'
-import { isError } from '@orkestrel/contract'
+import { isError, isString, isUint8Array } from '@orkestrel/contract'
 import {
 	DEFAULT_CONTENT_TYPE,
 	DEFAULT_MULTIPART_FIELD_SIZE,
@@ -533,14 +533,13 @@ export function streamFile(
 	source: string | FileHandle,
 	range?: ByteRange,
 ): ReadableStream<Uint8Array> {
-	const stream =
-		typeof source === 'string'
-			? range === undefined
-				? createReadStream(source)
-				: createReadStream(source, { start: range.start, end: range.end })
-			: range === undefined
-				? source.createReadStream()
-				: source.createReadStream({ start: range.start, end: range.end })
+	const stream = isString(source)
+		? range === undefined
+			? createReadStream(source)
+			: createReadStream(source, { start: range.start, end: range.end })
+		: range === undefined
+			? source.createReadStream()
+			: source.createReadStream({ start: range.start, end: range.end })
 	const iterator: AsyncIterator<unknown> = stream[Symbol.asyncIterator]()
 	return new ReadableStream<Uint8Array>({
 		async pull(controller) {
@@ -550,7 +549,7 @@ export function streamFile(
 					controller.close()
 					return
 				}
-				if (!(value instanceof Uint8Array)) {
+				if (!isUint8Array(value)) {
 					await iterator.return?.()
 					controller.error(new TypeError('streamFile: read stream yielded a non-Uint8Array chunk'))
 					return

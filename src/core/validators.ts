@@ -4,7 +4,16 @@ import type {
 	SessionControlInterface,
 	SessionInterface,
 } from './types.js'
-import { isRecord, isString } from '@orkestrel/contract'
+import {
+	isArray,
+	isBoolean,
+	isFunction,
+	isInstance,
+	isNumber,
+	isObject,
+	isRecord,
+	isString,
+} from '@orkestrel/contract'
 
 /**
  * Determines whether a value implements {@link SessionInterface} — a total
@@ -23,14 +32,14 @@ import { isRecord, isString } from '@orkestrel/contract'
  * ```
  */
 export function isSession(value: unknown): value is SessionInterface {
-	if (typeof value !== 'object' || value === null) return false
+	if (!isObject(value)) return false
 	const id: unknown = Reflect.get(value, 'id')
 	const state: unknown = Reflect.get(value, 'state')
-	if (!isString(id) || !(state instanceof Map)) return false
+	if (!isString(id) || !isInstance(state, Map)) return false
 	const set: unknown = Reflect.get(value, 'set')
 	const remove: unknown = Reflect.get(value, 'delete')
 	const clear: unknown = Reflect.get(value, 'clear')
-	return typeof set === 'function' && typeof remove === 'function' && typeof clear === 'function'
+	return isFunction(set) && isFunction(remove) && isFunction(clear)
 }
 
 /**
@@ -47,7 +56,7 @@ export function isSession(value: unknown): value is SessionInterface {
  */
 export function isSessionControl(value: unknown): value is SessionControlInterface {
 	if (!isRecord(value)) return false
-	return typeof value.regenerate === 'function' && typeof value.destroy === 'function'
+	return isFunction(value.regenerate) && isFunction(value.destroy)
 }
 
 /**
@@ -75,9 +84,9 @@ export function isMultipartFile(value: unknown): value is MultipartFile {
 	return (
 		isString(value.field) &&
 		isString(value.name) &&
-		typeof value.size === 'number' &&
+		isNumber(value.size) &&
 		isString(value.mime) &&
-		typeof value.validated === 'boolean' &&
+		isBoolean(value.validated) &&
 		isString(value.status) &&
 		isString(value.path)
 	)
@@ -100,7 +109,7 @@ export function isMultipartBody(value: unknown): value is MultipartBody {
 	if (!isRecord(value)) return false
 	if (!isRecord(value.files) || !isRecord(value.fields)) return false
 	for (const entries of Object.values(value.files)) {
-		if (!Array.isArray(entries)) return false
+		if (!isArray(entries)) return false
 		for (const entry of entries) if (!isMultipartFile(entry)) return false
 	}
 	for (const fieldValue of Object.values(value.fields)) if (!isString(fieldValue)) return false

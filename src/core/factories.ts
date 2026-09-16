@@ -10,7 +10,7 @@ import type {
 } from './types.js'
 import type { Guard } from '@orkestrel/contract'
 import type { TableInterface } from '@orkestrel/database'
-import { isRecord, isString } from '@orkestrel/contract'
+import { isArray, isRecord, isString } from '@orkestrel/contract'
 import { clearCookie, readSignedCookie, resolveSecure, writeSignedCookie } from '@orkestrel/server'
 import { DEFAULT_SESSION_COOKIE, DEFAULT_SESSION_HEADER } from './constants.js'
 import { Session } from './Session.js'
@@ -31,10 +31,7 @@ import { MemorySessionStore } from './stores/MemorySessionStore.js'
  * ```
  */
 export function createCookieTransport(options: CookieTransportOptions): SessionTransportInterface {
-	if (
-		!isString(options.secret) &&
-		(!Array.isArray(options.secret) || !options.secret.every(isString))
-	)
+	if (!isString(options.secret) && (!isArray(options.secret) || !options.secret.every(isString)))
 		throw new TypeError('CookieTransportOptions.secret must be a string or string array')
 	if (options.name !== undefined && !isString(options.name))
 		throw new TypeError('CookieTransportOptions.name must be a string when provided')

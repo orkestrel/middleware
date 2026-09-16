@@ -1,4 +1,5 @@
 import type { MultipartErrorCode } from './types.js'
+import { isNumber, isObject, literalOf } from '@orkestrel/contract'
 import { HTTPError } from '@orkestrel/server'
 import { MULTIPART_ERROR_BRAND, MULTIPART_STATUS } from './constants.js'
 
@@ -62,11 +63,10 @@ export class MultipartError extends HTTPError {
  * ```
  */
 export function isMultipartError(value: unknown): value is MultipartError {
-	if (typeof value !== 'object' || value === null) return false
+	if (!isObject(value)) return false
 	if (!(MULTIPART_ERROR_BRAND in value)) return false
 	if (!('status' in value) || !('code' in value)) return false
-	if (typeof value.status !== 'number') return false
-	if (value.code !== 'limit' && value.code !== 'malformed' && value.code !== 'rejected')
-		return false
+	if (!isNumber(value.status)) return false
+	if (!literalOf('limit', 'malformed', 'rejected')(value.code)) return false
 	return true
 }

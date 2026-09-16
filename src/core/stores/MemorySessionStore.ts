@@ -6,7 +6,7 @@ import type {
 } from '../types.js'
 import { DEFAULT_SESSION_CAPACITY } from '../constants.js'
 import { sessionExpired, validateSessionLimits } from '../helpers.js'
-import { isFiniteNumber, isFunction } from '@orkestrel/contract'
+import { isFunction, isInteger } from '@orkestrel/contract'
 
 /**
  * Implements the default in-process {@link SessionStoreInterface} — a `Map`-backed store
@@ -47,12 +47,7 @@ export class MemorySessionStore<S extends SessionInterface> implements SessionSt
 
 	constructor(options?: MemorySessionStoreOptions) {
 		validateSessionLimits(options)
-		if (
-			options?.capacity !== undefined &&
-			(!isFiniteNumber(options.capacity) ||
-				!Number.isInteger(options.capacity) ||
-				options.capacity <= 0)
-		)
+		if (options?.capacity !== undefined && (!isInteger(options.capacity) || options.capacity <= 0))
 			throw new TypeError(
 				'MemorySessionStore requires options.capacity to be a positive integer when provided',
 			)

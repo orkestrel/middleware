@@ -11,7 +11,7 @@ import type {
 	SessionSnapshot,
 } from './types.js'
 import type { Encoding, MiddlewareContext } from '@orkestrel/server'
-import { isFiniteNumber } from '@orkestrel/contract'
+import { isFiniteNumber, isInteger } from '@orkestrel/contract'
 import {
 	computeClientKey,
 	isCompressibleType,
@@ -138,13 +138,11 @@ export function matchesTrustedEntry(address: string, entry: string): boolean {
 	const networkParts = network.split('.')
 	const addressParts = address.split('.')
 	if (networkParts.length !== 4 || addressParts.length !== 4) return false
-	if (!Number.isInteger(bits) || bits < 8 || bits > 32) return false
+	if (!isInteger(bits) || bits < 8 || bits > 32) return false
 	const networkOctets = networkParts.map(Number)
 	const addressOctets = addressParts.map(Number)
-	if (networkOctets.some((value) => !Number.isInteger(value) || value < 0 || value > 255))
-		return false
-	if (addressOctets.some((value) => !Number.isInteger(value) || value < 0 || value > 255))
-		return false
+	if (networkOctets.some((value) => !isInteger(value) || value < 0 || value > 255)) return false
+	if (addressOctets.some((value) => !isInteger(value) || value < 0 || value > 255)) return false
 	const networkInt =
 		((networkOctets[0] ?? 0) << 24) |
 		((networkOctets[1] ?? 0) << 16) |
@@ -435,7 +433,7 @@ export async function compressResponse(
 	const declaredLength = response.headers.get('content-length')
 	if (declaredLength !== null) {
 		const declared = Number(declaredLength)
-		if (Number.isFinite(declared) && declared < options.threshold) return response
+		if (isFiniteNumber(declared) && declared < options.threshold) return response
 	}
 	const buffer = await response.arrayBuffer()
 	if (buffer.byteLength < options.threshold) return rebuildResponse(buffer, response)
