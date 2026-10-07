@@ -1,6 +1,6 @@
 {
 	"name": "@orkestrel/middleware",
-	"version": "0.0.22",
+	"version": "0.0.23",
 	"description": "Batteries for the @orkestrel/server middleware seam — boundary, telemetry, compression, security, CORS, rate limiting, sessions, CSRF, static files, and multipart uploads as typed factories. Part of the @orkestrel line.",
 	"keywords": [
 		"compression",
