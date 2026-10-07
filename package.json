@@ -89,28 +89,28 @@
 	"dependencies": {
 		"@orkestrel/abort": "^0.0.12",
 		"@orkestrel/budget": "^0.0.12",
-		"@orkestrel/contract": "^0.0.18",
+		"@orkestrel/contract": "^0.0.19",
 		"@orkestrel/timeout": "^0.0.12"
 	},
 	"devDependencies": {
-		"@microsoft/api-extractor": "^7.59.3",
-		"@orkestrel/database": "^0.0.16",
-		"@orkestrel/guide": "^0.0.21",
-		"@orkestrel/probe": "^0.0.19",
+		"@microsoft/api-extractor": "^7.59.4",
+		"@orkestrel/database": "^0.0.17",
+		"@orkestrel/guide": "^0.0.24",
+		"@orkestrel/probe": "^0.0.21",
 		"@orkestrel/router": "^0.0.16",
-		"@orkestrel/scaffold": "^0.0.81",
-		"@orkestrel/server": "^0.0.21",
+		"@orkestrel/scaffold": "^0.0.94",
+		"@orkestrel/server": "^0.0.22",
 		"@orkestrel/test": "^0.0.24",
-		"@types/node": "^26.6.3",
-		"oxfmt": "^0.71.0",
-		"oxlint": "^1.86.0",
+		"@types/node": "^26.6.4",
+		"oxfmt": "^0.72.0",
+		"oxlint": "^1.87.0",
 		"typescript": "^6.0.3",
-		"vite": "^8.3.1",
+		"vite": "^8.3.3",
 		"vitest": "^4.1.11"
 	},
 	"peerDependencies": {
-		"@orkestrel/database": "^0.0.16",
-		"@orkestrel/server": "^0.0.21"
+		"@orkestrel/database": "^0.0.17",
+		"@orkestrel/server": "^0.0.22"
 	},
 	"peerDependenciesMeta": {
 		"@orkestrel/database": {
