@@ -762,20 +762,25 @@ export function createSession<
 		const activeSession = session
 
 		if (activeSession !== undefined) {
-			const control: SessionControlInterface = {
-				regenerate() {
-					if (destroyed) return
-					const newSession =
-						create === undefined ? new Session(crypto.randomUUID()) : create(crypto.randomUUID())
-					transferSessionState(activeSession, newSession)
-					regenerated = newSession
+			Object.assign<
+				object,
+				{ readonly session: SessionInterface; readonly control: SessionControlInterface }
+			>(context.state, {
+				session: activeSession,
+				control: {
+					regenerate() {
+						if (destroyed) return
+						const newSession =
+							create === undefined ? new Session(crypto.randomUUID()) : create(crypto.randomUUID())
+						transferSessionState(activeSession, newSession)
+						regenerated = newSession
+					},
+					destroy() {
+						destroyed = true
+						regenerated = undefined
+					},
 				},
-				destroy() {
-					destroyed = true
-					regenerated = undefined
-				},
-			}
-			Object.assign(context.state, { session: activeSession, control })
+			})
 		}
 
 		const response = await next()
