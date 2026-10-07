@@ -361,7 +361,7 @@ These invariants hold across `src/core` / `src/browser` / `src/server` ↔
     stated earlier.
 22. **Streaming both ways.** `buildRequest` streams a body-carrying method's
     message into the `Request` through a manual `ReadableStream` pump — a `for
-await` loop over the `IncomingMessage` enqueueing each chunk, with
+    await` loop over the `IncomingMessage` enqueueing each chunk, with
     `duplex: 'half'` set as Node's fetch implementation requires for a
     streamed request body; `sendResponse` streams a non-`null` `Response`
     body back to the `ServerResponse` chunk by chunk, ending the target when
