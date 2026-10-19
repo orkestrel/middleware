@@ -100,8 +100,10 @@ Exported from `@orkestrel/scaffold`, and reachable from
 | `HostArtifact`          | interface | Represents a file byte-copied from the vendored data root, planned before its bytes are read.     |
 | `HydratedArtifact`      | interface | Represents a vendored file whose exact bytes have been read, so its content can be compared.      |
 | `ManifestDependencySet` | interface | Describes the runtime, development, and peer sections read from an existing package manifest.     |
+| `ManifestEdit`          | interface | Represents one in-place replacement of manifest text.                                             |
 | `ManifestRegionSet`     | interface | Describes the manifest regions a writing operation may change.                                    |
 | `ManifestScript`        | interface | Represents one manifest script a region-writing operation may replace.                            |
+| `ManifestToken`         | interface | Represents one string or object brace found in manifest text.                                     |
 | `Override`              | interface | Represents one artifact override.                                                                 |
 | `Plan`                  | interface | Holds the compiled, ordered artifact list and the selection it covers.                            |
 | `PlanSummary`           | interface | Represents the tally of one plan by artifact origin.                                              |
@@ -113,93 +115,95 @@ Exported from `@orkestrel/scaffold`, and reachable from
 
 #### Constants
 
-| Name                              | Kind  | Summary                                                                                                |
-| --------------------------------- | ----- | ------------------------------------------------------------------------------------------------------ |
-| `APP_BROWSER_DEV_DEPENDENCIES`    | const | Lists the development dependencies a private browser application adds.                                 |
-| `APP_DEV_DEPENDENCIES`            | const | Names the development dependency every private `app` environment adds.                                 |
-| `APP_MATRIX`                      | const | Holds the configuration and runtime-entry settings each private `app` environment contributes, frozen. |
-| `APP_SERVER_DEV_DEPENDENCIES`     | const | Lists the development dependencies a private server application adds.                                  |
-| `ARTIFACT_TEMPLATES`              | const | Holds formatter-stable template text for source, test, document, guide, and service artifacts.         |
-| `AXES`                            | const | Lists the axes a browser extension may occupy, frozen.                                                 |
-| `BASE_DEV_DEPENDENCIES`           | const | Holds the tooling versions scaffold and every generated workspace share.                               |
-| `BIN_CONFIGS`                     | const | Lists the configuration files a workspace that ships its own executable adds, frozen.                  |
-| `BIN_ENTRY_PATH`                  | const | Names the executable entry whose presence makes a workspace `bin`.                                     |
-| `BROWSE_DEV_DEPENDENCIES`         | const | Names the development dependency a browser or styles surface adds.                                     |
-| `BROWSE_UPSTREAM`                 | const | Lists the packages `@orkestrel/browser` depends on at runtime, directly or transitively, frozen.       |
-| `CANON_PATHS`                     | const | Lists the instruction-canon paths staged for reading rather than for a target, frozen.                 |
-| `CATALOG_AGENT_PATH`              | const | Names the agent file whose marker-bounded package table the catalog verb alone owns.                   |
-| `CATALOG_CLOSING_MARKER`          | const | Names the marker closing the package table inside `CATALOG_AGENT_PATH`.                                |
-| `CATALOG_OPENING_MARKER`          | const | Names the marker opening the package table inside `CATALOG_AGENT_PATH`.                                |
-| `CONFIG_TEMPLATES`                | const | Holds formatter-stable template text for every configuration artifact.                                 |
-| `CONFORMANCE_TEST_PATH`           | const | Names the official-tooling drift proof whose presence makes a workspace `conformance`.                 |
-| `CONTROL_CHARACTER_PATTERN`       | const | Matches the Unicode controls, formatting controls, and line and paragraph separators rejected in text. |
-| `DECLARATION_DEV_DEPENDENCIES`    | const | Lists the development dependencies that roll declarations up for published source.                     |
-| `DEFAULT_ENGINES`                 | const | Names the `engines.node` range a workspace starts with.                                                |
-| `DEFAULT_VERSION`                 | const | Names the version a workspace starts at.                                                               |
-| `DEPENDENCY_NAME_PATTERN`         | const | Matches the runtime dependency name syntax: the `@orkestrel` scope and a bare name.                    |
-| `DISTRIBUTION_TEST_PATH`          | const | Names the generated packed-package proof every publishing workspace is planned at.                     |
-| `ENGINES_PATTERN`                 | const | Matches the minimum-Node engine syntax a blueprint declares.                                           |
-| `ENVIRONMENTS`                    | const | Lists the `Environment` values, frozen.                                                                |
-| `EXECUTABLE_PATHS`                | const | Lists the vendored paths a target receives with its executable bit set, frozen.                        |
-| `EXTRA_RANGE_PATTERN`             | const | Matches the registry-only semver subset accepted for a development extra's range.                      |
-| `FLOOR_RANGE_PATTERN`             | const | Matches the exact `major.minor.patch` floor accepted for a foreign peer's range.                       |
-| `FOREIGN_NAME_PATTERN`            | const | Matches the package name syntax for a dependency this package does not publish.                        |
-| `FRAMEWORKS`                      | const | Lists the supported browser frameworks, frozen.                                                        |
-| `FRAMEWORK_MATRIX`                | const | Describes the tooling and package boundaries of each browser framework, frozen.                        |
-| `GLOBAL_SETUP_PATH`               | const | Names the shared Vitest global-setup module whose presence makes a workspace `global`.                 |
-| `GROUPS`                          | const | Lists the `Group` values in plan order, frozen.                                                        |
-| `GUIDES_TEST_PATH`                | const | Names the package-owned guide-parity entry used by `test:guides` and to select the `guides` project.   |
-| `HEX_PATTERN`                     | const | Matches exact lowercase hexadecimal bytes: two digits per byte, and empty content is valid.            |
-| `HOST_INVENTORY_PATH`             | const | Names the repository-relative path where the committed vendored-file inventory is served.              |
-| `HOST_PATHS`                      | const | Lists the paths a target receives from the vendored data root, frozen.                                 |
-| `INTEGRATION_TEST_PATH`           | const | Names the cross-environment composition proof whose presence makes a workspace `integration`.          |
-| `INVALID_PATH_CHARACTER_PATTERN`  | const | Matches the visible characters a target-relative path and a Markdown path cell both forbid.            |
-| `JOURNEY_CONFIG_PATH`             | const | Names the Vite wrapper whose presence makes a workspace `journey`.                                     |
-| `MANIFEST_PATH`                   | const | Names the manifest path every compiler plan emits with birth ownership.                                |
-| `MAX_ARTIFACT_BYTES`              | const | Caps the bytes accepted for one artifact.                                                              |
-| `MAX_ARTIFACT_HEX_LENGTH`         | const | Caps the length of the hexadecimal string carrying one artifact's bytes.                               |
-| `MAX_AUDIT_FINDINGS`              | const | Caps the findings one audit can produce from a bounded plan and snapshot.                              |
-| `MAX_COLLECTION_ITEMS`            | const | Caps the items accepted in one public collection.                                                      |
-| `MAX_DEPENDENCY_NAME_LENGTH`      | const | Sets the maximum dependency package name length, scope included, as the registry caps it.              |
-| `MAX_MANIFEST_BYTES`              | const | Caps the bytes accepted for one package or vendored-host manifest.                                     |
-| `MAX_NAME_LENGTH`                 | const | Caps the bare workspace name length.                                                                   |
-| `MAX_PATH_LENGTH`                 | const | Caps the length of one path, matching the longest a supported filesystem accepts.                      |
-| `MAX_RANGE_LENGTH`                | const | Caps the length of one declared package range.                                                         |
-| `MAX_REGISTRY_BYTES`              | const | Caps the decoded bytes accepted from one registry response.                                            |
-| `MAX_SCRIPT_LENGTH`               | const | Caps the length of one manifest script name or command.                                                |
-| `MAX_TOTAL_ARTIFACT_BYTES`        | const | Caps the bytes retained across one whole plan or audit.                                                |
-| `MAX_TOTAL_REGISTRY_BYTES`        | const | Caps the decoded bytes accepted across one registry-reading call.                                      |
-| `MINIMUM_NODE_VERSION`            | const | Names the oldest Node version the generated toolchain supports.                                        |
-| `MINIMUM_NPM_VERSION`             | const | Names the oldest npm version the generated toolchain supports.                                         |
-| `NAME_PATTERN`                    | const | Matches the bare workspace name syntax: lowercase alphanumeric with hyphens, letter first.             |
-| `ORCHESTRATION_PATH_NAMES`        | const | Lists the exact root paths that wire an agent bench or own an orchestration directory, frozen.         |
-| `ORCHESTRATION_PATH_PREFIXES`     | const | Lists the path prefixes whose contents instruct or wire an agent, frozen.                              |
-| `ORKESTREL_RANGE_PATTERN`         | const | Matches the exact caret-pinned pre-1.0 range accepted for an `@orkestrel/*` runtime dependency.        |
-| `PRINT_WIDTH`                     | const | Caps the columns one emitted line may occupy, matching `printWidth` in `.oxfmtrc.json`.                |
-| `REFERENCE_PATHS`                 | const | Lists the reference paths staged for offline reading, frozen.                                          |
-| `RELEASE_PROOF_COMMAND`           | const | Names the `prepublishOnly` row that runs the packed-package proof against a real registry.             |
-| `RESERVED_SHEET_NAMES`            | const | Lists the names a styles extension cannot occupy, frozen.                                              |
-| `SEED_GUIDE_PATHS`                | const | Lists the guide paths a generated workspace starts with, frozen.                                       |
-| `SERVICE_SCRIPT_PATH`             | const | Names the inventory skeleton a workspace with declared service vendors is given once.                  |
-| `SERVICE_SETUP_PATH`              | const | Names the live-service readiness module whose presence makes a workspace `service`.                    |
-| `SERVICE_TEST_INCLUDE`            | const | Names the include the live-service project covers, which is a directory rather than one proof.         |
-| `SHEET_ENTRY_NAME`                | const | Names the build entry beside each stylesheet marker.                                                   |
-| `SHOWCASE_CONFIG_PATH`            | const | Names the Vite wrapper whose presence makes a workspace `showcase`.                                    |
-| `SHOWCASE_DEV_DEPENDENCIES`       | const | Names the development dependency used only by the optional single-file showcase build.                 |
-| `SHOWCASE_PAGES_PATH`             | const | Names the physical showcase output directory.                                                          |
-| `SKILLS_CONFIG_PATH`              | const | Names the TypeScript wrapper whose presence makes a workspace `skills`.                                |
-| `SOURCE_BROWSER_DEV_DEPENDENCIES` | const | Lists the development dependencies a published browser `src` environment adds.                         |
-| `SRC_MATRIX`                      | const | Holds the build and export settings each published `src` environment contributes, frozen.              |
-| `STYLES_DEV_DEPENDENCIES`         | const | Lists the development dependencies the styles surface adds, frozen.                                    |
-| `STYLES_ENTRY_PATH`               | const | Names the base stylesheet marker.                                                                      |
-| `SURFACES`                        | const | Lists the surfaces an extension may extend, frozen.                                                    |
-| `TAB_WIDTH`                       | const | Sets the columns one tab occupies when the formatter measures a line, matching `tabWidth`.             |
-| `TARGET_SKILL_NAMES`              | const | Lists the package-facing skills a target receives pointers for, frozen and alphabetical.               |
-| `THEMES_BARREL_PATH`              | const | Names the themes stylesheet marker.                                                                    |
-| `THEMES_ENTRY_PATH`               | const | Names the themes build entry marker.                                                                   |
-| `VERSION_PATTERN`                 | const | Matches the exact `major.minor.patch` version syntax a blueprint declares.                             |
-| `WORKSPACE_DEV_ENGINES`           | const | Holds the `devEngines` record every generated manifest carries.                                        |
-| `WORKSPACE_OWNED_PATHS`           | const | Lists the vendored paths whose present bytes belong to each workspace, frozen.                         |
+| Name                              | Kind  | Summary                                                                                                                                                                                |
+| --------------------------------- | ----- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `APP_BROWSER_DEV_DEPENDENCIES`    | const | Lists the development dependencies a private browser application adds.                                                                                                                 |
+| `APP_DEV_DEPENDENCIES`            | const | Names the development dependency every private `app` environment adds.                                                                                                                 |
+| `APP_MATRIX`                      | const | Holds the configuration and runtime-entry settings each private `app` environment contributes, frozen.                                                                                 |
+| `APP_SERVER_DEV_DEPENDENCIES`     | const | Lists the development dependencies a private server application adds.                                                                                                                  |
+| `ARTIFACT_TEMPLATES`              | const | Holds formatter-stable template text for source, test, document, guide, and service artifacts.                                                                                         |
+| `AXES`                            | const | Lists the axes a browser extension may occupy, frozen.                                                                                                                                 |
+| `BASE_DEV_DEPENDENCIES`           | const | Holds the tooling versions scaffold and every generated workspace share.                                                                                                               |
+| `BIN_CONFIGS`                     | const | Lists the configuration files a workspace that ships its own executable adds, frozen.                                                                                                  |
+| `BIN_ENTRY_PATH`                  | const | Names the executable entry whose presence makes a workspace `bin`.                                                                                                                     |
+| `BROWSE_DEV_DEPENDENCIES`         | const | Names the development dependency a browser or styles surface adds.                                                                                                                     |
+| `BROWSE_UPSTREAM`                 | const | Lists the packages `@orkestrel/browser` depends on at runtime, directly or transitively, frozen.                                                                                       |
+| `CANON_PATHS`                     | const | Lists the instruction-canon paths staged for reading rather than for a target, frozen.                                                                                                 |
+| `CATALOG_AGENT_PATH`              | const | Names the agent file whose marker-bounded package table the catalog verb alone owns.                                                                                                   |
+| `CATALOG_CLOSING_MARKER`          | const | Names the marker closing the package table inside `CATALOG_AGENT_PATH`.                                                                                                                |
+| `CATALOG_OPENING_MARKER`          | const | Names the marker opening the package table inside `CATALOG_AGENT_PATH`.                                                                                                                |
+| `CONFIG_TEMPLATES`                | const | Holds formatter-stable template text for every configuration artifact.                                                                                                                 |
+| `CONFORMANCE_TEST_PATH`           | const | Names the official-tooling drift proof whose presence makes a workspace `conformance`.                                                                                                 |
+| `CONTROL_CHARACTER_PATTERN`       | const | Matches the Unicode controls, formatting controls, and line and paragraph separators rejected in text.                                                                                 |
+| `DECLARATION_DEV_DEPENDENCIES`    | const | Lists the development dependencies that roll declarations up for published source.                                                                                                     |
+| `DEFAULT_ENGINES`                 | const | Names the `engines.node` range a workspace starts with.                                                                                                                                |
+| `DEFAULT_VERSION`                 | const | Names the version a workspace starts at.                                                                                                                                               |
+| `DEPENDENCY_NAME_PATTERN`         | const | Matches the runtime dependency name syntax: the `@orkestrel` scope and a bare name.                                                                                                    |
+| `DISTRIBUTION_TEST_PATH`          | const | Names the generated packed-package proof every publishing workspace is planned at.                                                                                                     |
+| `ENGINES_PATTERN`                 | const | Matches the minimum-Node engine syntax a blueprint declares.                                                                                                                           |
+| `ENVIRONMENTS`                    | const | Lists the `Environment` values, frozen.                                                                                                                                                |
+| `EXECUTABLE_PATHS`                | const | Lists the vendored paths a target receives with its executable bit set, frozen.                                                                                                        |
+| `EXTRA_RANGE_PATTERN`             | const | Matches the registry-only semver subset accepted for a development extra's range.                                                                                                      |
+| `FLOOR_RANGE_PATTERN`             | const | Matches the exact `major.minor.patch` floor accepted for a foreign peer's range.                                                                                                       |
+| `FOREIGN_NAME_PATTERN`            | const | Matches the package name syntax for a dependency this package does not publish.                                                                                                        |
+| `FRAMEWORKS`                      | const | Lists the supported browser frameworks, frozen.                                                                                                                                        |
+| `FRAMEWORK_MATRIX`                | const | Describes the tooling and package boundaries of each browser framework, frozen.                                                                                                        |
+| `GLOBAL_SETUP_PATH`               | const | Names the shared Vitest global-setup module whose presence makes a workspace `global`.                                                                                                 |
+| `GROUPS`                          | const | Lists the `Group` values in plan order, frozen.                                                                                                                                        |
+| `GUIDES_TEST_PATH`                | const | Names the package-owned guide-parity entry used by `test:guides` and to select the `guides` project.                                                                                   |
+| `HEX_PATTERN`                     | const | Matches exact lowercase hexadecimal bytes: two digits per byte, and empty content is valid.                                                                                            |
+| `HOST_INVENTORY_PATH`             | const | Names the repository-relative path where the committed vendored-file inventory is served.                                                                                              |
+| `HOST_PATHS`                      | const | Lists the paths a target receives from the vendored data root, frozen.                                                                                                                 |
+| `INTEGRATION_TEST_PATH`           | const | Names the cross-environment composition proof whose presence makes a workspace `integration`.                                                                                          |
+| `INVALID_PATH_CHARACTER_PATTERN`  | const | Matches the visible characters a target-relative path and a Markdown path cell both forbid.                                                                                            |
+| `JOURNEY_CONFIG_PATH`             | const | Names the Vite wrapper whose presence makes a workspace `journey`.                                                                                                                     |
+| `MANIFEST_PATH`                   | const | Names the manifest path every compiler plan emits with birth ownership.                                                                                                                |
+| `MAX_ARTIFACT_BYTES`              | const | Caps the bytes accepted for one artifact.                                                                                                                                              |
+| `MAX_ARTIFACT_HEX_LENGTH`         | const | Caps the length of the hexadecimal string carrying one artifact's bytes.                                                                                                               |
+| `MAX_AUDIT_FINDINGS`              | const | Caps the findings one audit can produce from a bounded plan and snapshot.                                                                                                              |
+| `MAX_COLLECTION_ITEMS`            | const | Caps the items accepted in one public collection.                                                                                                                                      |
+| `MAX_DEPENDENCY_NAME_LENGTH`      | const | Sets the maximum dependency package name length, scope included, as the registry caps it.                                                                                              |
+| `MAX_MANIFEST_BYTES`              | const | Caps the bytes accepted for one package or vendored-host manifest.                                                                                                                     |
+| `MAX_NAME_LENGTH`                 | const | Caps the bare workspace name length.                                                                                                                                                   |
+| `MAX_PATH_LENGTH`                 | const | Caps the length of one path, matching the longest a supported filesystem accepts.                                                                                                      |
+| `MAX_RANGE_LENGTH`                | const | Caps the length of one declared package range.                                                                                                                                         |
+| `MAX_REGISTRY_BYTES`              | const | Caps the decoded bytes accepted from one registry response.                                                                                                                            |
+| `MAX_SCRIPT_LENGTH`               | const | Caps the length of one manifest script name or command.                                                                                                                                |
+| `MAX_TOTAL_ARTIFACT_BYTES`        | const | Caps the bytes retained across one whole plan or audit.                                                                                                                                |
+| `MAX_TOTAL_REGISTRY_BYTES`        | const | Caps the decoded bytes accepted across one registry-reading call.                                                                                                                      |
+| `MINIMUM_NODE_VERSION`            | const | Names the oldest Node version the generated toolchain supports.                                                                                                                        |
+| `MINIMUM_NPM_VERSION`             | const | Names the oldest npm version the generated toolchain supports.                                                                                                                         |
+| `NAME_PATTERN`                    | const | Matches the bare workspace name syntax: lowercase alphanumeric with hyphens, letter first.                                                                                             |
+| `ORCHESTRATION_PATH_NAMES`        | const | Lists the exact root paths that wire an agent bench or own an orchestration directory, frozen.                                                                                         |
+| `ORCHESTRATION_PATH_PREFIXES`     | const | Lists the path prefixes whose contents instruct or wire an agent, frozen.                                                                                                              |
+| `ORKESTREL_RANGE_PATTERN`         | const | Matches the exact caret-pinned pre-1.0 range accepted for an `@orkestrel/*` runtime dependency.                                                                                        |
+| `PRINT_WIDTH`                     | const | Caps the columns one emitted line may occupy, matching `printWidth` in `.oxfmtrc.json`.                                                                                                |
+| `REFERENCE_PATHS`                 | const | Lists the reference paths staged for offline reading, frozen.                                                                                                                          |
+| `RELEASE_PROOF_COMMAND`           | const | Names the `prepublishOnly` row that runs the packed-package proof against a real registry.                                                                                             |
+| `RESERVED_SHEET_NAMES`            | const | Lists the names a styles extension cannot occupy, frozen.                                                                                                                              |
+| `SEED_GUIDE_PATHS`                | const | Lists the guide paths a generated workspace starts with, frozen.                                                                                                                       |
+| `SERVICE_SCRIPT_PATH`             | const | Names the inventory skeleton a workspace with declared service vendors is given once.                                                                                                  |
+| `SERVICE_SETUP_PATH`              | const | Names the live-service readiness module whose presence makes a workspace `service`.                                                                                                    |
+| `SERVICE_TEST_INCLUDE`            | const | Names the include the live-service project covers, which is a directory rather than one proof.                                                                                         |
+| `SHEET_ENTRY_NAME`                | const | Names the build entry beside each stylesheet marker.                                                                                                                                   |
+| `SHOWCASE_CONFIG_PATH`            | const | Names the Vite wrapper whose presence makes a workspace `showcase`.                                                                                                                    |
+| `SHOWCASE_DEV_DEPENDENCIES`       | const | Names the tested dependency pair selected by the optional single-file showcase build.                                                                                                  |
+| `SHOWCASE_OVERRIDES`              | const | Names the scoped npm override required by the tested showcase plugin.                                                                                                                  |
+| `SHOWCASE_PAGES_PATH`             | const | Names the physical showcase output directory.                                                                                                                                          |
+| `SKILLS_CONFIG_PATH`              | const | Names the TypeScript wrapper whose presence makes a workspace `skills`.                                                                                                                |
+| `SOURCE_BROWSER_DEV_DEPENDENCIES` | const | Lists the development dependencies a published browser `src` environment adds.                                                                                                         |
+| `SRC_MATRIX`                      | const | Holds the build and export settings each published `src` environment contributes, frozen.                                                                                              |
+| `STUDIES_TEST_INCLUDE`            | const | Names the include the study project covers, where an exact-case `*.test.ts` file beneath `tests/studies`, outside any `node_modules` or `.git` directory, makes a workspace `studies`. |
+| `STYLES_DEV_DEPENDENCIES`         | const | Lists the development dependencies the styles surface adds, frozen.                                                                                                                    |
+| `STYLES_ENTRY_PATH`               | const | Names the base stylesheet marker.                                                                                                                                                      |
+| `SURFACES`                        | const | Lists the surfaces an extension may extend, frozen.                                                                                                                                    |
+| `TAB_WIDTH`                       | const | Sets the columns one tab occupies when the formatter measures a line, matching `tabWidth`.                                                                                             |
+| `TARGET_SKILL_NAMES`              | const | Lists the package-facing skills a target receives pointers for, frozen and alphabetical.                                                                                               |
+| `THEMES_BARREL_PATH`              | const | Names the themes stylesheet marker.                                                                                                                                                    |
+| `THEMES_ENTRY_PATH`               | const | Names the themes build entry marker.                                                                                                                                                   |
+| `VERSION_PATTERN`                 | const | Matches the exact `major.minor.patch` version syntax a blueprint declares.                                                                                                             |
+| `WORKSPACE_DEV_ENGINES`           | const | Holds the `devEngines` record every generated manifest carries.                                                                                                                        |
+| `WORKSPACE_OWNED_PATHS`           | const | Lists the vendored paths whose present bytes belong to each workspace, frozen.                                                                                                         |
 
 #### Guards
 
@@ -256,6 +260,7 @@ Exported from `@orkestrel/scaffold`, and reachable from
 | `compareVersions`           | function | Compares two versions by their numeric components.                                                  |
 | `computeBytes`              | function | Counts the UTF-8 bytes text encodes to.                                                             |
 | `computeHash`               | function | Computes the deterministic content identity of text.                                                |
+| `computeTotal`              | function | Computes the sum of a list of numbers.                                                              |
 | `contentToHex`              | function | Encodes text as the exact lowercase hexadecimal form of its UTF-8 bytes.                            |
 | `extractRangeMajor`         | function | Extracts the major component of an admitted dependency range.                                       |
 | `extractVersion`            | function | Extracts the major, minor, and patch components of an exact version.                                |
@@ -265,6 +270,7 @@ Exported from `@orkestrel/scaffold`, and reachable from
 | `isDeferredPath`            | function | Checks whether another surface owns the vendored bytes at a path.                                   |
 | `isFloorPath`               | function | Checks whether a destination's floor bytes survive a live overlay.                                  |
 | `isRetainedPath`            | function | Checks whether another surface owns a target's present bytes at a path.                             |
+| `iterateAnswers`            | function | Yields the answer to each value of a source and ends after the first refused answer.                |
 | `manifestToDependencies`    | function | Projects a package manifest's text to the `@orkestrel/*` packages each dependency section declares. |
 | `manifestToName`            | function | Projects a package manifest's text to its own name.                                                 |
 | `matchesDriftReachability`  | function | Tests whether `inferDrift` could have produced a finding for an ownership.                          |
@@ -275,6 +281,7 @@ Exported from `@orkestrel/scaffold`, and reachable from
 | `nameToGuide`               | function | Derives the guide mirror path a package name answers for.                                           |
 | `planToSummary`             | function | Projects a plan into its tally by artifact origin.                                                  |
 | `renderSkillPointer`        | function | Renders the `SKILL.md` pointer a target carries in place of a canonical skill.                      |
+| `scanManifestTokens`        | function | Scans manifest text for its strings and object braces, in order.                                    |
 | `selectGroups`              | function | Selects the groups a compile covers, in plan order.                                                 |
 | `selectHostPaths`           | function | Selects the host paths a named workspace vendors.                                                   |
 | `serializeTypeScriptString` | function | Serializes one string as a single-quoted TypeScript literal.                                        |
@@ -295,10 +302,12 @@ Exported from `@orkestrel/scaffold`, and reachable from
 | `blueprintToHostArtifacts`          | function | Compiles the vendored host artifacts a workspace plans.                                                  |
 | `blueprintToMachinery`              | function | Derives the host-specific machinery a generated root Vite configuration carries.                         |
 | `blueprintToManifest`               | function | Compiles a blueprint into its `package.json` content.                                                    |
+| `blueprintToManifestOverrides`      | function | Projects the scoped npm overrides required by a selected browser showcase.                               |
 | `blueprintToOrchestrationArtifacts` | function | Compiles the blueprint-dependent orchestration artifacts.                                                |
 | `blueprintToQuestions`              | function | Measures a blueprint against every law its own fields decide.                                            |
 | `blueprintToRootTsconfig`           | function | Compiles the root TypeScript configuration for a blueprint.                                              |
 | `blueprintToProjects`               | function | Projects a blueprint into the project labels its root Vitest configuration registers.                    |
+| `blueprintToOptimizedDependencies`  | function | Compiles the browser projects' pre-bundled dependency list for a blueprint.                              |
 | `blueprintToRootVite`               | function | Compiles the root Vite and Vitest configuration for a blueprint.                                         |
 | `blueprintToScripts`                | function | Projects a blueprint into the scripts its manifest declares.                                             |
 | `blueprintToSheets`                 | function | Projects a blueprint into its validated sheet-face names in stable order.                                |
@@ -307,11 +316,14 @@ Exported from `@orkestrel/scaffold`, and reachable from
 | `blueprintToWritableScripts`        | function | Projects a blueprint into the manifest scripts a region write may replace.                               |
 | `dependenciesToQuestions`           | function | Measures one declared package list against the name and range syntax it accepts.                         |
 | `insertManifestDependencies`        | function | Inserts dependencies a package manifest does not declare into the section each one names.                |
+| `insertManifestSection`             | function | Inserts dependencies into one section of package manifest text.                                          |
 | `overridesToQuestions`              | function | Measures a blueprint's overrides against the artifacts drafted for it.                                   |
 | `pathToCondition`                   | function | Builds one `exports` condition block for a built environment.                                            |
 | `planToFindings`                    | function | Compares a plan against a target's current content.                                                      |
 | `planToHash`                        | function | Computes a plan's content identity.                                                                      |
 | `replaceManifestRanges`             | function | Replaces the runtime and development dependency ranges in package manifest text, and never a peer range. |
+| `replaceManifestOverride`           | function | Replaces one npm override leaf in manifest text, inserting its absent ancestors.                         |
+| `replaceManifestOverrides`          | function | Replaces selected npm override leaves while preserving every byte outside the edited path.               |
 | `replaceManifestScripts`            | function | Replaces named script values in package manifest text.                                                   |
 | `replacePlanRanges`                 | function | Replaces dependency ranges in a plan's manifest and recomputes its identity.                             |
 | `srcToEntry`                        | function | Projects a published selection into the manifest's entry fields.                                         |
@@ -344,27 +356,27 @@ Exported from `@orkestrel/scaffold/server`, and reachable from
 
 #### Interfaces
 
-| Name                    | Kind      | Summary                                                                                           |
-| ----------------------- | --------- | ------------------------------------------------------------------------------------------------- |
-| `BytesReadResult`       | interface | Reports the outcome of one bounded read whose body is taken as exact bytes.                       |
-| `Host`                  | interface | Represents a whole vendored host supplied as a value: the membership beside the bytes filling it. |
-| `HostInventory`         | interface | Represents the committed vendored-file inventory as one call's reads are decided against.         |
-| `HostManifest`          | interface | Represents the complete vendored-host inventory.                                                  |
-| `HostStageOptions`      | interface | Configures the committed inventory baseline and staging reports.                                  |
-| `ManifestEntry`         | interface | Represents one file record of the vendored host's manifest.                                       |
-| `MaterializeResult`     | interface | Reports the outcome of one mutation of a target.                                                  |
-| `MaterializerInterface` | interface | Describes the mutation contract: the package's only filesystem writer.                            |
-| `MaterializerOptions`   | interface | Represents the options for the materializer.                                                      |
-| `ReadAllowance`         | interface | Represents the byte allowance one whole upstream call spends across every read it makes.          |
-| `SurfaceCollision`      | interface | Represents a Surface name claimed by distinct package guides.                                     |
-| `TextReadResult`        | interface | Reports the outcome of one bounded read whose body is taken as text.                              |
-| `Worktree`              | interface | Describes what git reports about a target's working tree.                                         |
-| `UpstreamInterface`     | interface | Describes the upstream contract: the package's only network reader, and it never writes.          |
-| `UpstreamOptions`       | interface | Represents the options for the upstream reader.                                                   |
-| `WriteAnchor`           | interface | Represents one physical directory identity captured across a write transaction.                   |
-| `WriteDirectoryResult`  | interface | Reports the final directory anchor of a write transaction and the subset one call created.        |
-| `WriteExpectation`      | interface | Represents one destination snapshot captured before a write and required to survive it.           |
-| `WritePrecondition`     | interface | Describes the narrower caller-observed destination state a write transaction must still match.    |
+| Name                     | Kind      | Summary                                                                                           |
+| ------------------------ | --------- | ------------------------------------------------------------------------------------------------- |
+| `BytesReadResult`        | interface | Reports the outcome of one bounded read whose body is taken as exact bytes.                       |
+| `Host`                   | interface | Represents a whole vendored host supplied as a value: the membership beside the bytes filling it. |
+| `HostInventory`          | interface | Represents the committed vendored-file inventory as one call's reads are decided against.         |
+| `HostManifest`           | interface | Represents the complete vendored-host inventory.                                                  |
+| `HostStageOptions`       | interface | Configures the committed inventory baseline and staging reports.                                  |
+| `ManifestEntry`          | interface | Represents one file record of the vendored host's manifest.                                       |
+| `MaterializeResult`      | interface | Reports the outcome of one mutation of a target.                                                  |
+| `MaterializerInterface`  | interface | Describes the mutation contract: the package's only filesystem writer.                            |
+| `MaterializerOptions`    | interface | Represents the options for the materializer.                                                      |
+| `ReadAllowanceInterface` | interface | Describes the byte allowance one upstream call spends across every read it makes.                 |
+| `SurfaceCollision`       | interface | Represents a Surface name claimed by distinct package guides.                                     |
+| `TextReadResult`         | interface | Reports the outcome of one bounded read whose body is taken as text.                              |
+| `Worktree`               | interface | Describes what git reports about a target's working tree.                                         |
+| `UpstreamInterface`      | interface | Describes the upstream contract: the package's only network reader, and it never writes.          |
+| `UpstreamOptions`        | interface | Represents the options for the upstream reader.                                                   |
+| `WriteAnchor`            | interface | Represents one physical directory identity captured across a write transaction.                   |
+| `WriteDirectoryResult`   | interface | Reports the final directory anchor of a write transaction and the subset one call created.        |
+| `WriteExpectation`       | interface | Represents one destination snapshot captured before a write and required to survive it.           |
+| `WritePrecondition`      | interface | Describes the narrower caller-observed destination state a write transaction must still match.    |
 
 The inventory contracts carry these data members.
 
@@ -431,59 +443,64 @@ The inventory contracts carry these data members.
 
 #### Helpers
 
-| Name                      | Kind     | Summary                                                                                |
-| ------------------------- | -------- | -------------------------------------------------------------------------------------- |
-| `computeDigest`           | function | Computes the SHA-256 digest of text.                                                   |
-| `computeFileDigest`       | function | Computes the SHA-256 digest of one file's exact bytes.                                 |
-| `computeManifestDigest`   | function | Computes the digest of a vendored host's declared membership.                          |
-| `decodeHexText`           | function | Decodes exact bytes stated in hexadecimal as strict UTF-8 text.                        |
-| `filesToHost`             | function | Assembles a whole vendored host from live files and the installed floor.               |
-| `hexToDigest`             | function | Projects exact bytes stated in hexadecimal to their SHA-256 digest.                    |
-| `isExactCaseFile`         | function | Tests whether a path is a physical file with exact on-disk casing.                     |
-| `isPhysicalDirectory`     | function | Tests whether a path is a physical directory this package will read or write into.     |
-| `isPhysicalFile`          | function | Tests whether a path is a physical file this package will read or replace.             |
-| `isVacant`                | function | Tests whether a target is safe to write a fresh workspace into.                        |
-| `listCanonPaths`          | function | Lists the canon paths a target holds, filtered to a plan's groups.                     |
-| `listDirectories`         | function | Lists a directory's descendant directories as sorted root-relative paths.              |
-| `listFiles`               | function | Lists a directory's files as sorted root-relative paths.                               |
-| `matchesAnchor`           | function | Tests whether a path still holds the captured directory identity.                      |
-| `matchesExecutablePath`   | function | Tests whether a vendored path is one a target receives executable.                     |
-| `matchesExpectation`      | function | Tests whether a destination still holds what was captured of it.                       |
-| `matchesGitPath`          | function | Tests whether a path addresses a target's own repository metadata.                     |
-| `matchesMissingPath`      | function | Tests whether a caught filesystem error reports an absent path.                        |
-| `matchesPrecondition`     | function | Tests whether a destination still matches the narrower state a caller observed.        |
-| `matchesProtectedPath`    | function | Tests whether a target-relative path is one no verb may delete.                        |
-| `matchesSensitivePath`    | function | Tests whether a path names local configuration or a credential.                        |
-| `pathToStorage`           | function | Projects a target-relative path to the storage name a vendored host holds it under.    |
-| `pruneEmptiedDirectories` | function | Removes every directory one set of deletions emptied.                                  |
-| `readAnchor`              | function | Captures one directory's physical identity.                                            |
-| `readExpectation`         | function | Captures what one destination holds before a write.                                    |
-| `readFileHex`             | function | Reads one contained file as its exact bytes in lowercase hexadecimal.                  |
-| `readFileText`            | function | Reads one contained file as bounded UTF-8 text.                                        |
-| `readHostFloor`           | function | Reads the installed vendored host floor as a value.                                    |
-| `readHostManifest`        | function | Reads a vendored host's manifest, when it carries one.                                 |
-| `readManifestEntry`       | function | Derives one vendored-host manifest entry from a file in a checkout.                    |
-| `readSnapshot`            | function | Reads a target's current bytes at the paths a plan claims.                             |
-| `readSurfaceBaseline`     | function | Reads the Surface collision baseline from a committed inventory.                       |
-| `readSurfaceCollisions`   | function | Reads bare Surface names claimed by distinct package guides.                           |
-| `resolveContainedPath`    | function | Resolves a root-relative path and refuses one that leaves its root.                    |
-| `resolveRealPath`         | function | Resolves a path through the real filesystem, keeping the part that does not exist yet. |
-| `stageBytes`              | function | Stages the named destinations of a value host into a private root.                     |
-| `stageHost`               | function | Stages a vendored host root from a real checkout.                                      |
-| `stageInventory`          | function | Stages the committed inventory of the files a vendored host carries.                   |
+| Name                      | Kind     | Summary                                                                                           |
+| ------------------------- | -------- | ------------------------------------------------------------------------------------------------- |
+| `climbRealPath`           | function | Climbs from an absolute path to its deepest existing ancestor and resolves it through every link. |
+| `collectIndexed`          | function | Places each result at the index its entry names, in a fresh array.                                |
+| `computeDigest`           | function | Computes the SHA-256 digest of text.                                                              |
+| `computeFileDigest`       | function | Computes the SHA-256 digest of one file's exact bytes.                                            |
+| `computeManifestDigest`   | function | Computes the digest of a vendored host's declared membership.                                     |
+| `decodeHexText`           | function | Decodes exact bytes stated in hexadecimal as strict UTF-8 text.                                   |
+| `filesToHost`             | function | Assembles a whole vendored host from live files and the installed floor.                          |
+| `hexToDigest`             | function | Projects exact bytes stated in hexadecimal to their SHA-256 digest.                               |
+| `isExactCaseFile`         | function | Tests whether a path is a physical file with exact on-disk casing.                                |
+| `isPhysicalDirectory`     | function | Tests whether a path is a physical directory this package will read or write into.                |
+| `isPhysicalFile`          | function | Tests whether a path is a physical file this package will read or replace.                        |
+| `isVacant`                | function | Tests whether a target is safe to write a fresh workspace into.                                   |
+| `listAncestors`           | function | Lists a path followed by each directory above it, nearest first.                                  |
+| `listCanonPaths`          | function | Lists the canon paths a target holds, filtered to a plan's groups.                                |
+| `listDirectories`         | function | Lists a directory's descendant directories as sorted root-relative paths.                         |
+| `listFiles`               | function | Lists a directory's files as sorted root-relative paths.                                          |
+| `matchesAnchor`           | function | Tests whether a path still holds the captured directory identity.                                 |
+| `matchesExecutablePath`   | function | Tests whether a vendored path is one a target receives executable.                                |
+| `matchesExpectation`      | function | Tests whether a destination still holds what was captured of it.                                  |
+| `matchesGitPath`          | function | Tests whether a path addresses a target's own repository metadata.                                |
+| `matchesMissingPath`      | function | Tests whether a caught filesystem error reports an absent path.                                   |
+| `matchesPrecondition`     | function | Tests whether a destination still matches the narrower state a caller observed.                   |
+| `matchesProtectedPath`    | function | Tests whether a target-relative path is one no verb may delete.                                   |
+| `matchesSensitivePath`    | function | Tests whether a path names local configuration or a credential.                                   |
+| `pathToStorage`           | function | Projects a target-relative path to the storage name a vendored host holds it under.               |
+| `pruneEmptiedDirectories` | function | Removes every directory one set of deletions emptied.                                             |
+| `readAnchor`              | function | Captures one directory's physical identity.                                                       |
+| `readExpectation`         | function | Captures what one destination holds before a write.                                               |
+| `readFileHex`             | function | Reads one contained file as its exact bytes in lowercase hexadecimal.                             |
+| `readFileText`            | function | Reads one contained file as bounded UTF-8 text.                                                   |
+| `readHostFloor`           | function | Reads the installed vendored host floor as a value.                                               |
+| `readHostManifest`        | function | Reads a vendored host's manifest, when it carries one.                                            |
+| `readManifestEntry`       | function | Derives one vendored-host manifest entry from a file in a checkout.                               |
+| `readSnapshot`            | function | Reads a target's current bytes at the paths a plan claims.                                        |
+| `readSurfaceBaseline`     | function | Reads the Surface collision baseline from a committed inventory.                                  |
+| `readSurfaceCollisions`   | function | Reads bare Surface names claimed by distinct package guides.                                      |
+| `resolveContainedPath`    | function | Resolves a root-relative path and refuses one that leaves its root.                               |
+| `resolveRealPath`         | function | Resolves a path through the real filesystem, keeping the part that does not exist yet.            |
+| `stageBytes`              | function | Stages the named destinations of a value host into a private root.                                |
+| `stageHost`               | function | Stages a vendored host root from a real checkout.                                                 |
+| `stageInventory`          | function | Stages the committed inventory of the files a vendored host carries.                              |
 
 #### Classes
 
 | Name               | Kind  | Summary                                                                                       |
 | ------------------ | ----- | --------------------------------------------------------------------------------------------- |
 | `Materializer`     | class | Represents the mutation spine: read the vendored host, re-derive the target, stage, swap.     |
+| `ReadAllowance`    | class | Represents the byte allowance one upstream call spends across every read it makes.            |
 | `Upstream`         | class | Represents the reading spine: one bounded, unauthenticated, redirect-free request per answer. |
 | `WriteTransaction` | class | Represents one staged, reversible mutation of one target directory.                           |
 
 ## Methods
 
-`Compiler` implements `CompilerInterface`, `Materializer` implements `MaterializerInterface`, and
-`Upstream` implements `UpstreamInterface`. Each class exposes exactly its interface's members and
+`Compiler` implements `CompilerInterface`, `Materializer` implements `MaterializerInterface`,
+`ReadAllowance` implements `ReadAllowanceInterface`, and `Upstream` implements
+`UpstreamInterface`. Each class exposes exactly its interface's members and
 nothing more, so the following interface tables describe the classes too. `WriteTransaction`
 publishes no interface and is documented directly.
 
@@ -507,6 +524,12 @@ publishes no interface and is documented directly.
 | `declare`     | Rewrites the manifest regions the caller names in the target's manifest.          |
 | `remove`      | Re-derives and deletes the tracked files the plan does not own.                   |
 | `destroy`     | Tears the materializer down. Every later call throws, and teardown is idempotent. |
+
+#### `ReadAllowanceInterface`
+
+| Method  | Summary                                          |
+| ------- | ------------------------------------------------ |
+| `spend` | Spends bytes a read consumed from the allowance. |
 
 #### `UpstreamInterface`
 
@@ -640,8 +663,9 @@ answers a read and grant no verb write authority that it did not already have.
 states what each emits and what each refuses. Creation leaves `setup` empty, and the remaining
 structural facts take no creation option. Add a root `tests/setup*.test.ts` proof for `setup`,
 `tests/guides.test.ts` for `guides`, `tests/integration.test.ts` for `integration`,
-`tests/conformance.test.ts` for `conformance`, `tests/setupService.ts` for `service`,
-`tests/setupGlobal.ts` for `global`, `configs/app/vite.journey.config.ts` for `journey`, and
+`tests/conformance.test.ts` for `conformance`, `tests/setupService.ts` for `service`, an
+exact-case `*.test.ts` file beneath `tests/studies`, outside any `node_modules` or `.git` directory,
+for `studies`, `tests/setupGlobal.ts` for `global`, `configs/app/vite.journey.config.ts` for `journey`, and
 `configs/agents/tsconfig.skills.json` for `skills`; reading verbs detect each exact-case file and
 register its fixed machinery. An explicitly supplied
 plan with `vendors` owns and protects the birth-owned `scripts/service.sh` inventory skeleton.
@@ -662,9 +686,12 @@ read from the markers Surfaces and extensions lists. The remaining facts come fr
 files: `src/bin/main.ts` selects `bin`, each root `tests/setup*.test.ts` match selects `setup`,
 `tests/guides.test.ts` selects `guides`, `tests/integration.test.ts` selects `integration`,
 `tests/conformance.test.ts` selects `conformance`, `tests/setupService.ts` selects `service`,
-`tests/setupGlobal.ts` selects `global`, `configs/app/vite.journey.config.ts` selects `journey`,
+any exact-case `*.test.ts` file beneath `tests/studies`, nested or direct, outside any
+`node_modules` or `.git` directory, which Vitest's default exclude never collects, selects
+`studies`, `tests/setupGlobal.ts` selects `global`, `configs/app/vite.journey.config.ts` selects `journey`,
 and `configs/agents/tsconfig.skills.json` selects `skills`. A containing directory does not select
-any of those facts by itself. `tests/distribution.test.ts` selects nothing: the published `src`
+any of those facts by itself: `tests/studies/types.ts`, a case-folded `tests/Studies` directory, and
+the harness module `tests/setupStudy.ts` select no `studies`. `tests/distribution.test.ts` selects nothing: the published `src`
 axis and the sheet faces the target ships already decide the `distribution` project, and the file is
 planned from that.
 
@@ -1008,8 +1035,8 @@ because the shape is chosen once and read afterwards: `new` refuses the advisory
 `repair` need the plan to describe and restore a target that already has that shape. A library
 caller creating a workspace holds the same refusal, and the Compile section states it.
 
-`bin`, `setup`, `guides`, `integration`, `conformance`, `service`, `vendors`, `global`, `styles`,
-`themes`, `showcase`, `journey`, and `skills` are structural facts, and `extensions` lists the
+`bin`, `setup`, `guides`, `integration`, `conformance`, `service`, `vendors`, `studies`, `global`,
+`styles`, `themes`, `showcase`, `journey`, and `skills` are structural facts, and `extensions` lists the
 extension faces. Reading verbs set each fact and list each extension only when the workspace
 physically ships the directory or exact-case file that defines it, never because of the workspace's
 name and never because a sibling fact is set.
@@ -1072,6 +1099,19 @@ timeouts and disabled file parallelism are the same in each workspace form. `ven
 workspace drives and emits `scripts/service.sh`, an inventory skeleton that starts nothing. The
 vendor inventory and live-service setup are independent: a workspace may declare vendors before it
 writes a suite, and a suite may drive a service the skeleton does not start.
+
+`studies` says the workspace holds at least one exact-case `*.test.ts` file beneath `tests/studies`,
+nested or direct, outside any `node_modules` or `.git` directory, which Vitest's default exclude
+never collects, and it alone registers the `studies` Vitest project over that directory and its
+`test:studies` script. The project loads `tests/setup.ts` alone. The tests import
+`tests/setupStudy.ts`, a harness module the package owns, so scaffold plans no such file and no
+project loads it as a setup file. A publishing workspace invokes the project from `prepublishOnly`,
+after `npm test` and before the release proof; a `private: true` workspace invokes it from `test`,
+before the live-service project. Its longer timeouts and disabled file parallelism match the
+live-service project. The root `studies/` directory holds the adapters and declarations the study
+tests run, and it selects nothing. A `prepublishOnly` chain written before the fact existed upgrades
+in place: the generated chain without its study step, and without both its study step and the release
+proof, are accepted predecessors.
 
 `integration` projects a cross-environment composition proof for any workspace, independently of
 whether it has a published `src`. Its generated seed imports every selected `src` and `app`
@@ -1495,12 +1535,12 @@ content is produced. `Ownership` says what scaffold claims at the path.
 
 Presence ownership has separate mechanisms, and a reader needs to know which applies:
 
-| Mechanism       | Paths                                             | Bytes belong to                              | Cost                                                        |
-| --------------- | ------------------------------------------------- | -------------------------------------------- | ----------------------------------------------------------- |
-| Verb-owned      | `CATALOG_AGENT_PATH` and dependency guide mirrors | `catalog` or `mirror`                        | The owning verb is the only route for a later update.       |
-| Workspace-owned | `WORKSPACE_OWNED_PATHS`, which holds `.gitignore` | The target workspace                         | Present bytes receive no later canonical ignore update.     |
-| Plan-owned      | `DISTRIBUTION_TEST_PATH`                          | The plan, until the workspace writes its own | A deleted file is restored from the plan on the next write. |
-| Unhydrated      | Every vendored path a core-compiled plan carries  | Scaffold, after a hydrating face reads them  | Hydration restores the byte claim the core plan omits.      |
+| Mechanism       | Paths                                              | Bytes belong to                              | Cost                                                        |
+| --------------- | -------------------------------------------------- | -------------------------------------------- | ----------------------------------------------------------- |
+| Verb-owned      | `CATALOG_AGENT_PATH` and dependency guide mirrors  | `catalog` or `mirror`                        | The owning verb is the only route for a later update.       |
+| Workspace-owned | `WORKSPACE_OWNED_PATHS`, which holds `.gitignore`  | The target workspace                         | Present bytes receive no later canonical ignore update.     |
+| Plan-owned      | `DISTRIBUTION_TEST_PATH` and `configs/commands.ts` | The plan, until the workspace writes its own | A deleted file is restored from the plan on the next write. |
+| Unhydrated      | Every vendored path a core-compiled plan carries   | Scaffold, after a hydrating face reads them  | Hydration restores the byte claim the core plan omits.      |
 
 The unhydrated row is the one a core-only caller meets most, and reading it as a claim about the
 path is the mistake it invites. `Compiler` runs in the pure core face, which cannot read the
@@ -1538,7 +1578,9 @@ and `tests/app`, the `tests/src/bin/main.test.ts` file, and the `tests/integrati
 Every sheet face's seed under `src` is yours on the same terms. Scaffold writes those
 planned files only during materialize and leaves later edits or deletions alone. You also own the
 `tests/guides.test.ts`, `tests/conformance.test.ts`, and `tests/service/**/*.test.ts` proof files,
-each of which selects its project by being written. Scaffold content-owns `tests/setupPolicy.ts`,
+each of which selects its project by being written. The browser commands you register in
+`configs/commands.ts` are yours too: scaffold writes the empty seed when the file is missing and
+leaves the bytes you wrote alone. Scaffold content-owns `tests/setupPolicy.ts`,
 `tests/policy.test.ts`, and `tests/config.test.ts`; `repair` and `overwrite` restore those files when
 their bytes drift or the files are missing.
 
@@ -1674,7 +1716,8 @@ the others are not.
 
 Content ownership does not preserve an arbitrary custom Vitest project. The optional proof projects
 are fixed: `guides`, `integration`, `conformance`, and `service` are selected by their defining
-paths, and `distribution` by a published `src` environment. A workspace that needs other local
+paths, `studies` by an exact-case `*.test.ts` file beneath `tests/studies` outside any `node_modules` or
+`.git` directory, and `distribution` by a published `src` environment. A workspace that needs other local
 configuration must keep those edits outside a content-owned file; `repair` restores that file to the
 canonical project set.
 
@@ -1775,14 +1818,33 @@ lookup verdict records why the registry row could not enter a layer.
 
 ## Dependency floors
 
-Every scaffold-owned runtime or development range is a floor: a caret over a whole
+Except for the selected showcase policy, every scaffold-owned runtime or development range is a floor: a caret over a whole
 `major.minor.patch` version. The triple is the newest release the registry served when that floor
 was last raised, so a workspace generated with no network still receives the latest floor scaffold
 knew rather than a bare `major.0.0`. A `Blueprint.peers` row is written during creation into a
 vacant target. After creation, peer declarations and `peerDependenciesMeta` are caller-owned:
 `audit`, `repair`, `catalog`, and `overwrite` do not invent, rewrite, insert, or remove them. Caller
-extras also pass through unchanged. Extras follow `EXTRA_RANGE_PATTERN`; fleet peers follow
+extras pass through unchanged except for the selected showcase pair. Extras follow `EXTRA_RANGE_PATTERN`; fleet peers follow
 `ORKESTREL_RANGE_PATTERN`; foreign peers follow `FLOOR_RANGE_PATTERN`.
+
+A browser application with `showcase: true`, including its Vue face, selects exact
+`vite-plugin-singlefile: 2.3.3`, Vite `^8.3.4` from scaffold's manifest, and the npm override
+`"vite-plugin-singlefile@2.3.3": { "micromatch": "npm:picomatch@2.3.2" }`. This policy applies
+after extras. Online resolution excludes this pair from ordinary foreign-major updates; other
+dependencies retain their usual resolution. Repair preserves each package's runtime or development
+section. Audit reports pin drift and override-only drift. Overwrite lands the pair and override in
+its offline half, including missing planned dependencies, before the catalog read.
+
+`blueprintToManifestOverrides(blueprint: Blueprint): Readonly<Record<string, Readonly<Record<string, string>>>>`
+projects this metadata for a selected showcase and returns an empty map otherwise.
+`replaceManifestOverrides(manifest: string, overrides: Readonly<Record<string, Readonly<Record<string, string>>>>): string | undefined`
+inserts missing ancestors or leaves and replaces stale string leaves without changing unrelated
+bytes. Aligned text is returned unchanged. Invalid JSON, duplicate selected keys, malformed
+ancestors, and non-string owned leaves return `undefined`; repair and overwrite refuse these
+structures before writing configuration. `ManifestRegionSet.overrides` carries the same optional
+map into `Materializer.declare`, independently of the artifact replacements in `Blueprint.overrides`.
+Like other manifest-region writes, repair and overwrite apply this policy with any `--groups`
+selection. `replaceManifestRanges` continues to ignore npm overrides.
 
 The distribution project packs a caller-owned peer beside a co-peer witness that requires an exact
 version. The real npm resolver accepts the preserved range. Its narrowed-range control reports
@@ -1799,7 +1861,7 @@ row entering or leaving the manifest moves a test rather than passing unnoticed.
 of `STYLES_DEV_DEPENDENCIES`, is a seed as well: it carries the `^1.105.1` range the
 `@orkestrel/veneer` checkout declared on 2026-09-30, and that test names it in the seeded set.
 
-A newer major is never crossed for you. `audit` reports one as a non-blocking `dependencies`
+Outside the selected showcase pair, a newer major is never crossed for you. `audit` reports one as a non-blocking `dependencies`
 question, and a person decides whether the generated toolchain supports it. Inside the declared
 major the verbs raise the floor themselves, which is what makes the caret's own width beside the
 point: `^0.64.0` admits no `0.65.0`, and `repair` rewrites the range to `^0.65.0` rather than
@@ -1859,8 +1921,11 @@ lists name.
 licence, the harness permission file, the scaffold-owned `scripts` directory, the
 shared policy register, the shared policy proof, the shared policy plugin, the shared configuration
 leaf and its proof, and the byte-identical root dotfiles. The session-start hooks inside `scripts`
-split by job. The bench probe reports whether a bench CLI resolves, and the dependency hook installs
-the lockfile's closure in a remote session.
+split by job. The bench probe reports whether a bench CLI resolves. In a remote session one command
+runs three hooks in order: the npm hook installs the newest npm in the major of the floor the
+workspace's `devEngines` record declares when the container's npm is older, the dependency hook
+installs the lockfile's closure, and the browser hook installs the Chromium builds the
+`playwright-core` package pins when the container's browser store lacks them.
 The Ollama hook invokes `scripts/ollama.sh` only when `CLAUDE_CODE_REMOTE=true`; direct invocation
 remains available for live-service setup. Claude Code Cloud is Linux and has bash: SessionStart
 runs that POSIX script and never a Windows wrapper. What wires a bench stays in the canon, and a
@@ -1983,7 +2048,9 @@ and `overwrite` restore its bytes, so an edit made to it inside a target is reve
 visit and reported as drift until then. Put an operator grant in `.claude/settings.local.json`
 instead. That path is outside `HOST_PATHS` and matches the vendoring deny-list
 `matchesSensitivePath` reads, so `stageHost` never copies it into a host root and no plan carries
-it.
+it. The staged `.claude/settings.json` sets `CLAUDE_CODE_SUBAGENT_MODEL` to `sonnet` in its `env`
+object: the model a Claude Code subagent runs on when no role frontmatter and no dispatch assigns
+one; `.claude/AGENTS.md` § Models owns the rule.
 
 `stageHost` fills the root from a real checkout at build time:
 
@@ -2109,6 +2176,36 @@ Nothing is fixed except the manifest.
   one usable build for many Playwright versions. It is its own file rather than a block in the
   vendored `configs/helpers.ts`, which every workspace receives byte-identical while only a browser
   selection declares the `playwright` this module imports.
+- One template artifact, `configs/commands.ts`, for every workspace that receives
+  `configs/browsers.ts`. It exports one frozen `commands` record, empty in the seed, and every root
+  factory that configures a `playwright()` provider passes that record to Vitest as
+  `test.browser.commands`. `appVue` and each `journey:<variant>` project keep it through the
+  browser configuration they spread. Scaffold claims the file by presence, so `repair` and
+  `overwrite` write the seed into a target that lacks it and keep the commands you register.
+- The root configuration bundles `configs/commands.ts` into every configuration load, builds
+  included, and the bundle resolves no workspace alias. A native import of `src/server/index.ts`
+  from a command body fails with `ERR_MODULE_NOT_FOUND` on that module's own `@src/core` import.
+  Import only a `node:` module or a package the manifest declares in `dependencies` or
+  `devDependencies` at the top of the file. Load workspace source inside the command body through
+  `context.project.vitest.import`, which runs on the root Vite server and its `resolve.alias`, and
+  narrow the module it returns as `unknown`. The following module registers a `greeting` command
+  that returns the `message` export of `src/server/index.ts`:
+
+  ```ts
+  import type { BrowserCommandContext, BrowserConfigOptions } from 'vitest/node'
+  import { fileURLToPath } from 'node:url'
+
+  const SERVER_ENTRY = fileURLToPath(new URL('../src/server/index.ts', import.meta.url))
+
+  export const commands: Readonly<NonNullable<BrowserConfigOptions['commands']>> = Object.freeze({
+  	greeting: async (context: BrowserCommandContext): Promise<string | undefined> => {
+  		const loaded = await context.project.vitest.import<unknown>(SERVER_ENTRY)
+  		if (typeof loaded !== 'object' || loaded === null || !('message' in loaded)) return undefined
+  		return typeof loaded.message === 'string' ? loaded.message : undefined
+  	},
+  })
+  ```
+
 - One template artifact per source and test file the selection needs: an `index.ts` barrel per
   selected environment, `main.ts` and `index.html` for an application browser, `tests/setup.ts`
   plus the host setup modules the selection reaches, and one entry test per axis project. An
@@ -2260,7 +2357,8 @@ upstream.destroy()
 ```
 
 Every request is unauthenticated, follows no redirect, and is bounded twice: `limit` refuses one
-oversized answer and `budget` refuses many small ones. A per-package failure is collected as a
+oversized answer and `budget` refuses many small ones. A read that lands exactly on the budget is
+accepted, and the call's next read is refused before it is requested. A per-package failure is collected as a
 verdict carrying its cause rather than thrown, so one unreachable package never costs the caller the
 rest of the answer. The organization package list is the exception, because without it there is no
 fleet to report.
@@ -2450,11 +2548,11 @@ module's behavior unmeasured. A generated file there would read as a proof while
 which is worse than an absent one. So the file a consumer writes is what selects each of those
 projects. Scaffold also seeds proofs for its own setup modules, as Root setup mirror describes.
 
-Registration follows the same split. Scaffold registers `conformance` and `service` when their
+Registration follows the same split. Scaffold registers `conformance`, `studies`, and `service` when their
 structural facts are set, and registers `distribution` whenever the workspace publishes at least one
-`src` environment or sheet face. In a publishing workspace, `distribution` and `service` run from `prepublishOnly`
+`src` environment or sheet face. In a publishing workspace, `distribution`, `studies`, and `service` run from `prepublishOnly`
 and `conformance` stays in `test`. In a `private: true` workspace, `distribution` is absent,
-`service` runs from `test`, and there is no `prepublishOnly` at all. The `policy` project reports an exporting root setup module that lacks its sibling proof or an import from `tests/setup.test.ts`.
+`studies` and then `service` run from `test`, and there is no `prepublishOnly` at all. The `policy` project reports an exporting root setup module that lacks its sibling proof or an import from `tests/setup.test.ts`.
 Separately, a filled, exporting `tests/setup*.ts` module that no `tests/setup*.test.ts`
 proof covers raises the non-blocking `setup` question in `audit`, which names the modules and the proof to add.
 For setup modules the workspace authors, the workspace supplies the behavior proof; the setup modules scaffold seeds arrive with their sibling proofs.
@@ -2589,7 +2687,9 @@ no `tests/conformance.test.ts` registers a project whose include resolves to not
 exits non-zero on it. A blueprint carrying `service` gets `tests/setupService.ts` — the root
 configuration names that module by path, so an absent one fails the project's load rather than its
 run — and still no suite beneath `tests/service`, so `test:service` reports no test files until the
-consumer writes the first one. The `distribution` project no longer has that case: `new` writes the
+consumer writes the first one. A blueprint carrying `studies` has no such case, because the fact is
+the presence of a collected test file and an include with no file behind it leaves the fact unset.
+The `distribution` project no longer has that case: `new` writes the
 proof into the workspace it registers the project in, and a target that later lost the file reports
 drift that `repair` closes. Every remaining case is visible the first time the script runs, which is
 why none is silent.
@@ -2634,6 +2734,8 @@ The generated guide index lists each occupied Vue face with its source, tests, a
   staging, promotion, and rollback after a driven failure.
 - [`tests/src/server/Upstream.test.ts`](../tests/src/server/Upstream.test.ts) — the bounds, the
   verdicts, and cancellation, against a protocol-faithful loopback server.
+- [`tests/src/server/ReadAllowance.test.ts`](../tests/src/server/ReadAllowance.test.ts) — the
+  per-call byte allowance, its overshoot, and its refusals.
 - [`tests/src/server/helpers.test.ts`](../tests/src/server/helpers.test.ts) — path containment,
   digests, inventories, and the staging producer.
 - [`tests/src/server/validators.test.ts`](../tests/src/server/validators.test.ts) — the host-path

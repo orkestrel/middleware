@@ -10,13 +10,16 @@ import { spawnSync } from 'node:child_process'
 import { createRequire } from 'node:module'
 import {
 	realpathSync,
+	chmodSync,
 	existsSync,
 	globSync,
+	lstatSync,
 	mkdirSync,
 	mkdtempSync,
 	readFileSync,
 	readdirSync,
 	rmSync,
+	statSync,
 	writeFileSync,
 } from 'node:fs'
 import { tmpdir } from 'node:os'
@@ -160,6 +163,15 @@ export function createPolicySurfaceFixture(): PolicyScratchInterface {
 	}
 }
 
+/** Describes the include, setup files, and probe settings one workspace project registers. */
+export interface PolicyProject {
+	readonly benchmark?: readonly string[]
+	readonly include: string | readonly string[]
+	readonly parallel?: boolean
+	readonly pool?: string
+	readonly setup: readonly string[]
+}
+
 /** Describes one physical negative control, including the population boundary it attacks. */
 export interface PolicyControl {
 	readonly label: string
@@ -212,6 +224,513 @@ export function createPolicyScratch(options: {
 	}
 }
 
+/**
+ * Creates a list with the given length that holds only the entries written at their indexes.
+ *
+ * @remarks
+ * A literal cannot express a hole, so the list is sized first and then written once per index. A
+ * `for…of` loop and a spread visit each hole as `undefined`, where `map`, `filter`, and `flatMap`
+ * skip it, so a caller-supplied list built here separates the two.
+ *
+ * @param length - The length of the list, holes included.
+ * @param entries - The entry to write at each index; every other index stays a hole.
+ * @returns The sparse list.
+ */
+export function createPolicySparse<T>(length: number, entries: ReadonlyMap<number, T>): T[] {
+	const list: T[] = []
+	list.length = length
+	for (const [index, entry] of entries) list[index] = entry
+	return list
+}
+
+/**
+ * Creates a list whose entries are getters, so a reader's every read of an entry is recorded.
+ *
+ * @remarks
+ * Only the indexes in `entries` hold a getter, and every other index stays a hole. A getter reports
+ * its index to `record` and then produces its value, which may throw, so a case sees which entries
+ * a reader touched before it stopped. An iterator reads an entry once as it yields it, where a copy
+ * of the list reads every entry before the reader sees the first.
+ *
+ * @param length - The length of the list, holes included.
+ * @param entries - The producer behind each getter, by index.
+ * @param record - The function that receives an index each time its getter runs.
+ * @param iterable - If `true`, the list keeps the iterator every array has; if `false`, its
+ * `Symbol.iterator` is `undefined`, which a loop refuses and `Array.from` and `values()` do not.
+ * Default: `true`.
+ * @returns The list.
+ */
+export function createPolicyReads<T>(
+	length: number,
+	entries: ReadonlyMap<number, () => T>,
+	record: (index: number) => void,
+	iterable = true,
+): T[] {
+	const list = createPolicySparse<T>(length, new Map())
+	for (const [index, produce] of entries) {
+		Object.defineProperty(list, index, {
+			configurable: true,
+			enumerable: true,
+			get() {
+				record(index)
+				return produce()
+			},
+		})
+	}
+	if (!iterable) Object.defineProperty(list, Symbol.iterator, { value: undefined })
+	return list
+}
+
+/**
+ * Throws the error a getter raises when its entry refuses to be read.
+ *
+ * @returns Never.
+ * @throws RangeError - Thrown when called.
+ */
+export function failPolicyRead(): never {
+	throw new RangeError('The entry refused its read')
+}
+
+/**
+ * Settles one action into text a case compares for equality.
+ *
+ * @param action - The action to run.
+ * @returns `return` and the JSON of the returned value, or `throw` and the constructor name.
+ */
+export function settlePolicyOutcome(action: () => unknown): string {
+	try {
+		return `return ${JSON.stringify(action())}`
+	} catch (error) {
+		return `throw ${error instanceof Error ? error.constructor.name : typeof error}`
+	}
+}
+
+/** Describes one reader run over a recorded list, with the outcome and entry reads it must show. */
+export interface PolicyLazyCase {
+	readonly label: string
+	readonly outcome: string
+	readonly reads: readonly number[]
+	readonly observe: (record: (index: number) => void) => string
+}
+
+/**
+ * Creates one case that runs a reader over a recorded list.
+ *
+ * @param label - The text naming the reader and the list.
+ * @param reader - The reader to run over the list.
+ * @param list - The length of the list and the producer behind each getter, by index.
+ * @param expected - The settled outcome and the indexes the reader must read, in order.
+ * @returns The case.
+ */
+export function createPolicyLazyCase<T>(
+	label: string,
+	reader: (list: T[]) => unknown,
+	list: {
+		readonly length: number
+		readonly entries: ReadonlyMap<number, () => T>
+		readonly iterable?: boolean
+	},
+	expected: { readonly outcome: string; readonly reads: readonly number[] },
+): PolicyLazyCase {
+	return {
+		label,
+		outcome: expected.outcome,
+		reads: expected.reads,
+		observe: (record) =>
+			settlePolicyOutcome(() =>
+				reader(createPolicyReads(list.length, list.entries, record, list.iterable)),
+			),
+	}
+}
+
+/**
+ * Describes the entries of one recorded list.
+ *
+ * @remarks
+ * An index in `entries` produces a value the reader accepts, an index in `refusals` produces a
+ * value the reader fails on once it has the value, and an index in `failures` fails when the
+ * getter runs. Every other index is a hole. A list with `iterable` set to `false` has no iterator,
+ * which a loop refuses and `Array.from` and `values()` do not; it is an iterator list otherwise.
+ */
+export interface PolicyLazyShape {
+	readonly label: string
+	readonly length: number
+	readonly entries: readonly number[]
+	readonly refusals: readonly number[]
+	readonly failures: readonly number[]
+	readonly iterable?: boolean
+}
+
+/** Holds the list shapes that tell one-entry-at-a-time reading from a copy that reads ahead. */
+export const POLICY_LAZY_SHAPES = Object.freeze({
+	empty: { label: 'an empty list', length: 0, entries: [], refusals: [], failures: [] },
+	dense: { label: 'one entry', length: 1, entries: [0], refusals: [], failures: [] },
+	hole: { label: 'a hole, then an entry', length: 2, entries: [1], refusals: [], failures: [] },
+	holeFailure: {
+		label: 'a hole, then a failing entry',
+		length: 2,
+		entries: [],
+		refusals: [],
+		failures: [1],
+	},
+	failureFirst: {
+		label: 'a failing entry, then an entry',
+		length: 2,
+		entries: [1],
+		refusals: [],
+		failures: [0],
+	},
+	refusalFirst: {
+		label: 'a refused entry, then an entry',
+		length: 2,
+		entries: [1],
+		refusals: [0],
+		failures: [],
+	},
+	holeBetween: {
+		label: 'an entry, a hole, then an entry',
+		length: 3,
+		entries: [0, 2],
+		refusals: [],
+		failures: [],
+	},
+	unlisted: {
+		label: 'two entries on a list without an iterator',
+		length: 2,
+		entries: [0, 1],
+		refusals: [],
+		failures: [],
+		iterable: false,
+	},
+} satisfies Record<string, PolicyLazyShape>)
+
+/** Holds values a reader's signature refuses, which a case feeds it to make processing fail. */
+export const POLICY_REFUSALS = Object.freeze({ number: 7, symbol: Symbol('refused') })
+
+/**
+ * Creates a revoked proxy, which refuses every guard that inspects it.
+ *
+ * @returns The proxy, whose `Array.isArray` check throws a `TypeError`.
+ */
+export function createPolicyRevoked(): object {
+	const { proxy, revoke } = Proxy.revocable({}, {})
+	revoke()
+	return proxy
+}
+
+/**
+ * Creates one case per list shape for a reader of a caller-supplied list.
+ *
+ * @param subject - The text naming the reader.
+ * @param reader - The reader to run over each list.
+ * @param producers - The producer behind each entry the reader accepts, and behind each it refuses.
+ * @param rows - Each shape with the settled outcome and the indexes the reader must read, in order.
+ * @returns One case per row.
+ */
+export function createPolicyLazyCases<T>(
+	subject: string,
+	reader: (list: T[]) => unknown,
+	producers: { readonly valid: () => T; readonly refusal: () => T },
+	rows: ReadonlyArray<readonly [PolicyLazyShape, string, readonly number[]]>,
+): readonly PolicyLazyCase[] {
+	return rows.map(([shape, outcome, reads]) =>
+		createPolicyLazyCase(
+			`${subject}: ${shape.label}`,
+			reader,
+			{
+				length: shape.length,
+				entries: new Map<number, () => T>([
+					...shape.entries.map((index): [number, () => T] => [index, producers.valid]),
+					...shape.refusals.map((index): [number, () => T] => [index, producers.refusal]),
+					...shape.failures.map((index): [number, () => T] => [index, failPolicyRead]),
+				]),
+				iterable: shape.iterable ?? true,
+			},
+			{ outcome, reads },
+		),
+	)
+}
+
+/**
+ * Holds one case per reader and list shape for the readers that take a caller-supplied list.
+ *
+ * @remarks
+ * Each outcome and read list is what the loop each reader replaced produced. A hole is visited as
+ * `undefined`, an entry after a failing one is never read, a refusal names its constructor, and a
+ * list without an iterator is refused with a `TypeError` before any entry is read.
+ */
+export const POLICY_LAZY_CASES: readonly PolicyLazyCase[] = Object.freeze([
+	...createPolicyLazyCases(
+		'inspectPolicyMirrorPaths',
+		(list: string[]) => inspectPolicyMirrorPaths(list, new Set()).map(({ path }) => path),
+		{
+			valid: () => 'tests/src/core/A.test.ts',
+			// The descriptor read answers `any`, so a value the signature refuses reaches the reader.
+			refusal: () => Object.getOwnPropertyDescriptor(POLICY_REFUSALS, 'symbol')?.value,
+		},
+		[
+			[POLICY_LAZY_SHAPES.empty, 'return []', []],
+			[POLICY_LAZY_SHAPES.dense, 'return ["tests/src/core/A.test.ts"]', [0]],
+			[POLICY_LAZY_SHAPES.hole, 'throw TypeError', []],
+			[POLICY_LAZY_SHAPES.holeFailure, 'throw TypeError', []],
+			[POLICY_LAZY_SHAPES.failureFirst, 'throw RangeError', [0]],
+			[POLICY_LAZY_SHAPES.refusalFirst, 'throw TypeError', [0]],
+			[POLICY_LAZY_SHAPES.holeBetween, 'throw TypeError', [0]],
+			[POLICY_LAZY_SHAPES.unlisted, 'throw TypeError', []],
+		],
+	),
+	...createPolicyLazyCases(
+		'inspectPolicyWiring rules',
+		(list: string[]) => inspectPolicyWiring({}, list, []),
+		{
+			valid: () => 'a',
+			refusal: () => Object.getOwnPropertyDescriptor(POLICY_REFUSALS, 'symbol')?.value,
+		},
+		[
+			[POLICY_LAZY_SHAPES.empty, 'return []', []],
+			[
+				POLICY_LAZY_SHAPES.dense,
+				'return ["a is enabled by no top-level or override rules record"]',
+				[0],
+			],
+			[
+				POLICY_LAZY_SHAPES.hole,
+				'return ["undefined is enabled by no top-level or override rules record","a is enabled by no top-level or override rules record"]',
+				[1],
+			],
+			[POLICY_LAZY_SHAPES.holeFailure, 'throw RangeError', [1]],
+			[POLICY_LAZY_SHAPES.failureFirst, 'throw RangeError', [0]],
+			[POLICY_LAZY_SHAPES.refusalFirst, 'throw TypeError', [0]],
+			[
+				POLICY_LAZY_SHAPES.holeBetween,
+				'return ["a is enabled by no top-level or override rules record","undefined is enabled by no top-level or override rules record","a is enabled by no top-level or override rules record"]',
+				[0, 2],
+			],
+			[POLICY_LAZY_SHAPES.unlisted, 'throw TypeError', []],
+		],
+	),
+	...createPolicyLazyCases(
+		'inspectPolicyWiring populations',
+		(list: Array<readonly string[]>) => inspectPolicyWiring({}, [], list),
+		{
+			valid: () => ['a'],
+			refusal: () => Object.getOwnPropertyDescriptor(POLICY_REFUSALS, 'number')?.value,
+		},
+		[
+			[POLICY_LAZY_SHAPES.empty, 'return []', []],
+			[
+				POLICY_LAZY_SHAPES.dense,
+				'return ["no override files list declares the population exactly: a"]',
+				[0],
+			],
+			[POLICY_LAZY_SHAPES.hole, 'throw TypeError', []],
+			[POLICY_LAZY_SHAPES.holeFailure, 'throw TypeError', []],
+			[POLICY_LAZY_SHAPES.failureFirst, 'throw RangeError', [0]],
+			[POLICY_LAZY_SHAPES.refusalFirst, 'throw TypeError', [0]],
+			[POLICY_LAZY_SHAPES.holeBetween, 'throw TypeError', [0]],
+			[POLICY_LAZY_SHAPES.unlisted, 'throw TypeError', []],
+		],
+	),
+	...createPolicyLazyCases(
+		'inspectPolicyWiring overrides',
+		(list: unknown[]) => inspectPolicyWiring({ overrides: list }, [], []),
+		{ valid: () => ({ files: ['a'] }), refusal: createPolicyRevoked },
+		[
+			[POLICY_LAZY_SHAPES.empty, 'return []', []],
+			[POLICY_LAZY_SHAPES.dense, 'return []', [0]],
+			[POLICY_LAZY_SHAPES.hole, 'return []', [1]],
+			[POLICY_LAZY_SHAPES.holeFailure, 'throw RangeError', [1]],
+			[POLICY_LAZY_SHAPES.failureFirst, 'throw RangeError', [0]],
+			[POLICY_LAZY_SHAPES.refusalFirst, 'throw TypeError', [0]],
+			[POLICY_LAZY_SHAPES.holeBetween, 'return []', [0, 2]],
+			[POLICY_LAZY_SHAPES.unlisted, 'throw TypeError', []],
+		],
+	),
+	...createPolicyLazyCases(
+		'inspectPolicyConfiguration overrides',
+		(list: unknown[]) =>
+			inspectPolicyConfiguration({
+				rules: Object.fromEntries(POLICY_WIRING_RULES.map((rule) => [rule, 'error'])),
+				overrides: list,
+			}),
+		{ valid: () => ({}), refusal: createPolicyRevoked },
+		[
+			[POLICY_LAZY_SHAPES.empty, 'return []', []],
+			[POLICY_LAZY_SHAPES.dense, 'return []', [0]],
+			[POLICY_LAZY_SHAPES.hole, 'return ["override entries must be records"]', [1]],
+			[POLICY_LAZY_SHAPES.holeFailure, 'throw RangeError', [1]],
+			[POLICY_LAZY_SHAPES.failureFirst, 'throw RangeError', [0]],
+			[POLICY_LAZY_SHAPES.refusalFirst, 'throw TypeError', [0]],
+			[POLICY_LAZY_SHAPES.holeBetween, 'return ["override entries must be records"]', [0, 2]],
+			[POLICY_LAZY_SHAPES.unlisted, 'throw TypeError', []],
+		],
+	),
+	...createPolicyLazyCases(
+		'inspectPolicyConfiguration ignorePatterns',
+		(list: unknown[]) =>
+			inspectPolicyConfiguration({
+				rules: Object.fromEntries(POLICY_WIRING_RULES.map((rule) => [rule, 'error'])),
+				ignorePatterns: list,
+			}),
+		// The reader skips every entry that is not a string, so no entry refuses it and no row uses the
+		// refusal.
+		{ valid: () => 'src', refusal: createPolicyRevoked },
+		[
+			[POLICY_LAZY_SHAPES.empty, 'return []', []],
+			[POLICY_LAZY_SHAPES.dense, 'return ["ignorePatterns must not reach src"]', [0]],
+			[POLICY_LAZY_SHAPES.hole, 'return ["ignorePatterns must not reach src"]', [1]],
+			[POLICY_LAZY_SHAPES.holeFailure, 'throw RangeError', [1]],
+			[POLICY_LAZY_SHAPES.failureFirst, 'throw RangeError', [0]],
+			[
+				POLICY_LAZY_SHAPES.holeBetween,
+				'return ["ignorePatterns must not reach src","ignorePatterns must not reach src"]',
+				[0, 2],
+			],
+			[POLICY_LAZY_SHAPES.unlisted, 'throw TypeError', []],
+		],
+	),
+	...createPolicyLazyCases(
+		'inspectPolicyFilenamePaths',
+		(list: string[]) => inspectPolicyFilenamePaths(list).map(({ path }) => path),
+		{
+			valid: () => 'src/a.ts',
+			refusal: () => Object.getOwnPropertyDescriptor(POLICY_REFUSALS, 'symbol')?.value,
+		},
+		[[POLICY_LAZY_SHAPES.unlisted, 'throw TypeError', []]],
+	),
+])
+
+/** Describes a population a guide states, the words that mark a sentence stating it, and its exclusion. */
+export interface PolicyPopulation {
+	readonly subject: string
+	readonly markers: readonly string[]
+	readonly exclusion: string
+}
+
+/** Describes the population of test files that selects the `studies` fact, and what it leaves out. */
+export const POLICY_STUDIES_POPULATION: PolicyPopulation = Object.freeze({
+	subject: '`studies`',
+	markers: Object.freeze(['`*.test.ts`', 'test files']),
+	exclusion: 'outside any `node_modules` or `.git` directory',
+})
+
+/**
+ * Collects the guide prose sentences that state one population.
+ *
+ * @remarks
+ * A sentence states the population when it names the subject and one marker. A fenced code block
+ * is not prose. The lines of a block that are not table rows are joined into one text, and each
+ * cell of a table row is a text of its own, so a `Summary` cell that equals its export's
+ * description is held to the same sentences as the prose: the source doc block is where that cell's
+ * wording is decided.
+ *
+ * @param markdown - The guide Markdown.
+ * @param population - The subject, markers, and exclusion that describe the population.
+ * @returns Each sentence that states the population, in document order.
+ */
+export function collectGuideStatements(
+	markdown: string,
+	population: PolicyPopulation,
+): readonly string[] {
+	return markdown
+		.replaceAll(/^```[^\n]*\n[\s\S]*?^```[^\n]*$/gmu, '')
+		.split(/(?:\r\n|\n){2,}/u)
+		.flatMap((block) => {
+			const lines = block.split(/\r\n|\n/u)
+			return [
+				lines.filter((line) => !line.startsWith('|')).join(' '),
+				...lines.filter((line) => line.startsWith('|')).flatMap((row) => row.split(/(?<!\\)\|/u)),
+			].flatMap((text) =>
+				text
+					.replaceAll(/\s+/gu, ' ')
+					.trim()
+					.split(/(?<=[.!?])\s+/u),
+			)
+		})
+		.filter(
+			(sentence) =>
+				sentence.includes(population.subject) &&
+				population.markers.some((marker) => sentence.includes(marker)),
+		)
+}
+
+/** Names the security identifier of the group every access token holds, in the form `icacls` accepts. */
+export const POLICY_DENY_PRINCIPAL = '*S-1-1-0'
+
+/**
+ * Runs one executable to completion and returns what it printed.
+ *
+ * @param file - The executable to run, resolved by name.
+ * @param args - The arguments, passed without a shell.
+ * @returns The standard output.
+ * @throws Error - Thrown when the executable cannot start or exits with a non-zero status.
+ */
+export function runPolicyCommand(file: string, args: readonly string[]): string {
+	const result = spawnSync(file, args, { encoding: 'utf8', windowsHide: true })
+	if (result.error !== undefined) throw result.error
+	if (result.status !== 0)
+		throw new Error(
+			`${file} ${args.join(' ')} exited with ${result.status}: ${result.stdout}${result.stderr}`,
+		)
+	return result.stdout
+}
+
+/**
+ * Reads the permission state of one file as text two readings compare for equality.
+ *
+ * @remarks
+ * Permission state is platform-defined. A POSIX file carries a mode, read as its octal digits
+ * through `statSync`, and a Windows file carries an access-control list, read as the `icacls`
+ * listing of the path, so the text holds every explicit and inherited entry in order.
+ *
+ * @param path - The absolute path of an existing file.
+ * @returns The octal mode on POSIX, and the `icacls` listing on Windows.
+ * @throws Error - Thrown when the Windows listing command exits with a non-zero status.
+ */
+export function readPolicyPermissions(path: string): string {
+	return process.platform === 'win32'
+		? runPolicyCommand('icacls', [path])
+		: (statSync(path).mode & 0o7777).toString(8)
+}
+
+/**
+ * Withholds read access to one file from the current user.
+ *
+ * @remarks
+ * Read permission is platform-defined. A POSIX mode of zero withholds it from every user but root,
+ * and a Windows access-control entry that denies read withholds it from the holder of every token.
+ * A `package.json` that is a directory cannot stand in for this: the regular-file check refuses it
+ * before any read starts, so only a file the host refuses to open reaches the read boundary.
+ *
+ * The restore returns the permission state it found. A POSIX restore writes back the mode read
+ * before the change. A Windows restore removes the deny entries of the one principal the denial
+ * names, because `icacls /restore` of a saved list needs a restore privilege a standard token does
+ * not hold, and `/remove:d` of the user would also strip a deny entry the file already carried. A
+ * restore that leaves the state different, as an earlier deny entry for that principal would,
+ * throws rather than report success.
+ *
+ * @param path - The absolute path of an existing file.
+ * @returns A function that restores the access, to run before the owning directory is removed.
+ * @throws Error - Thrown when a command exits with a non-zero status or the restore differs.
+ */
+export function denyPolicyRead(path: string): () => void {
+	const before = readPolicyPermissions(path)
+	if (process.platform === 'win32') {
+		runPolicyCommand('icacls', [path, '/deny', `${POLICY_DENY_PRINCIPAL}:(R)`])
+	} else {
+		chmodSync(path, 0o000)
+	}
+	return () => {
+		if (process.platform === 'win32') {
+			runPolicyCommand('icacls', [path, '/remove:d', POLICY_DENY_PRINCIPAL])
+		} else {
+			chmodSync(path, before)
+		}
+		if (readPolicyPermissions(path) !== before)
+			throw new Error(`The permissions of ${path} did not restore exactly`)
+	}
+}
+
 /** Holds parsed skill frontmatter and the exact scalar source used for bridge comparison. */
 export interface SkillFrontmatter {
 	readonly keys: readonly string[]
@@ -221,6 +740,15 @@ export interface SkillFrontmatter {
 		readonly name: string | undefined
 		readonly description: string | undefined
 	}
+}
+
+/** Holds the keys and fields read so far from one frontmatter and the last line a folded block consumed. */
+export interface SkillFrontmatterScan {
+	readonly keys: readonly string[]
+	readonly skipThrough: number
+	readonly fields: ReadonlyArray<
+		readonly [string, { readonly value: string; readonly source: string }]
+	>
 }
 
 /** Names the directory whose immediate child directories form the complete skill family. */
@@ -437,6 +965,51 @@ export function isPolicyRecord(value: unknown): value is Readonly<Record<string,
 }
 
 /**
+ * Parses JSON text without throwing.
+ *
+ * @param content - The raw JSON text.
+ * @returns The parsed value, or `undefined` when the text is not JSON.
+ */
+export function parsePolicyJSON(content: string): unknown {
+	try {
+		return JSON.parse(content)
+	} catch {
+		return undefined
+	}
+}
+
+/**
+ * Reads one file and parses its JSON without throwing.
+ *
+ * @remarks
+ * One boundary holds the read and the parse, so a file the host refuses to open answers as a file
+ * that holds no JSON.
+ *
+ * @param path - The absolute path of the file to read.
+ * @returns The parsed value, or `undefined` when the file cannot be read or holds no JSON.
+ */
+export function readPolicyJSON(path: string): unknown {
+	try {
+		return JSON.parse(readFileSync(path, 'utf8'))
+	} catch {
+		return undefined
+	}
+}
+
+/**
+ * Extracts the lines beneath one heading, up to the next second-level heading.
+ *
+ * @param lines - The document lines.
+ * @param heading - The index of the heading line whose section is read.
+ * @returns Each line after the heading and before the next line starting with `## `, in order.
+ */
+export function extractPolicySection(lines: readonly string[], heading: number): readonly string[] {
+	const following = lines.slice(heading + 1)
+	const end = following.findIndex((line) => line.startsWith('## '))
+	return end === -1 ? following : following.slice(0, end)
+}
+
+/**
  * Creates one stable violation for an inspection result.
  *
  * @param rule - The rule that failed.
@@ -477,12 +1050,11 @@ export function stemToPolicyCandidates(stem: string): readonly string[] {
 	const normalized = normalizePolicyPath(stem)
 	const directory = dirname(normalized).replaceAll('\\', '/')
 	const name = basename(normalized)
-	const candidates = POLICY_MODULE_EXTENSIONS.map((extension) => `${normalized}.${extension}`)
-	for (const extension of POLICY_PARTIAL_EXTENSIONS) {
-		candidates.push(`${directory}/_${name}.${extension}`)
-	}
-	if (name.startsWith(POLICY_TESTS_MODULE_PREFIX)) candidates.push(`tests/${normalized}.ts`)
-	return candidates
+	return [
+		...POLICY_MODULE_EXTENSIONS.map((extension) => `${normalized}.${extension}`),
+		...POLICY_PARTIAL_EXTENSIONS.map((extension) => `${directory}/_${name}.${extension}`),
+		...(name.startsWith(POLICY_TESTS_MODULE_PREFIX) ? [`tests/${normalized}.ts`] : []),
+	]
 }
 
 /**
@@ -496,23 +1068,25 @@ export function inspectPolicyMirrorPaths(
 	tests: readonly string[],
 	modules: ReadonlySet<string>,
 ): readonly PolicyViolation[] {
-	const violations: PolicyViolation[] = []
-	for (const test of tests) {
-		const path = normalizePolicyPath(test)
-		const stem = testToPolicyStem(path)
-		if (stem === undefined) continue
-		const candidates = stemToPolicyCandidates(stem)
-		if (!candidates.some((candidate) => modules.has(candidate))) {
-			violations.push(
-				createPolicyViolation(
-					'mirror',
-					path,
-					`module test requires one matching module: ${candidates.join(', ')}`,
-				),
-			)
-		}
-	}
-	return violations
+	// The mapper runs on each entry as the iterator yields it, so a hole reaches normalization as
+	// `undefined` and no entry after a failing one is read, as in the loop this replaced.
+	return Iterator.from(tests)
+		.flatMap((test) => {
+			const path = normalizePolicyPath(test)
+			const stem = testToPolicyStem(path)
+			if (stem === undefined) return []
+			const candidates = stemToPolicyCandidates(stem)
+			return candidates.some((candidate) => modules.has(candidate))
+				? []
+				: [
+						createPolicyViolation(
+							'mirror',
+							path,
+							`module test requires one matching module: ${candidates.join(', ')}`,
+						),
+					]
+		})
+		.toArray()
 }
 
 /**
@@ -541,15 +1115,15 @@ export function inspectPolicySetup(root: string): readonly PolicyViolation[] {
 	const shared = paths.has('tests/setup.test.ts')
 		? readFileSync(join(root, 'tests/setup.test.ts'), 'utf8')
 		: ''
-	const imports = new Set<string>()
-	for (const declaration of parseAst(shared, { lang: 'ts' }).body) {
-		if (declaration.type !== 'ImportDeclaration') continue
-		const specifier = declaration.source.value
-		if (/^\.\/setup[^/]*\.(?:js|ts)$/u.test(specifier))
-			imports.add('tests/' + specifier.slice(2).replace(/\.js$/u, '.ts'))
-	}
-	const violations: PolicyViolation[] = []
-	for (const path of [...paths].sort()) {
+	const imports = new Set(
+		parseAst(shared, { lang: 'ts' }).body.flatMap((declaration) =>
+			declaration.type === 'ImportDeclaration' &&
+			/^\.\/setup[^/]*\.(?:js|ts)$/u.test(declaration.source.value)
+				? ['tests/' + declaration.source.value.slice(2).replace(/\.js$/u, '.ts')]
+				: [],
+		),
+	)
+	return [...paths].sort().flatMap((path) => {
 		const module = path.endsWith('.test.ts') ? path.replace(/\.test\.ts$/u, '.ts') : path
 		if (
 			HOST_PATHS.some(
@@ -558,27 +1132,24 @@ export function inspectPolicySetup(root: string): readonly PolicyViolation[] {
 					module.startsWith(normalizePolicyPath(vendored) + '/'),
 			)
 		)
-			continue
+			return []
 		if (path.endsWith('.test.ts')) {
-			if (!paths.has(module))
-				violations.push(
-					createPolicyViolation('mirror', path, `setup proof requires its module: ${module}`),
-				)
-		} else if (
-			/^export /m.test(readFileSync(join(root, path), 'utf8')) &&
+			return paths.has(module)
+				? []
+				: [createPolicyViolation('mirror', path, `setup proof requires its module: ${module}`)]
+		}
+		return /^export /m.test(readFileSync(join(root, path), 'utf8')) &&
 			!paths.has(path.replace(/\.ts$/u, '.test.ts')) &&
 			!imports.has(path)
-		) {
-			violations.push(
-				createPolicyViolation(
-					'mirror',
-					path,
-					'exporting setup module requires its sibling proof or an import from tests/setup.test.ts',
-				),
-			)
-		}
-	}
-	return violations
+			? [
+					createPolicyViolation(
+						'mirror',
+						path,
+						'exporting setup module requires its sibling proof or an import from tests/setup.test.ts',
+					),
+				]
+			: []
+	})
 }
 
 /**
@@ -588,25 +1159,23 @@ export function inspectPolicySetup(root: string): readonly PolicyViolation[] {
  * @returns Every suppression occurrence in path and line order.
  */
 export function inspectPolicySuppressions(root: string): readonly PolicyViolation[] {
-	const violations: PolicyViolation[] = []
 	const paths = globSync(POLICY_SUPPRESSION_GLOB, { cwd: root }).map(normalizePolicyPath).sort()
-	for (const path of paths) {
-		const lines = readFileSync(join(root, path), 'utf8').split('\n')
-		for (let index = 0; index < lines.length; index += 1) {
-			const line = lines[index]
-			if (line !== undefined && POLICY_SUPPRESSION_PATTERN.test(line)) {
-				violations.push(
-					createPolicyViolation(
-						'suppression',
-						path,
-						'file carries a lint or formatter suppression directive',
-						index + 1,
-					),
-				)
-			}
-		}
-	}
-	return violations
+	return paths.flatMap((path) =>
+		readFileSync(join(root, path), 'utf8')
+			.split('\n')
+			.flatMap((line, index) =>
+				POLICY_SUPPRESSION_PATTERN.test(line)
+					? [
+							createPolicyViolation(
+								'suppression',
+								path,
+								'file carries a lint or formatter suppression directive',
+								index + 1,
+							),
+						]
+					: [],
+			),
+	)
 }
 
 /**
@@ -616,63 +1185,59 @@ export function inspectPolicySuppressions(root: string): readonly PolicyViolatio
  * @returns Every wiring violation in rule and configuration order.
  */
 export function inspectPolicyConfiguration(configuration: unknown): readonly string[] {
-	const violations: string[] = []
 	if (!isPolicyRecord(configuration)) {
 		return ['Oxlint configuration must be a record']
 	}
 
 	const rules: unknown = Object.getOwnPropertyDescriptor(configuration, 'rules')?.value
-	for (const rule of POLICY_WIRING_RULES) {
-		const setting = isPolicyRecord(rules)
-			? Object.getOwnPropertyDescriptor(rules, rule)?.value
-			: undefined
-		const severity = Array.isArray(setting) ? setting[0] : setting
-		if (severity !== 'error') violations.push(`${rule} must have top-level error severity`)
-	}
-
 	const ignorePatterns: unknown = Object.getOwnPropertyDescriptor(
 		configuration,
 		'ignorePatterns',
 	)?.value
-	if (ignorePatterns !== undefined && !Array.isArray(ignorePatterns)) {
-		violations.push('ignorePatterns must be an array when declared')
-	} else if (Array.isArray(ignorePatterns)) {
-		for (const pattern of ignorePatterns) {
-			if (typeof pattern !== 'string' || pattern.startsWith('!')) continue
-			const normalized = normalizePolicyPath(pattern).replace(/^\.\//u, '').replace(/^\//u, '')
-			const [first = ''] = normalized.split('/')
-			if (
-				POLICY_WIRING_ROOTS.some(
-					(root) => first === root || (first !== '' && matchesGlob(root, first)),
-				)
-			) {
-				violations.push(`ignorePatterns must not reach ${pattern}`)
-			}
-		}
-	}
-
 	const overrides: unknown = Object.getOwnPropertyDescriptor(configuration, 'overrides')?.value
-	if (overrides !== undefined && !Array.isArray(overrides)) {
-		violations.push('overrides must be an array when declared')
-	} else if (Array.isArray(overrides)) {
-		for (const override of overrides) {
-			if (!isPolicyRecord(override)) {
-				violations.push('override entries must be records')
-				continue
-			}
-			const overrideRules: unknown = Object.getOwnPropertyDescriptor(override, 'rules')?.value
-			if (!isPolicyRecord(overrideRules)) {
-				continue
-			}
-			for (const rule of POLICY_WIRING_RULES) {
-				if (Object.getOwnPropertyDescriptor(overrideRules, rule) !== undefined) {
-					violations.push(`overrides must not configure ${rule}`)
-				}
-			}
-		}
-	}
-
-	return violations
+	return [
+		...POLICY_WIRING_RULES.flatMap((rule) => {
+			const setting = isPolicyRecord(rules)
+				? Object.getOwnPropertyDescriptor(rules, rule)?.value
+				: undefined
+			const severity = Array.isArray(setting) ? setting[0] : setting
+			return severity === 'error' ? [] : [`${rule} must have top-level error severity`]
+		}),
+		...(ignorePatterns !== undefined && !Array.isArray(ignorePatterns)
+			? ['ignorePatterns must be an array when declared']
+			: // The mapper runs on each pattern as the iterator yields it, as the loop it replaced did.
+				Iterator.from(Array.isArray(ignorePatterns) ? ignorePatterns : [])
+					.flatMap((pattern) => {
+						if (typeof pattern !== 'string' || pattern.startsWith('!')) return []
+						const normalized = normalizePolicyPath(pattern)
+							.replace(/^\.\//u, '')
+							.replace(/^\//u, '')
+						const [first = ''] = normalized.split('/')
+						return POLICY_WIRING_ROOTS.some(
+							(root) => first === root || (first !== '' && matchesGlob(root, first)),
+						)
+							? [`ignorePatterns must not reach ${pattern}`]
+							: []
+					})
+					.toArray()),
+		...(overrides !== undefined && !Array.isArray(overrides)
+			? ['overrides must be an array when declared']
+			: // The mapper runs on each entry as the iterator yields it, so a hole is a malformed entry as it
+				// was in the loop, and no entry after a failing one is read.
+				Iterator.from(Array.isArray(overrides) ? overrides : [])
+					.flatMap((override) => {
+						if (!isPolicyRecord(override)) return ['override entries must be records']
+						const overrideRules: unknown = Object.getOwnPropertyDescriptor(override, 'rules')?.value
+						return isPolicyRecord(overrideRules)
+							? POLICY_WIRING_RULES.flatMap((rule) =>
+									Object.getOwnPropertyDescriptor(overrideRules, rule) === undefined
+										? []
+										: [`overrides must not configure ${rule}`],
+								)
+							: []
+					})
+					.toArray()),
+	]
 }
 
 /**
@@ -692,36 +1257,39 @@ export function inspectPolicyWiring(
 		return ['Oxlint configuration must be a record']
 	}
 
-	const records: unknown[] = [Object.getOwnPropertyDescriptor(configuration, 'rules')?.value]
-	const declaredPopulations: string[] = []
+	const topRules: unknown = Object.getOwnPropertyDescriptor(configuration, 'rules')?.value
 	const overrides: unknown = Object.getOwnPropertyDescriptor(configuration, 'overrides')?.value
-	if (Array.isArray(overrides)) {
-		for (const entry of overrides) {
-			if (!isPolicyRecord(entry)) continue
-			records.push(Object.getOwnPropertyDescriptor(entry, 'rules')?.value)
+	// Each mapper runs on an entry as the iterator yields it, so a hole reaches the guard as
+	// `undefined` and no entry after a failing one is read, as in the loops these replaced.
+	const entries = Iterator.from(Array.isArray(overrides) ? overrides : [])
+		.flatMap((entry) => {
+			if (!isPolicyRecord(entry)) return []
+			const record: unknown = Object.getOwnPropertyDescriptor(entry, 'rules')?.value
 			const files: unknown = Object.getOwnPropertyDescriptor(entry, 'files')?.value
-			if (Array.isArray(files)) declaredPopulations.push(files.join(' '))
-		}
-	}
-
-	const enabled = new Set<string>()
-	for (const record of records) {
-		if (!isPolicyRecord(record)) continue
-		for (const name of Object.getOwnPropertyNames(record)) enabled.add(name)
-	}
-
-	const violations: string[] = []
-	for (const rule of rules) {
-		if (!enabled.has(rule))
-			violations.push(`${rule} is enabled by no top-level or override rules record`)
-	}
-	for (const population of populations) {
-		const joined = population.join(' ')
-		if (!declaredPopulations.includes(joined)) {
-			violations.push(`no override files list declares the population exactly: ${joined}`)
-		}
-	}
-	return violations
+			return [{ record, declared: Array.isArray(files) ? [files.join(' ')] : [] }]
+		})
+		.toArray()
+	const enabled = new Set(
+		[topRules, ...entries.map(({ record }) => record)].flatMap((record) =>
+			isPolicyRecord(record) ? Object.getOwnPropertyNames(record) : [],
+		),
+	)
+	const declaredPopulations = entries.flatMap(({ declared }) => declared)
+	return [
+		...Iterator.from(rules)
+			.flatMap((rule) =>
+				enabled.has(rule) ? [] : [`${rule} is enabled by no top-level or override rules record`],
+			)
+			.toArray(),
+		...Iterator.from(populations)
+			.flatMap((population) => {
+				const joined = population.join(' ')
+				return declaredPopulations.includes(joined)
+					? []
+					: [`no override files list declares the population exactly: ${joined}`]
+			})
+			.toArray(),
+	]
 }
 
 /**
@@ -734,15 +1302,13 @@ export function inspectPolicyWiring(
 export function resolvePolicyDirectory(root: string, path: string): string | undefined {
 	const normalized = normalizePolicyPath(path)
 	if (normalized === '' || normalized === '.') return root
-	let current = root
-	for (const segment of normalized.split('/')) {
+	return normalized.split('/').reduce<string | undefined>((current, segment) => {
+		if (current === undefined) return undefined
 		const entry = readdirSync(current, { withFileTypes: true }).find(
 			(candidate) => candidate.name === segment && candidate.isDirectory(),
 		)
-		if (entry === undefined) return undefined
-		current = join(current, entry.name)
-	}
-	return current
+		return entry === undefined ? undefined : join(current, entry.name)
+	}, root)
 }
 
 /**
@@ -800,76 +1366,68 @@ export function parseSkillFrontmatter(content: string): SkillFrontmatter | undef
 	if (lines[0] !== '---') return undefined
 	const boundary = lines.indexOf('---', 1)
 	if (boundary === -1) return undefined
-	const keys: string[] = []
-	let name: string | undefined
-	let description: string | undefined
-	let nameSource: string | undefined
-	let descriptionSource: string | undefined
-
-	for (let index = 1; index < boundary; index += 1) {
-		const line = lines[index]
-		if (line === undefined) return undefined
-		const match = line.match(/^([A-Za-z][A-Za-z0-9_-]*):(.*)$/u)
-		const key = match?.[1]
-		const scalar = match?.[2]
-		if (key === undefined || scalar === undefined) return undefined
-		if (scalar !== '' && !scalar.startsWith(' ')) return undefined
-		keys.push(key)
-		let value = scalar === '' ? '' : scalar.slice(1)
-		let source = rawLines[index]?.slice(line.indexOf(':') + 1)
-		if (source === undefined) return undefined
-		if (value === '>-') {
-			if (key !== 'description') return undefined
-			const folded: string[] = []
-			const sourceLines: string[] = [source]
-			for (index += 1; index < boundary; index += 1) {
-				const continuation = lines[index]
-				if (continuation === undefined) return undefined
-				if (continuation.trim() === '') {
-					folded.push('')
-					const rawContinuation = rawLines[index]
-					if (rawContinuation === undefined) return undefined
-					sourceLines.push(rawContinuation)
-					continue
-				}
-				if (!continuation.startsWith('  ')) {
-					index -= 1
-					break
-				}
-				folded.push(continuation.slice(2))
-				const rawContinuation = rawLines[index]
-				if (rawContinuation === undefined) return undefined
-				sourceLines.push(rawContinuation)
+	// A folded description consumes the lines after its key, so `skipThrough` carries the last of them.
+	const scan = lines.slice(0, boundary).reduce<SkillFrontmatterScan | undefined>(
+		(state, line, index) => {
+			if (state === undefined || index === 0 || index <= state.skipThrough) return state
+			const match = line.match(/^([A-Za-z][A-Za-z0-9_-]*):(.*)$/u)
+			const key = match?.[1]
+			const scalar = match?.[2]
+			if (key === undefined || scalar === undefined) return undefined
+			if (scalar !== '' && !scalar.startsWith(' ')) return undefined
+			const initial = scalar === '' ? '' : scalar.slice(1)
+			const own = rawLines[index]?.slice(line.indexOf(':') + 1)
+			if (own === undefined) return undefined
+			if (initial === '>-' && key !== 'description') return undefined
+			if (
+				initial !== '>-' &&
+				key === 'description' &&
+				(/^['"]/u.test(initial) || /^[>|][+-]?$/u.test(initial))
+			)
+				return undefined
+			const rest = initial === '>-' ? lines.slice(index + 1, boundary) : []
+			const ended = rest.findIndex(
+				(continuation) => continuation.trim() !== '' && !continuation.startsWith('  '),
+			)
+			const span = ended === -1 ? rest.length : ended
+			const block = rest.slice(0, span)
+			const rawBlock = rawLines.slice(index + 1, index + 1 + span)
+			if (rawBlock.length !== span) return undefined
+			const folded = block.map((continuation) =>
+				continuation.trim() === '' ? '' : continuation.slice(2),
+			)
+			// Each kept line joins to the one before it by a space, or by one newline per blank line between.
+			const kept = folded.flatMap((continuation, position) =>
+				continuation === '' ? [] : [{ continuation, position }],
+			)
+			const value =
+				initial === '>-'
+					? kept
+							.map((entry, rank) => {
+								const before = kept[rank - 1]
+								if (before === undefined) return entry.continuation
+								const blanks = entry.position - before.position - 1
+								return `${blanks === 0 ? ' ' : '\n'.repeat(blanks)}${entry.continuation}`
+							})
+							.join('')
+					: initial
+			const source = initial === '>-' ? [own, ...rawBlock].join('\n') : own
+			return {
+				keys: [...state.keys, key],
+				skipThrough: index + span,
+				fields: [...state.fields, [key, { value, source }]],
 			}
-			value = ''
-			let blanks = 0
-			for (const foldedLine of folded) {
-				if (foldedLine === '') {
-					blanks += 1
-					continue
-				}
-				if (value !== '') value += blanks === 0 ? ' ' : '\n'.repeat(blanks)
-				value += foldedLine
-				blanks = 0
-			}
-			source = sourceLines.join('\n')
-		} else if (key === 'description' && (/^['"]/u.test(value) || /^[>|][+-]?$/u.test(value))) {
-			return undefined
-		}
-		if (key === 'name') {
-			name = value
-			nameSource = source
-		} else if (key === 'description') {
-			description = value
-			descriptionSource = source
-		}
-	}
+		},
+		{ keys: [], skipThrough: 0, fields: [] },
+	)
+	if (scan === undefined) return undefined
+	const fields = new Map(scan.fields)
 
 	return {
-		keys,
-		name,
-		description,
-		source: { name: nameSource, description: descriptionSource },
+		keys: scan.keys,
+		name: fields.get('name')?.value,
+		description: fields.get('description')?.value,
+		source: { name: fields.get('name')?.source, description: fields.get('description')?.source },
 	}
 }
 
@@ -928,16 +1486,16 @@ export function readSkillScripts(root: string, name: string): readonly string[] 
  * @returns The distinct script paths, relative to the skill directory, in first-mention order.
  */
 export function extractSkillScripts(content: string, name: string): readonly string[] {
-	const found: string[] = []
-	for (const match of content.matchAll(
-		/(?:\.agents\/skills\/([A-Za-z0-9-]+)\/)?(scripts\/[A-Za-z0-9][A-Za-z0-9._-]*\.ts)/gu,
-	)) {
+	const named = [
+		...content.matchAll(
+			/(?:\.agents\/skills\/([A-Za-z0-9-]+)\/)?(scripts\/[A-Za-z0-9][A-Za-z0-9._-]*\.ts)/gu,
+		),
+	].flatMap((match) => {
 		const owner = match[1]
 		const script = match[2]
-		if (script === undefined || (owner !== undefined && owner !== name)) continue
-		if (!found.includes(script)) found.push(script)
-	}
-	return found
+		return script === undefined || (owner !== undefined && owner !== name) ? [] : [script]
+	})
+	return named.filter((script, index) => named.indexOf(script) === index)
 }
 
 /**
@@ -948,14 +1506,14 @@ export function extractSkillScripts(content: string, name: string): readonly str
  * @returns The distinct `.agents/skills/<other>/scripts/*.ts` paths, in first-mention order.
  */
 export function extractForeignSkillScripts(content: string, name: string): readonly string[] {
-	const found: string[] = []
-	for (const match of content.matchAll(
-		/\.agents\/skills\/([A-Za-z0-9-]+)\/scripts\/[A-Za-z0-9][A-Za-z0-9._-]*\.ts/gu,
-	)) {
-		if (match[1] === name || found.includes(match[0])) continue
-		found.push(match[0])
-	}
-	return found
+	const named = [
+		...content.matchAll(
+			/\.agents\/skills\/([A-Za-z0-9-]+)\/scripts\/[A-Za-z0-9][A-Za-z0-9._-]*\.ts/gu,
+		),
+	]
+		.filter((match) => match[1] !== name)
+		.map((match) => match[0])
+	return named.filter((script, index) => named.indexOf(script) === index)
 }
 
 /**
@@ -1008,11 +1566,14 @@ export function parseSkillPrompt(content: string): string | undefined {
  */
 export function matchesSkillToken(prompt: string, name: string): boolean {
 	const token = `$${name}`
-	for (let index = prompt.indexOf(token); index !== -1; index = prompt.indexOf(token, index + 1)) {
-		const next = prompt.charAt(index + token.length)
-		if (next === '' || !/[a-z-]/u.test(next)) return true
-	}
-	return false
+	// The token opens with `$`, so each `$` in the prompt is a start to try, and a name that carries
+	// `$` makes the token overlap itself.
+	return prompt
+		.matchAll(/\$/gu)
+		.some(
+			({ index }) =>
+				prompt.startsWith(token, index) && !/[a-z-]/u.test(prompt.charAt(index + token.length)),
+		)
 }
 
 /**
@@ -1022,12 +1583,12 @@ export function matchesSkillToken(prompt: string, name: string): boolean {
  * @returns Each distinct references/name.md token in sorted order.
  */
 export function extractSkillReferences(content: string): readonly string[] {
-	const references = new Set<string>()
 	// This raw-text scan includes fenced examples. Over-matching safely requires the named file.
-	for (const match of content.matchAll(/references\/[A-Za-z0-9._-]+\.md/gu)) {
-		const reference = match[0]
-		if (reference !== undefined) references.add(reference)
-	}
+	const references = new Set(
+		[...content.matchAll(/references\/[A-Za-z0-9._-]+\.md/gu)].flatMap((match) =>
+			match[0] === undefined ? [] : [match[0]],
+		),
+	)
 	return [...references].sort()
 }
 
@@ -1052,41 +1613,32 @@ export function inspectSkillTemplateTODOs(
 	path: string,
 	content: string,
 ): readonly PolicyViolation[] {
-	const violations: PolicyViolation[] = []
 	const lines = content.split(/\r\n|\r|\n/u)
-	let fence: string | undefined
-	for (let index = 0; index < lines.length; index += 1) {
-		const line = lines[index]
-		if (line === undefined) continue
-		const fenceLine = line.replace(/^ {0,3}/u, '')
-		if (fence !== undefined) {
-			if (fenceLine.startsWith(fence)) fence = undefined
-			continue
-		}
-		const opening = fenceLine.match(/^(`{3,}|~{3,})/u)?.[1]
-		if (opening !== undefined) {
-			fence = opening
-			continue
-		}
-		let cursor = 0
-		while (cursor < line.length) {
-			const openingBacktick = line.indexOf('`', cursor)
-			const end = openingBacktick === -1 ? line.length : openingBacktick
-			for (
-				let todo = line.indexOf('TODO', cursor);
-				todo !== -1 && todo < end;
-				todo = line.indexOf('TODO', todo + 4)
-			) {
-				violations.push(
-					createPolicyViolation(rule, path, 'skill documents contain no template TODOs', index + 1),
-				)
+	// Each line the scan reads is one outside every fence; the fence open at a line rides the fold.
+	const scanned = lines.reduce<{
+		readonly fence: string | undefined
+		readonly indexes: readonly number[]
+	}>(
+		(state, line, index) => {
+			const fenceLine = line.replace(/^ {0,3}/u, '')
+			if (state.fence !== undefined) {
+				return fenceLine.startsWith(state.fence)
+					? { fence: undefined, indexes: state.indexes }
+					: state
 			}
-			if (openingBacktick === -1) break
-			const closingBacktick = line.indexOf('`', openingBacktick + 1)
-			cursor = closingBacktick === -1 ? openingBacktick + 1 : closingBacktick + 1
-		}
-	}
-	return violations
+			const opening = fenceLine.match(/^(`{3,}|~{3,})/u)?.[1]
+			if (opening !== undefined) return { fence: opening, indexes: state.indexes }
+			return { fence: undefined, indexes: [...state.indexes, index] }
+		},
+		{ fence: undefined, indexes: [] },
+	).indexes
+	return scanned.flatMap((index) => {
+		// A matched pair of single backticks on one line is an inline span; a lone backtick is not.
+		const outside = (lines[index] ?? '').replace(/`[^`]*`/gu, ' ')
+		return Array.from({ length: outside.split('TODO').length - 1 }, () =>
+			createPolicyViolation(rule, path, 'skill documents contain no template TODOs', index + 1),
+		)
+	})
 }
 
 /** Names why a declaration reading produced no inventory. */
@@ -1335,8 +1887,8 @@ export function readSkillDeclarations(
 	const source = parseSync(path, readFileSync(path, 'utf8'))
 	const [failure] = source.errors
 	if (failure !== undefined) return { outcome: 'syntax', names: [], detail: failure.message }
-	const names = new Set<string>()
-	for (const statement of source.program.body) {
+	// Each statement answers its own declared names or the refusal it raises; the first refusal wins.
+	const declared = source.program.body.map((statement): SkillDeclarationResult => {
 		if (statement.type === 'ExportDefaultDeclaration')
 			return { outcome: 'form', names: [], detail: 'export default' }
 		if (statement.type === 'TSExportAssignment')
@@ -1345,69 +1897,90 @@ export function readSkillDeclarations(
 			return { outcome: 'form', names: [], detail: 'export as namespace' }
 		if (statement.type === 'TSModuleDeclaration')
 			return { outcome: 'form', names: [], detail: 'ambient module' }
-		if (statement.type !== 'ExportNamedDeclaration' || statement.source !== null) continue
-		for (const binding of statement.specifiers) {
-			const name =
-				binding.exported.type === 'Identifier' ? binding.exported.name : binding.exported.value
-			if (name === 'default') return { outcome: 'form', names: [], detail: 'default export list' }
-			names.add(name)
-		}
+		if (statement.type !== 'ExportNamedDeclaration' || statement.source !== null)
+			return { outcome: 'read', names: [] }
+		const listed = statement.specifiers.map((binding) =>
+			binding.exported.type === 'Identifier' ? binding.exported.name : binding.exported.value,
+		)
+		if (listed.includes('default'))
+			return { outcome: 'form', names: [], detail: 'default export list' }
 		const declaration = statement.declaration
-		if (declaration === null) continue
+		if (declaration === null) return { outcome: 'read', names: listed }
 		if (declaration.type === 'VariableDeclaration') {
-			for (const variable of declaration.declarations) {
-				if (variable.id.type !== 'Identifier')
-					return { outcome: 'form', names: [], detail: 'destructured declaration' }
-				names.add(variable.id.name)
-			}
-		} else if (declaration.type === 'TSModuleDeclaration') {
+			const identifiers = declaration.declarations.flatMap((variable) =>
+				variable.id.type === 'Identifier' ? [variable.id.name] : [],
+			)
+			return identifiers.length === declaration.declarations.length
+				? { outcome: 'read', names: [...listed, ...identifiers] }
+				: { outcome: 'form', names: [], detail: 'destructured declaration' }
+		}
+		if (declaration.type === 'TSModuleDeclaration')
 			return { outcome: 'form', names: [], detail: 'exported namespace' }
-		} else if (
+		if (
 			declaration.type === 'TSDeclareFunction' ||
 			declaration.type === 'ClassDeclaration' ||
 			declaration.type === 'TSEnumDeclaration' ||
 			declaration.type === 'TSInterfaceDeclaration' ||
 			declaration.type === 'TSTypeAliasDeclaration'
 		) {
-			if (declaration.id === null)
-				return { outcome: 'form', names: [], detail: 'anonymous declaration' }
-			names.add(declaration.id.name)
-		} else return { outcome: 'form', names: [], detail: 'unsupported exported declaration' }
-	}
-	if (ancestors.includes(path)) return { outcome: 'cycle', names: [...names] }
-	for (const statement of source.program.body) {
-		if (statement.type !== 'ExportAllDeclaration' && statement.type !== 'ExportNamedDeclaration')
-			continue
-		const origin = statement.source
-		if (origin === null) continue
-		if (statement.type === 'ExportAllDeclaration' && statement.exported !== null)
-			return { outcome: 'form', names: [], detail: 'star export alias' }
-		if (!origin.value.startsWith('./') && !origin.value.startsWith('../'))
-			return { outcome: 'form', names: [], detail: 'non-relative re-export' }
-		const declaration = /\.d\.(?:ts|mts|cts)$/u.test(origin.value)
-			? origin.value
-			: origin.value.replace(/\.(js|mjs|cjs)$/u, (_, extension: string) =>
-					extension === 'mjs' ? '.d.mts' : extension === 'cjs' ? '.d.cts' : '.d.ts',
-				)
-		if (!/\.d\.(?:ts|mts|cts)$/u.test(declaration))
-			return { outcome: 'form', names: [], detail: 'untyped re-export target' }
-		const targets = readSkillDeclarations(resolve(dirname(path), declaration), [...ancestors, path])
-		if (targets.outcome !== 'read' && targets.outcome !== 'cycle') return targets
-		if (statement.type === 'ExportAllDeclaration') {
-			if (targets.outcome === 'read') for (const name of targets.names) names.add(name)
-			continue
+			return declaration.id === null
+				? { outcome: 'form', names: [], detail: 'anonymous declaration' }
+				: { outcome: 'read', names: [...listed, declaration.id.name] }
 		}
-		for (const binding of statement.specifiers) {
-			const name =
-				binding.exported.type === 'Identifier' ? binding.exported.name : binding.exported.value
-			const original =
-				binding.local.type === 'Identifier' ? binding.local.name : binding.local.value
-			if (name === 'default') return { outcome: 'form', names: [], detail: 'default re-export' }
-			if (!targets.names.includes(original)) return { outcome: 'name', names: [], detail: original }
-			names.add(name)
-		}
-	}
-	return { outcome: 'read', names: [...names].sort() }
+		return { outcome: 'form', names: [], detail: 'unsupported exported declaration' }
+	})
+	const refused = declared.find((result) => result.outcome !== 'read')
+	if (refused !== undefined) return refused
+	const names = [...new Set(declared.flatMap((result) => result.names))]
+	if (ancestors.includes(path)) return { outcome: 'cycle', names }
+	// A refusal short-circuits the fold, so no later re-export is read.
+	const reexported = source.program.body.reduce<SkillDeclarationResult>(
+		(state, statement) => {
+			if (state.outcome !== 'read') return state
+			if (statement.type !== 'ExportAllDeclaration' && statement.type !== 'ExportNamedDeclaration')
+				return state
+			const origin = statement.source
+			if (origin === null) return state
+			if (statement.type === 'ExportAllDeclaration' && statement.exported !== null)
+				return { outcome: 'form', names: [], detail: 'star export alias' }
+			if (!origin.value.startsWith('./') && !origin.value.startsWith('../'))
+				return { outcome: 'form', names: [], detail: 'non-relative re-export' }
+			const declaration = /\.d\.(?:ts|mts|cts)$/u.test(origin.value)
+				? origin.value
+				: origin.value.replace(/\.(js|mjs|cjs)$/u, (_, extension: string) =>
+						extension === 'mjs' ? '.d.mts' : extension === 'cjs' ? '.d.cts' : '.d.ts',
+					)
+			if (!/\.d\.(?:ts|mts|cts)$/u.test(declaration))
+				return { outcome: 'form', names: [], detail: 'untyped re-export target' }
+			const targets = readSkillDeclarations(resolve(dirname(path), declaration), [
+				...ancestors,
+				path,
+			])
+			if (targets.outcome !== 'read' && targets.outcome !== 'cycle') return targets
+			if (statement.type === 'ExportAllDeclaration')
+				return {
+					outcome: 'read',
+					names: [...state.names, ...(targets.outcome === 'read' ? targets.names : [])],
+				}
+			const bindings = statement.specifiers.map((binding) => ({
+				name:
+					binding.exported.type === 'Identifier' ? binding.exported.name : binding.exported.value,
+				original: binding.local.type === 'Identifier' ? binding.local.name : binding.local.value,
+			}))
+			const rejected = bindings.find(
+				({ name, original }) => name === 'default' || !targets.names.includes(original),
+			)
+			if (rejected === undefined)
+				return { outcome: 'read', names: [...state.names, ...bindings.map(({ name }) => name)] }
+			return rejected.name === 'default'
+				? { outcome: 'form', names: [], detail: 'default re-export' }
+				: { outcome: 'name', names: [], detail: rejected.original }
+		},
+		{ outcome: 'read', names },
+	)
+	return reexported.outcome === 'read'
+		? { outcome: 'read', names: [...new Set(reexported.names)].sort() }
+		: reexported
 }
 
 /**
@@ -1434,63 +2007,84 @@ export function inspectSkillImports(
 	path: string,
 	content: string,
 ): readonly PolicyViolation[] {
-	const violations: PolicyViolation[] = []
-	const entries = new Map<string, SkillDeclarationResult>()
-	for (const fence of createGuide(content).fences()) {
-		const source = parseSync('skill.ts', fence.code)
-		const [failure] = source.errors
-		if (failure !== undefined && fence.code.includes('@orkestrel/')) {
-			violations.push(
+	const fences = createGuide(content)
+		.fences()
+		.map((fence) => {
+			const source = parseSync('skill.ts', fence.code)
+			const [failure] = source.errors
+			const refused = failure !== undefined && fence.code.includes('@orkestrel/')
+			return {
+				failure: refused ? failure : undefined,
+				imports: refused
+					? []
+					: source.program.body.flatMap((statement) => {
+							if (statement.type !== 'ImportDeclaration') return []
+							const specifier = statement.source.value
+							const bindings = statement.specifiers.filter(
+								(binding) => binding.type === 'ImportSpecifier',
+							)
+							return specifier.startsWith('@orkestrel/') && bindings.length > 0
+								? [{ specifier, bindings }]
+								: []
+						}),
+			}
+		})
+	const specifiers = [
+		...new Set(
+			fences
+				.flatMap(({ imports }) => imports.map(({ specifier }) => specifier))
+				.filter((specifier) =>
+					Object.hasOwn(BASE_DEV_DEPENDENCIES, specifier.split('/').slice(0, 2).join('/')),
+				),
+		),
+	]
+	// Each distinct supported specifier is read once, in first-seen order.
+	const entries = new Map(
+		specifiers.map((specifier) => [specifier, readSkillExports(root, specifier)]),
+	)
+	return fences.flatMap(({ failure, imports }) => {
+		if (failure !== undefined) {
+			return [
 				createPolicyViolation('skill', path, `skill fence could not be parsed: ${failure.message}`),
-			)
-			continue
+			]
 		}
-		for (const statement of source.program.body) {
-			if (statement.type !== 'ImportDeclaration') continue
-			const specifier = statement.source.value
-			const bindings = statement.specifiers.filter((binding) => binding.type === 'ImportSpecifier')
-			if (!specifier.startsWith('@orkestrel/') || bindings.length === 0) continue
+		return imports.flatMap(({ specifier, bindings }) => {
 			const packageName = specifier.split('/').slice(0, 2).join('/')
 			if (!Object.hasOwn(BASE_DEV_DEPENDENCIES, packageName)) {
-				violations.push(
+				return [
 					createPolicyViolation(
 						'skill',
 						path,
 						`skill fence import ${specifier} is outside BASE_DEV_DEPENDENCIES: ${packageName}`,
 					),
-				)
-				continue
+				]
 			}
-			const cached = entries.get(specifier)
-			const entry = cached ?? readSkillExports(root, specifier)
-			if (cached === undefined) entries.set(specifier, entry)
+			const entry = entries.get(specifier) ?? readSkillExports(root, specifier)
 			if (entry.outcome !== 'read' && entry.outcome !== 'cycle') {
 				const phrase = SKILL_DECLARATION_MESSAGES[entry.outcome]
-				violations.push(
+				return [
 					createPolicyViolation(
 						'skill',
 						path,
 						`skill fence import ${specifier} ${entry.detail === undefined ? phrase : `${phrase} ${entry.detail}`}`,
 					),
-				)
-				continue
+				]
 			}
-			for (const binding of bindings) {
+			return bindings.flatMap((binding) => {
 				const name =
 					binding.imported.type === 'Identifier' ? binding.imported.name : binding.imported.value
-				if (!entry.names.includes(name)) {
-					violations.push(
-						createPolicyViolation(
-							'skill',
-							path,
-							`skill fence import ${specifier} does not export ${name}`,
-						),
-					)
-				}
-			}
-		}
-	}
-	return violations
+				return entry.names.includes(name)
+					? []
+					: [
+							createPolicyViolation(
+								'skill',
+								path,
+								`skill fence import ${specifier} does not export ${name}`,
+							),
+						]
+			})
+		})
+	})
 }
 
 /**
@@ -1509,228 +2103,231 @@ export function inspectSkill(
 	const base = `${SKILL_FAMILY_ROOT}/${name}`
 	const skill = `${base}/SKILL.md`
 	const metadata = `${base}/agents/openai.yaml`
-	const violations: PolicyViolation[] = []
-	let content: string | undefined
 	const hasSkill = isPolicyFile(root, skill)
-	if (!hasSkill) {
-		violations.push(
-			createPolicyViolation('skill', skill, 'skill requires an exact-case regular SKILL.md'),
-		)
-	} else {
-		content = readFileSync(join(root, skill), 'utf8')
-		const frontmatter = parseSkillFrontmatter(content)
-		if (frontmatter === undefined) {
-			violations.push(
-				createPolicyViolation('skill', skill, 'SKILL.md frontmatter exists and parses'),
-			)
-		} else {
-			const keys = new Set(frontmatter.keys)
-			if (
-				frontmatter.keys.length !== 2 ||
-				keys.size !== 2 ||
-				!keys.has('name') ||
-				!keys.has('description')
-			) {
-				violations.push(
-					createPolicyViolation(
-						'skill',
-						skill,
-						'SKILL.md frontmatter contains exactly name and description',
-					),
-				)
-			}
-			if (frontmatter.name !== name) {
-				violations.push(
-					createPolicyViolation('skill', skill, 'SKILL.md frontmatter name matches its directory'),
-				)
-			}
-			if (frontmatter.description === undefined || frontmatter.description.trim() === '') {
-				violations.push(createPolicyViolation('skill', skill, 'SKILL.md description is non-empty'))
-			} else if (!matchesSkillTrigger(frontmatter.description)) {
-				violations.push(
-					createPolicyViolation(
-						'skill',
-						skill,
-						'SKILL.md description names when to use the skill in a sentence beginning Use',
-					),
-				)
-			}
-		}
-		violations.push(...inspectSkillTemplateTODOs('skill', skill, content))
-		violations.push(...inspectSkillImports(installation, skill, content))
-	}
+	const content = hasSkill ? readFileSync(join(root, skill), 'utf8') : undefined
+	const frontmatter = content === undefined ? undefined : parseSkillFrontmatter(content)
+	const keys = new Set(frontmatter?.keys)
+	const documented =
+		content === undefined
+			? [createPolicyViolation('skill', skill, 'skill requires an exact-case regular SKILL.md')]
+			: [
+					...(frontmatter === undefined
+						? [createPolicyViolation('skill', skill, 'SKILL.md frontmatter exists and parses')]
+						: [
+								...(frontmatter.keys.length !== 2 ||
+								keys.size !== 2 ||
+								!keys.has('name') ||
+								!keys.has('description')
+									? [
+											createPolicyViolation(
+												'skill',
+												skill,
+												'SKILL.md frontmatter contains exactly name and description',
+											),
+										]
+									: []),
+								...(frontmatter.name === name
+									? []
+									: [
+											createPolicyViolation(
+												'skill',
+												skill,
+												'SKILL.md frontmatter name matches its directory',
+											),
+										]),
+								...(frontmatter.description === undefined || frontmatter.description.trim() === ''
+									? [createPolicyViolation('skill', skill, 'SKILL.md description is non-empty')]
+									: matchesSkillTrigger(frontmatter.description)
+										? []
+										: [
+												createPolicyViolation(
+													'skill',
+													skill,
+													'SKILL.md description names when to use the skill in a sentence beginning Use',
+												),
+											]),
+							]),
+					...inspectSkillTemplateTODOs('skill', skill, content),
+					...inspectSkillImports(installation, skill, content),
+				]
 	const hasMetadata = isPolicyFile(root, metadata)
-	if (!hasMetadata) {
-		violations.push(
-			createPolicyViolation(
-				'skill',
-				metadata,
-				'skill requires an exact-case regular agents/openai.yaml',
-			),
-		)
-	} else {
-		const prompt = parseSkillPrompt(readFileSync(join(root, metadata), 'utf8'))
-		if (prompt === undefined) {
-			violations.push(
+	const prompt = hasMetadata
+		? parseSkillPrompt(readFileSync(join(root, metadata), 'utf8'))
+		: undefined
+	const described = !hasMetadata
+		? [
 				createPolicyViolation(
 					'skill',
 					metadata,
-					'agents/openai.yaml matches the canonical four-line interface schema',
+					'skill requires an exact-case regular agents/openai.yaml',
 				),
-			)
-		} else if (!matchesSkillToken(prompt, name)) {
-			violations.push(
-				createPolicyViolation(
-					'skill',
-					metadata,
-					`agents/openai.yaml default_prompt contains the complete token $${name}`,
-				),
-			)
-		}
-	}
+			]
+		: prompt === undefined
+			? [
+					createPolicyViolation(
+						'skill',
+						metadata,
+						'agents/openai.yaml matches the canonical four-line interface schema',
+					),
+				]
+			: matchesSkillToken(prompt, name)
+				? []
+				: [
+						createPolicyViolation(
+							'skill',
+							metadata,
+							`agents/openai.yaml default_prompt contains the complete token $${name}`,
+						),
+					]
 	const named = content === undefined ? [] : extractSkillReferences(content)
-	if (content !== undefined) {
-		for (const reference of named) {
-			const path = `${base}/${reference}`
-			if (!isPolicyFile(root, path)) {
-				violations.push(
-					createPolicyViolation(
-						'skill',
-						path,
-						`SKILL.md reference resolves to an exact-case regular file: ${reference}`,
-					),
-				)
-			} else {
-				const referenceContent = readFileSync(join(root, path), 'utf8')
-				violations.push(
-					...inspectSkillTemplateTODOs('skill', path, referenceContent),
-					...inspectSkillImports(installation, path, referenceContent),
-				)
-			}
-		}
-	}
-	for (const reference of readSkillReferences(root, name)) {
-		if (!named.includes(reference)) {
-			violations.push(
+	const referenced = named.flatMap((reference) => {
+		const path = `${base}/${reference}`
+		if (!isPolicyFile(root, path)) {
+			return [
 				createPolicyViolation(
 					'skill',
-					`${base}/${reference}`,
-					`references Markdown file is named by SKILL.md: ${reference}`,
+					path,
+					`SKILL.md reference resolves to an exact-case regular file: ${reference}`,
 				),
-			)
+			]
 		}
-	}
+		const referenceContent = readFileSync(join(root, path), 'utf8')
+		return [
+			...inspectSkillTemplateTODOs('skill', path, referenceContent),
+			...inspectSkillImports(installation, path, referenceContent),
+		]
+	})
+	const unnamed = readSkillReferences(root, name).flatMap((reference) =>
+		named.includes(reference)
+			? []
+			: [
+					createPolicyViolation(
+						'skill',
+						`${base}/${reference}`,
+						`references Markdown file is named by SKILL.md: ${reference}`,
+					),
+				],
+	)
 	const scripts = content === undefined ? [] : extractSkillScripts(content, name)
-	for (const script of scripts) {
-		if (!isPolicyFile(root, `${base}/${script}`)) {
-			violations.push(
-				createPolicyViolation(
-					'skill',
-					`${base}/${script}`,
-					`SKILL.md script resolves to an exact-case regular file: ${script}`,
-				),
-			)
-		}
-	}
-	for (const script of readSkillScripts(root, name)) {
-		if (!scripts.includes(script)) {
-			violations.push(
-				createPolicyViolation(
-					'skill',
-					`${base}/${script}`,
-					`scripts TypeScript file is named by SKILL.md: ${script}`,
-				),
-			)
-		}
+	const unresolved = scripts.flatMap((script) =>
+		isPolicyFile(root, `${base}/${script}`)
+			? []
+			: [
+					createPolicyViolation(
+						'skill',
+						`${base}/${script}`,
+						`SKILL.md script resolves to an exact-case regular file: ${script}`,
+					),
+				],
+	)
+	const unproved = readSkillScripts(root, name).flatMap((script) => {
 		const proof = `${SKILL_PROOF_ROOT}/${name}/${script.replace(/\.ts$/u, '.test.ts')}`
-		if (!isPolicyFile(root, proof)) {
-			violations.push(
-				createPolicyViolation('skill', proof, `skill script has a mirrored proof: ${proof}`),
-			)
-		}
-	}
-	for (const script of content === undefined ? [] : extractForeignSkillScripts(content, name)) {
-		if (!isPolicyFile(root, script)) {
-			violations.push(
-				createPolicyViolation(
-					'skill',
-					script,
-					`SKILL.md names another skill's script that resolves to an exact-case regular file: ${script}`,
-				),
-			)
-		}
-	}
+		return [
+			...(scripts.includes(script)
+				? []
+				: [
+						createPolicyViolation(
+							'skill',
+							`${base}/${script}`,
+							`scripts TypeScript file is named by SKILL.md: ${script}`,
+						),
+					]),
+			...(isPolicyFile(root, proof)
+				? []
+				: [createPolicyViolation('skill', proof, `skill script has a mirrored proof: ${proof}`)]),
+		]
+	})
+	const foreign = (content === undefined ? [] : extractForeignSkillScripts(content, name)).flatMap(
+		(script) =>
+			isPolicyFile(root, script)
+				? []
+				: [
+						createPolicyViolation(
+							'skill',
+							script,
+							`SKILL.md names another skill's script that resolves to an exact-case regular file: ${script}`,
+						),
+					],
+	)
 	const references = resolvePolicyDirectory(root, `${base}/references`)
-	if (references !== undefined) {
-		for (const entry of readdirSync(references, { withFileTypes: true })) {
-			if (entry.isDirectory()) {
-				violations.push(
-					createPolicyViolation(
-						'skill',
-						`${base}/references/${entry.name}`,
-						'skill references directory contains no subdirectories',
-					),
+	const nested =
+		references === undefined
+			? []
+			: readdirSync(references, { withFileTypes: true }).flatMap((entry) =>
+					entry.isDirectory()
+						? [
+								createPolicyViolation(
+									'skill',
+									`${base}/references/${entry.name}`,
+									'skill references directory contains no subdirectories',
+								),
+							]
+						: [],
 				)
-			}
-		}
-	}
 	const directory = resolvePolicyDirectory(root, base)
-	if (directory !== undefined) {
-		for (const path of globSync('**/*', { cwd: directory }).map(normalizePolicyPath).sort()) {
-			if (resolvePolicyDirectory(directory, path) !== undefined) {
-				if (
-					path === 'agents' ||
-					path === 'references' ||
-					path === 'scripts' ||
-					path.startsWith('references/') ||
-					(!hasSkill && path.toLowerCase() === 'skill.md') ||
-					(!hasMetadata && path.toLowerCase() === 'agents/openai.yaml')
-				) {
-					continue
-				}
-				violations.push(
-					createPolicyViolation(
-						'skill',
-						`${base}/${path}`,
-						'skill directory contains only agents/, references/, and scripts/ directories',
-					),
-				)
-				continue
-			}
-			if (!isPolicyFile(directory, path)) continue
-			const file = basename(path).toLowerCase()
-			if (file === 'readme.md' || file === 'changelog.md') {
-				violations.push(
-					createPolicyViolation(
-						'skill',
-						`${base}/${path}`,
-						'skill directory contains no README.md or CHANGELOG.md',
-					),
-				)
-				continue
-			}
-			if (
-				path === 'SKILL.md' ||
-				path === 'agents/openai.yaml' ||
-				/^references\/[^/]+\.md$/u.test(path) ||
-				/^scripts\/[^/]+\.ts$/u.test(path) ||
-				(!hasSkill &&
-					(path.toLowerCase() === 'skill.md' || path.toLowerCase().startsWith('skill.md/'))) ||
-				(!hasMetadata && path.toLowerCase() === 'agents/openai.yaml') ||
-				(path.startsWith('references/') && path.slice('references/'.length).includes('/'))
-			) {
-				continue
-			}
-			violations.push(
-				createPolicyViolation(
-					'skill',
-					`${base}/${path}`,
-					'skill directory contains only SKILL.md, agents/openai.yaml, references/*.md, and scripts/*.ts',
-				),
-			)
-		}
-	}
-	return violations
+	const stray =
+		directory === undefined
+			? []
+			: globSync('**/*', { cwd: directory })
+					.map(normalizePolicyPath)
+					.sort()
+					.flatMap((path) => {
+						if (resolvePolicyDirectory(directory, path) !== undefined) {
+							return path === 'agents' ||
+								path === 'references' ||
+								path === 'scripts' ||
+								path.startsWith('references/') ||
+								(!hasSkill && path.toLowerCase() === 'skill.md') ||
+								(!hasMetadata && path.toLowerCase() === 'agents/openai.yaml')
+								? []
+								: [
+										createPolicyViolation(
+											'skill',
+											`${base}/${path}`,
+											'skill directory contains only agents/, references/, and scripts/ directories',
+										),
+									]
+						}
+						if (!isPolicyFile(directory, path)) return []
+						const file = basename(path).toLowerCase()
+						if (file === 'readme.md' || file === 'changelog.md') {
+							return [
+								createPolicyViolation(
+									'skill',
+									`${base}/${path}`,
+									'skill directory contains no README.md or CHANGELOG.md',
+								),
+							]
+						}
+						return path === 'SKILL.md' ||
+							path === 'agents/openai.yaml' ||
+							/^references\/[^/]+\.md$/u.test(path) ||
+							/^scripts\/[^/]+\.ts$/u.test(path) ||
+							(!hasSkill &&
+								(path.toLowerCase() === 'skill.md' ||
+									path.toLowerCase().startsWith('skill.md/'))) ||
+							(!hasMetadata && path.toLowerCase() === 'agents/openai.yaml') ||
+							(path.startsWith('references/') && path.slice('references/'.length).includes('/'))
+							? []
+							: [
+									createPolicyViolation(
+										'skill',
+										`${base}/${path}`,
+										'skill directory contains only SKILL.md, agents/openai.yaml, references/*.md, and scripts/*.ts',
+									),
+								]
+					})
+	return [
+		...documented,
+		...described,
+		...referenced,
+		...unnamed,
+		...unresolved,
+		...unproved,
+		...foreign,
+		...nested,
+		...stray,
+	]
 }
 
 /**
@@ -1741,10 +2338,7 @@ export function inspectSkill(
  * @returns Every skill-family violation in directory and invariant order.
  */
 export function inspectSkillFamily(root: string, installation = root): readonly PolicyViolation[] {
-	const violations: PolicyViolation[] = []
-	for (const name of readSkillFamily(root))
-		violations.push(...inspectSkill(root, name, installation))
-	return violations
+	return readSkillFamily(root).flatMap((name) => inspectSkill(root, name, installation))
 }
 
 /**
@@ -1768,71 +2362,64 @@ export function inspectBridge(root: string, name: string): readonly PolicyViolat
 	const canonical = isPolicyFile(root, canonicalPath)
 		? parseSkillFrontmatter(readFileSync(join(root, canonicalPath), 'utf8'))
 		: undefined
-	const violations: PolicyViolation[] = []
-	if (bridge === undefined) {
-		violations.push(
-			createPolicyViolation('bridge', bridgePath, 'bridge SKILL.md frontmatter parses'),
-		)
-	} else {
-		const keys = new Set(bridge.keys)
-		if (
-			bridge.keys.length !== 2 ||
-			keys.size !== 2 ||
-			!keys.has('name') ||
-			!keys.has('description')
-		) {
-			violations.push(
-				createPolicyViolation(
-					'bridge',
-					bridgePath,
-					'bridge SKILL.md frontmatter contains exactly name and description',
-				),
-			)
-		}
-	}
-	if (bridge !== undefined && canonical !== undefined) {
-		if (bridge.source.name !== canonical.source.name) {
-			violations.push(
-				createPolicyViolation(
-					'bridge',
-					bridgePath,
-					'bridge frontmatter name matches its canonical twin',
-				),
-			)
-		}
-		if (bridge.source.description !== canonical.source.description) {
-			violations.push(
-				createPolicyViolation(
-					'bridge',
-					bridgePath,
-					'bridge frontmatter description matches its canonical twin',
-				),
-			)
-		}
-	}
+	const keys = new Set(bridge?.keys)
 	const normalized = content.replaceAll('\r\n', '\n')
 	const boundary = normalized.indexOf('\n---', 3)
 	const body = boundary === -1 ? normalized : normalized.slice(boundary + '\n---'.length)
-	if (!body.includes(canonicalPath)) {
-		violations.push(
-			createPolicyViolation(
-				'bridge',
-				bridgePath,
-				`bridge body names its canonical workflow: ${canonicalPath}`,
-			),
-		)
-	}
-	violations.push(...inspectSkillTemplateTODOs('bridge', bridgePath, content))
-	if (resolvePolicyDirectory(root, `${bridgeBase}/references`) !== undefined) {
-		violations.push(
-			createPolicyViolation(
-				'bridge',
-				`${bridgeBase}/references`,
-				'bridge owns no references directory',
-			),
-		)
-	}
-	return violations
+	return [
+		...(bridge === undefined
+			? [createPolicyViolation('bridge', bridgePath, 'bridge SKILL.md frontmatter parses')]
+			: bridge.keys.length !== 2 || keys.size !== 2 || !keys.has('name') || !keys.has('description')
+				? [
+						createPolicyViolation(
+							'bridge',
+							bridgePath,
+							'bridge SKILL.md frontmatter contains exactly name and description',
+						),
+					]
+				: []),
+		...(bridge !== undefined &&
+		canonical !== undefined &&
+		bridge.source.name !== canonical.source.name
+			? [
+					createPolicyViolation(
+						'bridge',
+						bridgePath,
+						'bridge frontmatter name matches its canonical twin',
+					),
+				]
+			: []),
+		...(bridge !== undefined &&
+		canonical !== undefined &&
+		bridge.source.description !== canonical.source.description
+			? [
+					createPolicyViolation(
+						'bridge',
+						bridgePath,
+						'bridge frontmatter description matches its canonical twin',
+					),
+				]
+			: []),
+		...(body.includes(canonicalPath)
+			? []
+			: [
+					createPolicyViolation(
+						'bridge',
+						bridgePath,
+						`bridge body names its canonical workflow: ${canonicalPath}`,
+					),
+				]),
+		...inspectSkillTemplateTODOs('bridge', bridgePath, content),
+		...(resolvePolicyDirectory(root, `${bridgeBase}/references`) === undefined
+			? []
+			: [
+					createPolicyViolation(
+						'bridge',
+						`${bridgeBase}/references`,
+						'bridge owns no references directory',
+					),
+				]),
+	]
 }
 
 /**
@@ -1846,32 +2433,30 @@ export function inspectSkillBridges(root: string): readonly PolicyViolation[] {
 	const bridges = readPolicyDirectories(root, SKILL_BRIDGE_ROOT)
 	const bridgeSet = new Set(bridges)
 	const canonicalSet = new Set(canonical)
-	const violations: PolicyViolation[] = []
-	for (const name of canonical) {
-		if (!bridgeSet.has(name)) {
-			violations.push(
-				createPolicyViolation(
-					'bridge',
-					`${SKILL_BRIDGE_ROOT}/${name}`,
-					'canonical skill has a matching provider bridge directory',
-				),
-			)
-		} else {
-			violations.push(...inspectBridge(root, name))
-		}
-	}
-	for (const name of bridges) {
-		if (!canonicalSet.has(name)) {
-			violations.push(
-				createPolicyViolation(
-					'bridge',
-					`${SKILL_BRIDGE_ROOT}/${name}`,
-					'provider bridge directory has a canonical skill twin',
-				),
-			)
-		}
-	}
-	return violations
+	return [
+		...canonical.flatMap((name) =>
+			bridgeSet.has(name)
+				? inspectBridge(root, name)
+				: [
+						createPolicyViolation(
+							'bridge',
+							`${SKILL_BRIDGE_ROOT}/${name}`,
+							'canonical skill has a matching provider bridge directory',
+						),
+					],
+		),
+		...bridges.flatMap((name) =>
+			canonicalSet.has(name)
+				? []
+				: [
+						createPolicyViolation(
+							'bridge',
+							`${SKILL_BRIDGE_ROOT}/${name}`,
+							'provider bridge directory has a canonical skill twin',
+						),
+					],
+		),
+	]
 }
 
 /**
@@ -1884,14 +2469,10 @@ export function readPolicyRuleMap(content: string): readonly string[] {
 	const lines = content.replaceAll('\r\n', '\n').split('\n')
 	const heading = lines.indexOf(POLICY_RULE_MAP_HEADING)
 	if (heading === -1) return []
-	const paths: string[] = []
-	for (let index = heading + 1; index < lines.length; index += 1) {
-		const line = lines[index]
-		if (line === undefined || line.startsWith('## ')) break
+	return extractPolicySection(lines, heading).flatMap((line) => {
 		const cell = line.match(/^\|\s*`([^`]+)`\s*\|/u)?.[1]
-		if (cell !== undefined) paths.push(normalizePolicyPath(cell))
-	}
-	return paths
+		return cell === undefined ? [] : [normalizePolicyPath(cell)]
+	})
 }
 
 /**
@@ -1914,20 +2495,18 @@ export function inspectPolicyRuleMap(root: string): readonly PolicyViolation[] {
 		? readFileSync(join(root, POLICY_RULE_MAP_FILE), 'utf8')
 		: ''
 	const registered = new Set(readPolicyRuleMap(content))
-	const violations: PolicyViolation[] = []
-	for (const rule of rules) {
-		if (!registered.has(rule)) {
-			violations.push(createPolicyViolation('rules', rule, 'the rule map names every rule file'))
-		}
-	}
-	for (const path of registered) {
-		if (!isPolicyFile(root, path)) {
-			violations.push(
-				createPolicyViolation('rules', path, 'every rule-map row resolves to a rule file'),
-			)
-		}
-	}
-	return violations
+	return [
+		...rules.flatMap((rule) =>
+			registered.has(rule)
+				? []
+				: [createPolicyViolation('rules', rule, 'the rule map names every rule file')],
+		),
+		...[...registered].flatMap((path) =>
+			isPolicyFile(root, path)
+				? []
+				: [createPolicyViolation('rules', path, 'every rule-map row resolves to a rule file')],
+		),
+	]
 }
 
 /**
@@ -1941,50 +2520,53 @@ export function inspectPolicyRuleMap(root: string): readonly PolicyViolation[] {
  * @returns Every unusable-name and case-collision violation in path order.
  */
 export function inspectPolicyFilenamePaths(paths: readonly string[]): readonly PolicyViolation[] {
-	const violations: PolicyViolation[] = []
-	const folded = new Map<string, string>()
-	for (const candidate of paths) {
-		const path = normalizePolicyPath(candidate)
+	// The iterator visits a hole as `undefined`, which normalization refuses, as the loop did.
+	const normalized = Iterator.from(paths).map(normalizePolicyPath).toArray()
+	// Built from the reversed list, so the first path that folds to a key is the spelling a collision reports.
+	const folded = new Map(normalized.toReversed().map((path) => [path.toLowerCase(), path]))
+	return normalized.flatMap((path) => {
 		const segment = basename(path)
 		const [stem = ''] = segment.split('.')
-		if (POLICY_RESERVED_NAMES.includes(stem.toLowerCase())) {
-			violations.push(
-				createPolicyViolation(
-					'portability',
-					path,
-					'path segments avoid the names Windows reserves',
-				),
-			)
-		}
-		if (POLICY_RESERVED_PATTERN.test(segment)) {
-			violations.push(
-				createPolicyViolation(
-					'portability',
-					path,
-					'path segments avoid the characters Windows refuses',
-				),
-			)
-		}
-		if (segment.endsWith('.') || segment.endsWith(' ')) {
-			violations.push(
-				createPolicyViolation(
-					'portability',
-					path,
-					'path segments end with neither a dot nor a space',
-				),
-			)
-		}
-		const key = path.toLowerCase()
-		const previous = folded.get(key)
-		if (previous === undefined) {
-			folded.set(key, path)
-		} else if (previous !== path) {
-			violations.push(
-				createPolicyViolation('portability', path, `path differs from ${previous} by case alone`),
-			)
-		}
-	}
-	return violations
+		const previous = folded.get(path.toLowerCase())
+		return [
+			...(POLICY_RESERVED_NAMES.includes(stem.toLowerCase())
+				? [
+						createPolicyViolation(
+							'portability',
+							path,
+							'path segments avoid the names Windows reserves',
+						),
+					]
+				: []),
+			...(POLICY_RESERVED_PATTERN.test(segment)
+				? [
+						createPolicyViolation(
+							'portability',
+							path,
+							'path segments avoid the characters Windows refuses',
+						),
+					]
+				: []),
+			...(segment.endsWith('.') || segment.endsWith(' ')
+				? [
+						createPolicyViolation(
+							'portability',
+							path,
+							'path segments end with neither a dot nor a space',
+						),
+					]
+				: []),
+			...(previous === undefined || previous === path
+				? []
+				: [
+						createPolicyViolation(
+							'portability',
+							path,
+							`path differs from ${previous} by case alone`,
+						),
+					]),
+		]
+	})
 }
 
 /**
@@ -2014,21 +2596,16 @@ export function inspectPolicyFilenames(root: string): readonly PolicyViolation[]
  * @returns Each script name and its command, in manifest order.
  */
 export function parsePolicyScripts(content: string): ReadonlyMap<string, string> {
-	const scripts = new Map<string, string>()
-	let manifest: unknown
-	try {
-		manifest = JSON.parse(content)
-	} catch {
-		return scripts
-	}
-	if (!isPolicyRecord(manifest)) return scripts
+	const manifest = parsePolicyJSON(content)
+	if (!isPolicyRecord(manifest)) return new Map()
 	const record: unknown = Object.getOwnPropertyDescriptor(manifest, 'scripts')?.value
-	if (!isPolicyRecord(record)) return scripts
-	for (const name of Object.getOwnPropertyNames(record)) {
-		const command: unknown = Object.getOwnPropertyDescriptor(record, name)?.value
-		if (typeof command === 'string') scripts.set(name, command)
-	}
-	return scripts
+	if (!isPolicyRecord(record)) return new Map()
+	return new Map(
+		Object.getOwnPropertyNames(record).flatMap((name): Array<[string, string]> => {
+			const command: unknown = Object.getOwnPropertyDescriptor(record, name)?.value
+			return typeof command === 'string' ? [[name, command]] : []
+		}),
+	)
 }
 
 /**
@@ -2040,19 +2617,17 @@ export function parsePolicyScripts(content: string): ReadonlyMap<string, string>
 export function inspectPolicyScripts(root: string): readonly PolicyViolation[] {
 	if (!isPolicyFile(root, POLICY_MANIFEST_FILE)) return []
 	const content = readFileSync(join(root, POLICY_MANIFEST_FILE), 'utf8')
-	const violations: PolicyViolation[] = []
-	for (const [name, command] of parsePolicyScripts(content)) {
-		if (POLICY_SHELL_PATTERN.test(command)) {
-			violations.push(
-				createPolicyViolation(
-					'portability',
-					POLICY_MANIFEST_FILE,
-					`manifest scripts name no .sh file: ${name}`,
-				),
-			)
-		}
-	}
-	return violations
+	return [...parsePolicyScripts(content)].flatMap(([name, command]) =>
+		POLICY_SHELL_PATTERN.test(command)
+			? [
+					createPolicyViolation(
+						'portability',
+						POLICY_MANIFEST_FILE,
+						`manifest scripts name no .sh file: ${name}`,
+					),
+				]
+			: [],
+	)
 }
 
 /**
@@ -2091,12 +2666,7 @@ export function readPolicyProse(root: string): readonly string[] {
  */
 export function readPolicyPackage(root: string): string | undefined {
 	if (!isPolicyFile(root, POLICY_MANIFEST_FILE)) return undefined
-	let manifest: unknown
-	try {
-		manifest = JSON.parse(readFileSync(join(root, POLICY_MANIFEST_FILE), 'utf8'))
-	} catch {
-		return undefined
-	}
+	const manifest = readPolicyJSON(join(root, POLICY_MANIFEST_FILE))
 	if (!isPolicyRecord(manifest)) return undefined
 	const name: unknown = Object.getOwnPropertyDescriptor(manifest, 'name')?.value
 	if (typeof name !== 'string') return undefined
@@ -2123,14 +2693,10 @@ export function readPolicyCatalog(
 	const lines = readFileSync(join(root, path), 'utf8').replaceAll('\r\n', '\n').split('\n')
 	const heading = lines.indexOf(POLICY_CATALOG_HEADING)
 	if (heading === -1) return []
-	const names: string[] = []
-	for (let index = heading + 1; index < lines.length; index += 1) {
-		const line = lines[index]
-		if (line === undefined || line.startsWith('## ')) break
+	return extractPolicySection(lines, heading).flatMap((line) => {
 		const cell = line.match(/^\|\s*`([^`]+)`\s*\|/u)?.[1]
-		if (cell !== undefined) names.push(cell.slice(cell.lastIndexOf('/') + 1))
-	}
-	return names
+		return cell === undefined ? [] : [cell.slice(cell.lastIndexOf('/') + 1)]
+	})
 }
 
 /**
@@ -2200,31 +2766,30 @@ export function isPolicyStray(root: string, path: string): boolean {
  * order.
  */
 export function inspectPolicyProse(root: string): readonly PolicyViolation[] {
-	const violations: PolicyViolation[] = []
-	for (const path of readPolicyProse(root)) {
-		if (isPolicyStray(root, path)) {
-			violations.push(
-				createPolicyViolation(
-					'prose',
-					path,
-					"guide is the package's own, the map, or a catalog row",
-				),
-			)
-		}
-		if (isPolicyMirror(root, path)) continue
+	return readPolicyProse(root).flatMap((path) => {
+		const stray = isPolicyStray(root, path)
+			? [
+					createPolicyViolation(
+						'prose',
+						path,
+						"guide is the package's own, the map, or a catalog row",
+					),
+				]
+			: []
+		if (isPolicyMirror(root, path)) return stray
 		const prose = stripPolicyCode(readFileSync(join(root, path), 'utf8'))
-		for (const hit of textToPolicyHits(prose)) {
-			violations.push(
+		return [
+			...stray,
+			...textToPolicyHits(prose).map((hit) =>
 				createPolicyViolation(
 					'prose',
 					path,
 					`prose carries no banned term: ${hit.term.term} (${hit.term.replacement})`,
 					prose.slice(0, hit.index).split('\n').length,
 				),
-			)
-		}
-	}
-	return violations
+			),
+		]
+	})
 }
 
 /**
@@ -2241,18 +2806,12 @@ export function readPolicyTerms(content: string): readonly string[] {
 	const lines = content.replaceAll('\r\n', '\n').split('\n')
 	const heading = lines.indexOf(POLICY_TERM_HEADING)
 	if (heading === -1) return []
-	const terms: string[] = []
-	for (let index = heading + 1; index < lines.length; index += 1) {
-		const line = lines[index]
-		if (line === undefined || line.startsWith('## ')) break
+	return extractPolicySection(lines, heading).flatMap((line) => {
 		const cell = line.match(/^\|([^|]*)\|/u)?.[1]
-		if (cell === undefined) continue
-		for (const match of cell.matchAll(/`([^`]+)`/gu)) {
-			const term = match[1]
-			if (term !== undefined) terms.push(term)
-		}
-	}
-	return terms
+		return cell === undefined
+			? []
+			: [...cell.matchAll(/`([^`]+)`/gu)].flatMap((match) => match[1] ?? [])
+	})
 }
 
 /**
@@ -2272,7 +2831,7 @@ export function inspectPolicyPortability(root: string): readonly PolicyViolation
 /**
  * Locates parsed exports at their physical declaration lines.
  *
- * @param path - The declaring workspace-relative path.
+ * @param written - The declaring workspace-relative path, normalized before it is read.
  * @param text - The declaration source text.
  * @param root - The workspace root used to resolve relative star exports, when supplied.
  * @param ancestors - The source paths already visited along this star-export branch.
@@ -2280,17 +2839,16 @@ export function inspectPolicyPortability(root: string): readonly PolicyViolation
  * @throws An `Error` when syntax, an export form, or a star target cannot be read.
  */
 export function readPolicyDeclarations(
-	path: string,
+	written: string,
 	text: string,
 	root?: string,
 	ancestors: readonly string[] = [],
 ): readonly PolicySurfaceDeclaration[] {
-	path = normalizePolicyPath(path)
+	const path = normalizePolicyPath(written)
 	if (ancestors.includes(path)) return []
 	const source = parseSync(path, text)
 	if (source.errors.length > 0) throw new Error(`export syntax is unreadable at ${path}`)
-	const declarations: PolicySurfaceDeclaration[] = []
-	for (const statement of source.program.body) {
+	return source.program.body.flatMap((statement): readonly PolicySurfaceDeclaration[] => {
 		const line = text.slice(0, statement.start).split(/\r\n|\n/u).length
 		if (statement.type === 'ExportAllDeclaration') {
 			if (statement.exported !== null) {
@@ -2299,8 +2857,7 @@ export function readPolicyDeclarations(
 						? statement.exported.name
 						: statement.exported.value
 				if (name === 'default') throw new Error(`default export is unsupported at ${path}:${line}`)
-				declarations.push({ name, path, line })
-				continue
+				return [{ name, path, line }]
 			}
 			const target = statement.source.value
 			const resolved = resolveLink(
@@ -2315,40 +2872,35 @@ export function readPolicyDeclarations(
 			) {
 				throw new Error(`star export target is unreadable at ${path}:${line}: ${target}`)
 			}
-			declarations.push(
-				...readPolicyDeclarations(resolved, readFileSync(join(root, resolved), 'utf8'), root, [
-					...ancestors,
-					path,
-				]),
-			)
-			continue
+			return readPolicyDeclarations(resolved, readFileSync(join(root, resolved), 'utf8'), root, [
+				...ancestors,
+				path,
+			])
 		}
 		if (statement.type === 'ExportNamedDeclaration') {
-			for (const specifier of statement.specifiers) {
+			const listed = statement.specifiers.map((specifier) => {
 				const name =
 					specifier.exported.type === 'Identifier'
 						? specifier.exported.name
 						: specifier.exported.value
 				if (name === 'default') throw new Error(`default export is unsupported at ${path}:${line}`)
-				declarations.push({
-					name,
-					path,
-					line: text.slice(0, specifier.start).split(/\r\n|\n/u).length,
-				})
-			}
+				return { name, path, line: text.slice(0, specifier.start).split(/\r\n|\n/u).length }
+			})
 			const declaration = statement.declaration
-			if (declaration === null) continue
+			if (declaration === null) return listed
 			if (declaration.type === 'VariableDeclaration') {
-				for (const variable of declaration.declarations) {
-					if (variable.id.type !== 'Identifier')
-						throw new Error(`export binding is unsupported at ${path}:${line}`)
-					declarations.push({
-						name: variable.id.name,
-						path,
-						line: text.slice(0, variable.id.start).split(/\r\n|\n/u).length,
-					})
-				}
-				continue
+				return [
+					...listed,
+					...declaration.declarations.map((variable) => {
+						if (variable.id.type !== 'Identifier')
+							throw new Error(`export binding is unsupported at ${path}:${line}`)
+						return {
+							name: variable.id.name,
+							path,
+							line: text.slice(0, variable.id.start).split(/\r\n|\n/u).length,
+						}
+					}),
+				]
 			}
 			if (
 				declaration.type === 'FunctionDeclaration' ||
@@ -2361,8 +2913,7 @@ export function readPolicyDeclarations(
 			) {
 				if (declaration.id?.type !== 'Identifier')
 					throw new Error(`export name is unreadable at ${path}:${line}`)
-				declarations.push({ name: declaration.id.name, path, line })
-				continue
+				return [...listed, { name: declaration.id.name, path, line }]
 			}
 			throw new Error(`export declaration is unsupported at ${path}:${line}: ${declaration.type}`)
 		}
@@ -2373,8 +2924,8 @@ export function readPolicyDeclarations(
 		) {
 			throw new Error(`export statement is unsupported at ${path}:${line}: ${statement.type}`)
 		}
-	}
-	return declarations
+		return []
+	})
 }
 
 /**
@@ -2414,21 +2965,21 @@ export function collectPolicyDeclarations(
  * exactly one bare `./index.scss` import, including styles extensions and themes.
  */
 export function readPolicySurface(root: string): PolicySurfacePopulation {
-	const files: Record<string, string> = {}
-	for (const path of globSync('src/**/*.ts', { cwd: root }).map(normalizePolicyPath).sort()) {
-		files[path] = readFileSync(join(root, path), 'utf8')
-	}
+	const files = Object.fromEntries(
+		globSync('src/**/*.ts', { cwd: root })
+			.map(normalizePolicyPath)
+			.sort()
+			.map((path): [string, string] => [path, readFileSync(join(root, path), 'utf8')]),
+	)
 	const barrels = Object.keys(files).filter((path) => path.endsWith('/index.ts'))
-	const targets = new Set<string>()
-	const violations: PolicyViolation[] = []
 	const sheets = new Set([
 		POLICY_SURFACE_STYLES_ENTRY,
 		...collectSheets(root).map((face) => `src/${face}/sheet.ts`),
 		'src/styles/themes/sheet.ts',
 	])
-	for (const path of sheets) {
+	const entryViolations = [...sheets].flatMap((path) => {
 		const stylesEntry = files[path]
-		if (stylesEntry === undefined) continue
+		if (stylesEntry === undefined) return []
 		const stylesSource = parseSync(path, stylesEntry)
 		const stylesStatement =
 			stylesSource.errors.length === 0 ? stylesSource.program.body[0] : undefined
@@ -2438,79 +2989,85 @@ export function readPolicySurface(root: string): PolicySurfacePopulation {
 			stylesStatement?.type === 'ImportDeclaration' &&
 			stylesStatement.specifiers.length === 0 &&
 			stylesStatement.source.value === './index.scss'
-		if (!stylesValid) {
-			const line =
-				stylesStatement === undefined
-					? 1
-					: stylesEntry.slice(0, stylesStatement.start).split(/\r\n|\n/u).length
-			violations.push(createPolicyViolation('surface', path, POLICY_SURFACE_STYLES_MESSAGE, line))
-		}
-	}
-	for (const path of barrels) {
-		const text = files[path]
-		if (text === undefined) continue
-		const source = parseSync(path, text)
-		const lines = extractSourceLines(text)
-		if (source.errors.length > 0) {
-			violations.push(
-				createPolicyViolation(
-					'surface',
-					path,
-					'surface population incomplete: barrel syntax is unreadable',
-				),
-			)
-			continue
-		}
-		for (const statement of source.program.body) {
-			const start = text.slice(0, statement.start).split(/\r\n|\n/u).length - 1
-			const end = text.slice(0, statement.end).split(/\r\n|\n/u).length - 1
-			const row = lines[start]?.code.match(POLICY_SURFACE_BARREL_PATTERN)
-			const target = row?.[1] ?? row?.[2]
-			if (
-				statement.type !== 'ExportAllDeclaration' ||
-				statement.exportKind !== 'value' ||
-				statement.exported !== null ||
-				start !== end ||
-				target === undefined
-			) {
-				violations.push(
-					createPolicyViolation(
-						'surface',
-						path,
-						'surface population incomplete: barrel requires a relative .js star export on one line',
-						start + 1,
-					),
-				)
-				continue
+		const line =
+			stylesStatement === undefined
+				? 1
+				: stylesEntry.slice(0, stylesStatement.start).split(/\r\n|\n/u).length
+		return stylesValid
+			? []
+			: [createPolicyViolation('surface', path, POLICY_SURFACE_STYLES_MESSAGE, line)]
+	})
+	// Each barrel statement answers one violation, one star-export target, or neither.
+	const readings = barrels.flatMap(
+		(path): ReadonlyArray<{ readonly violation?: PolicyViolation; readonly target?: string }> => {
+			const text = files[path]
+			if (text === undefined) return []
+			const source = parseSync(path, text)
+			const lines = extractSourceLines(text)
+			if (source.errors.length > 0) {
+				return [
+					{
+						violation: createPolicyViolation(
+							'surface',
+							path,
+							'surface population incomplete: barrel syntax is unreadable',
+						),
+					},
+				]
 			}
-			const resolved = resolveLink(path, `${target.slice(0, -3)}.ts`)
-			if (
-				!hasCanonicalSegments(resolved) ||
-				!resolved.startsWith('src/') ||
-				files[resolved] === undefined
-			) {
-				violations.push(
-					createPolicyViolation(
-						'surface',
-						path,
-						`surface population incomplete: barrel target is unreadable: ${target}`,
-						start + 1,
-					),
-				)
-				continue
-			}
-			if (!resolved.endsWith('/index.ts')) targets.add(resolved)
-		}
-	}
-	const declarations: PolicySurfaceDeclaration[] = []
-	for (const path of targets) {
+			return source.program.body.map((statement) => {
+				const start = text.slice(0, statement.start).split(/\r\n|\n/u).length - 1
+				const end = text.slice(0, statement.end).split(/\r\n|\n/u).length - 1
+				const row = lines[start]?.code.match(POLICY_SURFACE_BARREL_PATTERN)
+				const target = row?.[1] ?? row?.[2]
+				if (
+					statement.type !== 'ExportAllDeclaration' ||
+					statement.exportKind !== 'value' ||
+					statement.exported !== null ||
+					start !== end ||
+					target === undefined
+				) {
+					return {
+						violation: createPolicyViolation(
+							'surface',
+							path,
+							'surface population incomplete: barrel requires a relative .js star export on one line',
+							start + 1,
+						),
+					}
+				}
+				const resolved = resolveLink(path, `${target.slice(0, -3)}.ts`)
+				if (
+					!hasCanonicalSegments(resolved) ||
+					!resolved.startsWith('src/') ||
+					files[resolved] === undefined
+				) {
+					return {
+						violation: createPolicyViolation(
+							'surface',
+							path,
+							`surface population incomplete: barrel target is unreadable: ${target}`,
+							start + 1,
+						),
+					}
+				}
+				return resolved.endsWith('/index.ts') ? {} : { target: resolved }
+			})
+		},
+	)
+	const targets = new Set(readings.flatMap(({ target }) => (target === undefined ? [] : [target])))
+	const reads = [...targets].flatMap((path) => {
 		const text = files[path]
-		if (text === undefined) continue
-		const read = collectPolicyDeclarations(root, path, text)
-		declarations.push(...read.declarations)
-		if (read.violation !== undefined) violations.push(read.violation)
+		return text === undefined ? [] : [collectPolicyDeclarations(root, path, text)]
+	})
+	return {
+		declarations: reads.flatMap((read) => read.declarations),
+		violations: [
+			...entryViolations,
+			...readings.flatMap(({ violation }) => (violation === undefined ? [] : [violation])),
+			...reads.flatMap((read) => (read.violation === undefined ? [] : [read.violation])),
+		],
 	}
-	return { declarations, violations }
 }
 
 /**
@@ -2541,79 +3098,97 @@ export function inspectPolicySurface(root: string): readonly PolicyViolation[] {
 			),
 		]
 	}
-	const violations: PolicyViolation[] = []
-	for (const name of names) {
-		if (!isPolicyFile(host, `guides/${name}.md`)) {
-			violations.push(
-				createPolicyViolation(
-					'surface',
-					`${directory}/${name}.md`,
-					`surface evidence missing: catalog package ${name} has no hosted guide`,
-				),
-			)
-		}
-	}
-	const grandfather = new Set<string>()
-	const owners = new Map<string, Set<string>>()
-	for (const path of globSync('guides/*.md', { cwd: host }).map(normalizePolicyPath).sort()) {
-		const owner = basename(path, '.md')
-		if (owner === POLICY_GUIDE_MAP) continue
-		const guide = createGuide(readFileSync(join(host, path), 'utf8'))
-		if (!guide.sections().includes('Surface')) {
-			violations.push(
-				createPolicyViolation(
-					'surface',
-					`${directory}/${owner}.md`,
-					'surface evidence missing: hosted guide has no Surface section',
-				),
-			)
-			continue
-		}
-		for (const symbol of guide.surface()) {
-			if (owner === own) {
-				grandfather.add(symbol.name)
-				continue
-			}
-			const claimed = owners.get(symbol.name) ?? new Set<string>()
-			claimed.add(owner)
-			owners.set(symbol.name, claimed)
-		}
-	}
-	const population = readPolicySurface(root)
-	violations.push(...population.violations)
-	const declarations = population.declarations.filter(
-		(declaration) => !grandfather.has(declaration.name),
+	const missing = [...names].flatMap((name) =>
+		isPolicyFile(host, `guides/${name}.md`)
+			? []
+			: [
+					createPolicyViolation(
+						'surface',
+						`${directory}/${name}.md`,
+						`surface evidence missing: catalog package ${name} has no hosted guide`,
+					),
+				],
 	)
-	for (const path of globSync('tests/setup*.ts', { cwd: root }).map(normalizePolicyPath).sort()) {
-		if (
+	// A guide without a Surface section answers its violation and no names.
+	const guides = globSync('guides/*.md', { cwd: host })
+		.map(normalizePolicyPath)
+		.sort()
+		.flatMap(
+			(
+				path,
+			): ReadonlyArray<{
+				readonly owner: string
+				readonly symbols: readonly string[]
+				readonly violation?: PolicyViolation
+			}> => {
+				const owner = basename(path, '.md')
+				if (owner === POLICY_GUIDE_MAP) return []
+				const guide = createGuide(readFileSync(join(host, path), 'utf8'))
+				return guide.sections().includes('Surface')
+					? [{ owner, symbols: guide.surface().map((symbol) => symbol.name) }]
+					: [
+							{
+								owner,
+								symbols: [],
+								violation: createPolicyViolation(
+									'surface',
+									`${directory}/${owner}.md`,
+									'surface evidence missing: hosted guide has no Surface section',
+								),
+							},
+						]
+			},
+		)
+	const grandfather = new Set(
+		guides.filter((guide) => guide.owner === own).flatMap(({ symbols }) => symbols),
+	)
+	const claimed = Map.groupBy(
+		guides
+			.filter((guide) => guide.owner !== own)
+			.flatMap(({ owner, symbols }) => symbols.map((name) => ({ name, owner }))),
+		({ name }) => name,
+	)
+	const population = readPolicySurface(root)
+	const setups = globSync('tests/setup*.ts', { cwd: root })
+		.map(normalizePolicyPath)
+		.sort()
+		.flatMap((path) =>
 			path.endsWith('.test.ts') ||
 			HOST_PATHS.some(
 				(vendored) =>
 					path === normalizePolicyPath(vendored) ||
 					path.startsWith(`${normalizePolicyPath(vendored)}/`),
 			)
+				? []
+				: [collectPolicyDeclarations(root, path, readFileSync(join(root, path), 'utf8'))],
 		)
-			continue
-		const read = collectPolicyDeclarations(root, path, readFileSync(join(root, path), 'utf8'))
-		declarations.push(...read.declarations)
-		if (read.violation !== undefined) violations.push(read.violation)
-	}
-	const seen = new Set<string>()
-	for (const declaration of declarations) {
-		for (const owner of owners.get(declaration.name) ?? []) {
-			const key = `${declaration.path}\n${declaration.name}\n${owner}`
-			if (seen.has(key)) continue
-			seen.add(key)
-			violations.push(
+	const declarations = [
+		...population.declarations.filter((declaration) => !grandfather.has(declaration.name)),
+		...setups.flatMap((read) => read.declarations),
+	]
+	const claims = declarations.flatMap((declaration) =>
+		[...new Set(claimed.get(declaration.name)?.map(({ owner }) => owner))].map((owner) => ({
+			declaration,
+			owner,
+			key: `${declaration.path}\n${declaration.name}\n${owner}`,
+		})),
+	)
+	const violations = [
+		...missing,
+		...guides.flatMap(({ violation }) => (violation === undefined ? [] : [violation])),
+		...population.violations,
+		...setups.flatMap((read) => (read.violation === undefined ? [] : [read.violation])),
+		...claims
+			.filter((claim, index) => claims.findIndex((other) => other.key === claim.key) === index)
+			.map(({ declaration, owner }) =>
 				createPolicyViolation(
 					'surface',
 					declaration.path,
 					`surface name belongs to one package: ${declaration.name} (${owner})`,
 					declaration.line,
 				),
-			)
-		}
-	}
+			),
+	]
 	return violations.sort((first, second) => {
 		if (first.path !== second.path) return first.path < second.path ? -1 : 1
 		if (first.line !== second.line) return (first.line ?? 0) - (second.line ?? 0)
@@ -3891,6 +4466,41 @@ export function collectSheets(directory: string): readonly string[] {
 }
 
 /**
+ * Collects the study tests a workspace holds beneath `tests/studies`.
+ * @param directory - The workspace root.
+ * @returns Sorted workspace-relative paths of the physical `*.test.ts` files, nested or direct,
+ * beneath a `tests/studies` directory whose stored name has exactly that case, outside any
+ * `node_modules` or `.git` directory, which Vitest's default exclude never collects; empty when
+ * the directory is absent, is not a directory, or holds none.
+ */
+export function collectStudies(directory: string): readonly string[] {
+	const tests = resolve(directory, 'tests')
+	if (!existsSync(tests)) return []
+	// A directory entry carries the name the host stores, so matching it keeps the selection exact-case
+	// on a host that folds case, and its type excludes a link without following it.
+	const held = readdirSync(tests, { withFileTypes: true })
+	if (!held.some((entry) => entry.name === 'studies' && entry.isDirectory())) return []
+	const studies: string[] = []
+	const pending = ['tests/studies']
+	while (pending.length > 0) {
+		const current = pending.pop() ?? ''
+		for (const entry of readdirSync(resolve(directory, current), { withFileTypes: true })) {
+			const path = `${current}/${entry.name}`
+			// Vitest's default exclude collects nothing beneath these directories.
+			if (entry.isDirectory()) {
+				if (entry.name !== 'node_modules' && entry.name !== '.git') pending.push(path)
+			} else if (
+				entry.isFile() &&
+				entry.name.endsWith('.test.ts') &&
+				lstatSync(resolve(directory, path)).nlink === 1
+			)
+				studies.push(path)
+		}
+	}
+	return studies.sort()
+}
+
+/**
  * Collects occupied framework faces from the source and application trees.
  * @param directory - The workspace root.
  * @returns Occupied axis and framework paths.
@@ -3954,19 +4564,50 @@ export function collectFaceWrappers(directory: string): readonly string[] {
 export function inspectSheetConfiguration(project: unknown, script?: string): readonly string[] {
 	const test = readConfigRecord(readConfigRecord(project).test)
 	const setup = test.setupFiles
-	const failures: string[] = []
-	for (const path of ['./tests/setup.ts', './tests/setupBrowser.ts', './tests/setupStyles.ts'])
-		if (!Array.isArray(setup) || !setup.includes(path)) failures.push(path)
-	if (test.isolate !== false) failures.push('isolate')
-	if (
-		script !== undefined &&
+	return [
+		...['./tests/setup.ts', './tests/setupBrowser.ts', './tests/setupStyles.ts'].filter(
+			(path) => !Array.isArray(setup) || !setup.includes(path),
+		),
+		...(test.isolate !== false ? ['isolate'] : []),
+		...(script !== undefined &&
 		(!script.includes('vite.styles.config.ts') ||
 			!script.includes('vite.themes.config.ts') ||
 			script.indexOf('vite.styles.config.ts') > script.indexOf('vite.themes.config.ts'))
-	)
-		failures.push('themes order')
-	return failures
+			? ['themes order']
+			: []),
+	]
 }
+
+/** Lists artifact-loader paths and the computed ESM imports each boundary admits. */
+export const ARTIFACT_IMPORT_CASES: ReadonlyArray<readonly [string, boolean]> = Object.freeze([
+	['src/server/artifacts/Artifacts.ts', true],
+	['src/server/artifacts/nested/inspect.mts', true],
+	['src/server/artifacts/inspect.js', true],
+	['src/server/artifacts/inspect.mjs', true],
+	['src/server/artifacts-lookalike/inspect.ts', false],
+	['src/browser/artifacts/inspect.ts', false],
+	['src/core/artifacts/inspect.ts', false],
+	['app/server/artifacts/inspect.ts', false],
+	['src/server/artifacts/inspect.cts', false],
+	['src/server/artifacts/inspect.cjs', false],
+	['tools/artifacts/inspect.ts', true],
+	['tools/artifacts/nested/inspect.mts', true],
+	['tools/artifacts/inspect.js', true],
+	['tools/artifacts/inspect.mjs', true],
+	['.orkestrel/sample/instruments/tools/artifacts/inspect.ts', true],
+	['.orkestrel/sample/instruments/harness/tools/artifacts/nested/inspect.mts', true],
+	['.orkestrel/sample/instruments/harness/tools/artifacts/inspect.js', true],
+	['.orkestrel/sample/instruments/harness/tools/artifacts/inspect.mjs', true],
+	['src/server/inspect.ts', false],
+	['src/server/tools/artifacts/inspect.ts', false],
+	['configs/inspect.ts', false],
+	['scripts/inspect.ts', false],
+	['.orkestrel/sample/instruments/harness/inspect.ts', false],
+	['tools/artifacts-lookalike/inspect.ts', false],
+	['.orkestrel/sample/instruments/harness/tools/artifacts-lookalike/inspect.ts', false],
+	['tools/artifacts/inspect.cts', false],
+	['tools/artifacts/inspect.cjs', false],
+])
 
 /**
  * Reads import restrictions and collection sentinels from the installed linter.
@@ -4003,18 +4644,92 @@ export function readImportDiagnostics(
 		)
 	const diagnostics = readConfigRecord(JSON.parse(result.stdout)).diagnostics
 	if (!Array.isArray(diagnostics)) throw new Error('Missing lint diagnostics')
-	const codes = new Set<string>()
-	for (const value of diagnostics) {
-		const diagnostic = readConfigRecord(value)
-		if (typeof diagnostic.code !== 'string' || typeof diagnostic.filename !== 'string')
-			throw new Error('Missing diagnostic location')
-		codes.add(
-			diagnostic.code +
+	const codes = new Set(
+		diagnostics.map((value: unknown) => {
+			const diagnostic = readConfigRecord(value)
+			if (typeof diagnostic.code !== 'string' || typeof diagnostic.filename !== 'string')
+				throw new Error('Missing diagnostic location')
+			return (
+				diagnostic.code +
 				' ' +
-				normalizePolicyFilename(realpathSync.native(directory), diagnostic.filename),
-		)
-	}
+				normalizePolicyFilename(realpathSync.native(directory), diagnostic.filename)
+			)
+		}),
+	)
 	for (const path of paths)
 		if (!codes.has('eslint(no-debugger) ' + path)) throw new Error(`Uncollected fixture ${path}`)
 	return codes
 }
+
+/**
+ * Reports whether a path is a physical directory, never a link to one.
+ *
+ * @remarks
+ * Reads the same two facts `isPhysicalDirectory` reads off an `lstat` and returns false for every
+ * inspection error, because this module is vendored byte-identical and imports nothing from the
+ * package.
+ *
+ * @param path - The absolute path to inspect.
+ * @returns True if the path is a directory and not a symbolic link; false otherwise, an unreadable
+ * path included.
+ */
+export function isPolicyDirectory(path: string): boolean {
+	try {
+		const entry = lstatSync(path)
+		return entry.isDirectory() && !entry.isSymbolicLink()
+	} catch {
+		return false
+	}
+}
+
+/**
+ * Resolves a module specifier from this module without throwing.
+ *
+ * @param specifier - The package or subpath specifier to resolve.
+ * @returns The resolved file path, or `undefined` when the workspace installs no such package.
+ */
+export function resolvePolicyPackage(specifier: string): string | undefined {
+	try {
+		return createRequire(import.meta.url).resolve(specifier)
+	} catch {
+		return undefined
+	}
+}
+
+/** Names the workspace root, the directory above `tests/`, that the vendored proofs inspect. */
+export const POLICY_ROOT: string = resolve(dirname(fileURLToPath(import.meta.url)), '..')
+
+/**
+ * Holds whether the workspace publishes source from `src`; false for one with application environments alone.
+ *
+ * @remarks
+ * The `src` axis a declaration roll-up reads, derived from a recognized source environment that is
+ * a physical directory rather than from a `src` entry of any shape. A regular file, an empty
+ * directory, a directory holding no recognized environment, a symbolic link, and an entry this host
+ * refuses to inspect each leave a workspace publishing nothing, and reading the entry alone would
+ * put every one of them under the face proof. The inspection is caught rather than excused by
+ * option: `throwIfNoEntry` excuses an absent path alone and rethrows a permission refusal, and a
+ * throw at module scope is a collection error that takes a whole file down in that target rather
+ * than failing one case. This is the derivation `targetToEnvironments` uses, which filters the
+ * environment names by a contained physical directory, and it answers the same question
+ * `blueprintToScripts` answers from a blueprint's own `src` list. A workspace declaring app
+ * environments alone publishes no library, so
+ * it vendors no `configs/src/` face wrapper and has no roll-up to measure. A face proof is
+ * conditioned on this axis rather than on a face wrapper: a workspace that declares the axis and
+ * vendors no wrapper carries the defect such a proof reports, so that workspace must still fail the
+ * proof. The manifest cases read the same fact from their own `private` flag and name it
+ * `manifestPublishes` for the source that decides it there; this reads the axis on disk, so a
+ * workspace whose manifest and shape disagree fails one of the two rather than neither.
+ */
+export const POLICY_PUBLISHES: boolean = ['core', 'browser', 'server'].some((environment) =>
+	isPolicyDirectory(resolve(POLICY_ROOT, 'src', environment)),
+)
+
+/**
+ * Holds the declaration extractor's entry path, or `undefined` where the workspace installs none.
+ *
+ * @remarks
+ * A declaration roll-up loads the extractor package, which only a workspace publishing source from
+ * `src` installs. The resolution is the mechanism its proof is conditioned on.
+ */
+export const POLICY_EXTRACTOR: string | undefined = resolvePolicyPackage('@microsoft/api-extractor')

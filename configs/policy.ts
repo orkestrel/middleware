@@ -536,31 +536,29 @@ export function isPolicyDeclaredFunction(node: PolicyExpression): boolean {
 
 /** Returns a policy function's position through parentheses, object values, and array elements. */
 export function functionToPolicyPosition(node: PolicyExpression): PolicyExpression {
-	let position = node
-	while (position.parent !== undefined && position.parent !== null) {
-		const parent = position.parent
-		if (parent.type === 'ParenthesizedExpression') {
-			position = parent
-			continue
-		}
-		if (
-			parent.type === 'Property' &&
-			parent.kind === 'init' &&
-			parent.method === false &&
-			parent.computed !== true &&
-			parent.value === position &&
-			parent.parent?.type === 'ObjectExpression'
-		) {
-			position = parent.parent
-			continue
-		}
-		if (parent.type === 'ArrayExpression' && parent.elements?.includes(position) === true) {
-			position = parent
-			continue
-		}
-		break
+	const parent = node.parent
+	if (parent === undefined || parent === null) return node
+	if (parent.type === 'ParenthesizedExpression') return functionToPolicyPosition(parent)
+	if (
+		parent.type === 'Property' &&
+		parent.kind === 'init' &&
+		parent.method === false &&
+		parent.computed !== true &&
+		parent.value === node &&
+		parent.parent?.type === 'ObjectExpression'
+	) {
+		return functionToPolicyPosition(parent.parent)
 	}
-	return position
+	if (parent.type === 'ArrayExpression' && parent.elements?.includes(node) === true) {
+		return functionToPolicyPosition(parent)
+	}
+	return node
+}
+
+/** Returns a policy node's position through its enclosing parentheses alone. */
+export function nodeToPolicyOuter(node: PolicyExpression): PolicyExpression {
+	const parent = node.parent
+	return parent?.type === 'ParenthesizedExpression' ? nodeToPolicyOuter(parent) : node
 }
 
 /** Reports whether a literal position is admitted as an argument, return, or arrow body. */
@@ -611,20 +609,22 @@ export function isPolicyMethod(node: PolicyExpression): boolean {
 /**
  * Reports whether a policy function sits inside another function before any class-expression
  * boundary.
+ *
+ * @param node - The function node whose ancestors are read.
+ * @param method - If `true`, a method body was already crossed on the way up; if `false`, none was.
+ *   Default: `false`.
+ * @returns True if a non-method function, or a method inside a class declaration, encloses the node
+ *   before a class expression does; false otherwise.
  */
-export function hasPolicyFunctionAncestor(node: PolicyExpression): boolean {
-	let parent = node.parent
-	let method = false
-	while (parent !== undefined && parent !== null) {
-		if (parent.type === 'ClassExpression') return false
-		if (parent.type === 'ClassDeclaration' && method) return true
-		if (isPolicyFunction(parent)) {
-			if (!isPolicyMethod(parent)) return true
-			method = true
-		}
-		parent = parent.parent
+export function hasPolicyFunctionAncestor(node: PolicyExpression, method = false): boolean {
+	const parent = node.parent
+	if (parent === undefined || parent === null) return method
+	if (parent.type === 'ClassExpression') return false
+	if (parent.type === 'ClassDeclaration' && method) return true
+	if (isPolicyFunction(parent)) {
+		return !isPolicyMethod(parent) || hasPolicyFunctionAncestor(parent, true)
 	}
-	return method
+	return hasPolicyFunctionAncestor(parent, method)
 }
 
 /**
@@ -634,15 +634,11 @@ export function hasPolicyFunctionAncestor(node: PolicyExpression): boolean {
  * reads module regions rather than class members.
  */
 export function functionToPolicyRegion(node: PolicyExpression): PolicyExpression | undefined {
-	let current = node
-	let parent = current.parent
-	while (parent !== undefined && parent !== null) {
-		if (parent.type === 'ClassDeclaration' || parent.type === 'ClassExpression') return undefined
-		if (parent.type === 'Program') return statementToPolicyDeclaration(current)
-		current = parent
-		parent = parent.parent
-	}
-	return undefined
+	const parent = node.parent
+	if (parent === undefined || parent === null) return undefined
+	if (parent.type === 'ClassDeclaration' || parent.type === 'ClassExpression') return undefined
+	if (parent.type === 'Program') return statementToPolicyDeclaration(node)
+	return functionToPolicyRegion(parent)
 }
 
 /** Lists every module function a top-level statement declares, paired with its declared name. */
@@ -651,15 +647,16 @@ export function statementToPolicyBindings(node: PolicyExpression): readonly Poli
 		return [{ node, name: identifierToPolicyName(node.id) }]
 	}
 	if (node.type !== 'VariableDeclaration') return []
-	const bindings: PolicyBinding[] = []
-	for (const declarator of node.declarations ?? []) {
-		const init = declarator.init
-		if (init === undefined || init === null || !isPolicyFunction(init)) continue
-		const name = identifierToPolicyName(declarator.id)
-		if (name === undefined) continue
-		bindings.push({ node: declarator, name })
-	}
-	return bindings
+	// The iterator consumes one declarator at a time and reads a hole as an `undefined` declarator,
+	// as a `for…of` over the list would.
+	return Iterator.from(node.declarations ?? [])
+		.flatMap((declarator) => {
+			const init = declarator.init
+			if (init === undefined || init === null || !isPolicyFunction(init)) return []
+			const name = identifierToPolicyName(declarator.id)
+			return name === undefined ? [] : [{ node: declarator, name }]
+		})
+		.toArray()
 }
 
 /** Reports whether a call trims a whole payload before splitting it on a line feed. */
@@ -735,11 +732,9 @@ export function stripPolicyCode(text: string): string {
  * @returns One hit per match, each naming its row and the offset the match starts at.
  */
 export function textToPolicyHits(text: string): readonly PolicyHit[] {
-	const hits: PolicyHit[] = []
-	for (const term of POLICY_BANNED_TERMS) {
-		for (const match of text.matchAll(term.pattern)) hits.push({ term, index: match.index })
-	}
-	return hits.sort((left, right) => left.index - right.index)
+	return POLICY_BANNED_TERMS.flatMap((term) =>
+		[...text.matchAll(term.pattern)].map((match) => ({ term, index: match.index })),
+	).sort((left, right) => left.index - right.index)
 }
 
 /**
@@ -749,13 +744,15 @@ export function textToPolicyHits(text: string): readonly PolicyHit[] {
  * @returns The description with continuation markers removed and whitespace collapsed.
  */
 export function commentToPolicyParagraph(comment: PolicyComment): string {
-	const description: string[] = []
-	for (const line of comment.value.split(POLICY_BREAK_PATTERN)) {
-		const text = line.replace(POLICY_MARKER_PATTERN, '')
-		if (text.trimStart().startsWith('@')) break
-		description.push(text)
-	}
-	return description.join(' ').replace(/\s+/gu, ' ').trim()
+	const lines = comment.value
+		.split(POLICY_BREAK_PATTERN)
+		.map((line) => line.replace(POLICY_MARKER_PATTERN, ''))
+	const end = lines.findIndex((text) => text.trimStart().startsWith('@'))
+	return lines
+		.slice(0, end === -1 ? lines.length : end)
+		.join(' ')
+		.replace(/\s+/gu, ' ')
+		.trim()
 }
 
 /**
@@ -795,27 +792,32 @@ export function programToPolicyDocs(
 	node: PolicyExpression,
 	sourceCode: PolicySourceCode,
 ): readonly PolicyDoc[] {
+	// The iterator consumes one entry at a time and reads a hole as an `undefined` entry, as a
+	// `for…of` over the list would. The comments are read only for an export statement, once per
+	// statement, and every comment is read where a `findLast` would stop at the nearest one.
 	const comments = sourceCode.getAllComments()
-	const docs: PolicyDoc[] = []
-	for (const statement of programToPolicyStatements(node)) {
-		if (!statement.type.startsWith('Export')) continue
-		const start = statement.range[0]
-		let previous: PolicyComment | undefined
-		for (const comment of comments) {
-			if (comment.range[1] <= start) previous = comment
-		}
-		if (previous === undefined || previous.type !== 'Block') continue
-		if (!previous.value.startsWith('*')) continue
-		if (sourceCode.text.slice(previous.range[1], start).trim() !== '') continue
-		const declaration = statement.declaration
-		docs.push({
-			comment: previous,
-			name:
-				identifierToPolicyName(declaration?.id) ??
-				identifierToPolicyName(declaration?.declarations?.[0]?.id),
+	return Iterator.from(programToPolicyStatements(node))
+		.flatMap((statement) => {
+			if (!statement.type.startsWith('Export')) return []
+			const start = statement.range[0]
+			const previous = Iterator.from(comments)
+				.flatMap((comment) => (comment.range[1] <= start ? [comment] : []))
+				.toArray()
+				.at(-1)
+			if (previous === undefined || previous.type !== 'Block') return []
+			if (!previous.value.startsWith('*')) return []
+			if (sourceCode.text.slice(previous.range[1], start).trim() !== '') return []
+			const declaration = statement.declaration
+			return [
+				{
+					comment: previous,
+					name:
+						identifierToPolicyName(declaration?.id) ??
+						identifierToPolicyName(declaration?.declarations?.[0]?.id),
+				},
+			]
 		})
-	}
-	return docs
+		.toArray()
 }
 
 /** Reports a doc block whose first sentence is not a third-person summary of its own symbol. */
@@ -981,8 +983,7 @@ export function reportFunction(context: PolicyContext, node: PolicyExpression): 
 		return
 	}
 	if (region.type !== 'VariableDeclaration') return
-	let position = node
-	while (position.parent?.type === 'ParenthesizedExpression') position = position.parent
+	const position = nodeToPolicyOuter(node)
 	// Module placement admits direct callbacks; a literal member still belongs in a function file.
 	if (
 		(node.type === 'ArrowFunctionExpression' || node.id === null) &&
@@ -1062,24 +1063,28 @@ export function reportDomain(context: PolicyContext, node: PolicyExpression): vo
 	}
 	if (!isPolicyDomain(context.filename, context.cwd)) return
 	const expected = fileToPolicyStem(file)
-	let implementations = 0
-	let malformed = 0
-	for (const statement of programToPolicyStatements(node)) {
-		if (statement.type === 'ImportDeclaration') continue
-		const declaration = statementToPolicyDeclaration(statement)
-		if (declaration === undefined || !isPolicyDeclaredFunction(declaration)) {
-			malformed += 1
-			continue
-		}
-		if (declaration.type === 'FunctionDeclaration') implementations += 1
-		if (
-			statement.type !== 'ExportNamedDeclaration' ||
-			identifierToPolicyName(declaration.id) !== expected
-		) {
-			malformed += 1
-		}
-	}
-	if (implementations !== 1 || malformed > 0) context.report({ node, messageId: 'module' })
+	// The iterator consumes one statement at a time and reads a hole as an `undefined` statement, as
+	// a `for…of` over the body would. Each statement is judged whole before the next is read.
+	const members = Iterator.from(programToPolicyStatements(node))
+		.flatMap((statement) => {
+			if (statement.type === 'ImportDeclaration') return []
+			const declaration = statementToPolicyDeclaration(statement)
+			if (declaration === undefined || !isPolicyDeclaredFunction(declaration)) {
+				return [{ implementation: false, malformed: true }]
+			}
+			return [
+				{
+					implementation: declaration.type === 'FunctionDeclaration',
+					malformed:
+						statement.type !== 'ExportNamedDeclaration' ||
+						identifierToPolicyName(declaration.id) !== expected,
+				},
+			]
+		})
+		.toArray()
+	const implementations = members.filter(({ implementation }) => implementation).length
+	const malformed = members.some((member) => member.malformed)
+	if (implementations !== 1 || malformed) context.report({ node, messageId: 'module' })
 }
 
 /** Reports source that reads the host line ending or splits arrived text before trimming it. */

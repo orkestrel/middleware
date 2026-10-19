@@ -13,6 +13,7 @@ import {
 	inspectPolicyControl,
 	inspectPolicyFilenamePaths,
 	inspectPolicyMirrorPaths,
+	inspectPolicyMirrors,
 	inspectPolicyPortability,
 	inspectPolicyWiring,
 	inspectPolicyWorkspace,
@@ -361,6 +362,24 @@ describe('fleet policy register', () => {
 		]
 		const modules = new Set(['src/worker/Worker.ts', 'app/browser/routes.ts'])
 		expect(inspectPolicyMirrorPaths(tests, modules)).toEqual([])
+	})
+
+	// A study test names a package-level subject, so it sits beside no module it mirrors. The mirrored
+	// population is `tests/{app,src}`, and the root `studies` directory holds adapters outside it.
+	it('leaves study tests and the root studies directory outside the mirrored population', () => {
+		const scratch = createPolicyScratch({ prefix: 'orkestrel-policy-studies-' })
+		try {
+			scratch.write('studies/adapter.ts', 'export {}\n')
+			scratch.write('tests/studies/adapter.test.ts', '')
+			expect(inspectPolicyMirrors(scratch.path)).toEqual([])
+			// The control: a mirrored test with no module reports through the same sweep.
+			scratch.write('tests/src/worker/Worker.test.ts', '')
+			expect(inspectPolicyMirrors(scratch.path).map((violation) => violation.path)).toEqual([
+				'tests/src/worker/Worker.test.ts',
+			])
+		} finally {
+			scratch.destroy()
+		}
 	})
 
 	it('derives mirror candidates in module resolution order', () => {
