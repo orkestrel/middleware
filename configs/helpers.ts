@@ -911,9 +911,8 @@ export function declarationRollup(options: DeclarationRollupOptions): Plugin {
 				])
 				const entry = resolvePath(scratch, relative(scope.root, declaration))
 				// A literal `import()` of the extractor reddens `tsc` in a workspace that does not
-				// install it, and a variable specifier reddens `import/no-dynamic-require`, so the
-				// literal `createRequire` call is the form that clears every gate in an app-only
-				// workspace.
+				// install it, so the literal `createRequire` call is the form that clears the
+				// typecheck in an app-only workspace.
 				const loaded: unknown = load('@microsoft/api-extractor')
 				if (!isExtractorModule(loaded)) {
 					throw new Error(
@@ -999,19 +998,8 @@ export async function environmentAssetSources(
 					: specifier.type === 'TemplateLiteral' && specifier.expressions.length === 0
 						? specifier.quasis.map((quasi) => quasi.value.cooked ?? quasi.value.raw).join('')
 						: undefined
-			if (value === undefined) {
-				const location = workspacePath(path)
-				if (
-					location !== undefined &&
-					/^(?:src\/server\/artifacts\/|tools\/artifacts\/|\.orkestrel\/[^/]+\/instruments\/(?:[^/]+\/)*tools\/artifacts\/).+\.(?:js|mjs|ts|mts)$/.test(
-						location,
-					)
-				)
-					return
-				throw new Error(
-					'[orkestrel-environment-boundary] Dynamic imports must use static string values',
-				)
-			}
+			// A computed specifier names no module to inspect statically.
+			if (value === undefined) return
 			const decoded = decodeAssetSource(value)
 			if (decoded === undefined) {
 				throw new Error('[orkestrel-environment-boundary] Module URLs must use valid URI encoding')

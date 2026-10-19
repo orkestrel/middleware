@@ -70,7 +70,7 @@ import configuration, { resolveWorkspacePath } from '../vite.config.js'
 import * as rootConfiguration from '../vite.config.js'
 import tsconfig from '../tsconfig.json' with { type: 'json' }
 import {
-	ARTIFACT_IMPORT_CASES,
+	COMPUTED_IMPORT_PATHS,
 	collectSheets,
 	collectStudies,
 	collectFrameworks,
@@ -2821,8 +2821,25 @@ createSomething({
 		expect(DATA_SOURCE_FILES).not.toContain('plugins.ts')
 	})
 
-	it('admits computed ESM imports only in artifact loaders while refusing computed require', () => {
-		const fixture = createPolicyScratch({ prefix: 'artifact-imports-' })
+	it('pins the global dynamic-require setting to esmodule false with no override touching it', () => {
+		const configured = readConfigRecord(
+			JSON.parse(readFileSync(resolve(POLICY_ROOT, '.oxlintrc.json'), 'utf8')),
+		)
+		expect(readConfigRecord(configured.rules)['import/no-dynamic-require']).toEqual([
+			'error',
+			{ esmodule: false },
+		])
+		if (!Array.isArray(configured.overrides)) throw new Error('Missing lint overrides')
+		const touching = configured.overrides
+			.map(readConfigRecord)
+			.filter(
+				(override) => readConfigRecord(override.rules)['import/no-dynamic-require'] !== undefined,
+			)
+		expect(touching).toEqual([])
+	})
+
+	it('permits a computed import() and refuses a computed require at every module path', () => {
+		const fixture = createPolicyScratch({ prefix: 'computed-imports-' })
 		try {
 			fixture.write(
 				'configs/policy.ts',
@@ -2831,64 +2848,50 @@ createSomething({
 			const configured = readConfigRecord(
 				JSON.parse(readFileSync(resolve(POLICY_ROOT, '.oxlintrc.json'), 'utf8')),
 			)
+			const required = COMPUTED_IMPORT_PATHS.map((path) => path.replace(/\.(\w+)$/u, '.require.$1'))
+			for (const path of COMPUTED_IMPORT_PATHS) {
+				fixture.write(path, 'const selected = process.argv[2]\nvoid import(selected)\ndebugger\n')
+			}
+			for (const path of required) {
+				fixture.write(path, 'const selected = process.argv[2]\nvoid require(selected)\ndebugger\n')
+			}
+			const paths = [...COMPUTED_IMPORT_PATHS, ...required]
 			// Include campaign fixtures even when the workspace's default lint walk ignores them.
 			fixture.write('.oxlintrc.json', JSON.stringify({ ...configured, ignorePatterns: [] }))
-			const written = ARTIFACT_IMPORT_CASES.map(([path, admitted]) => {
-				fixture.write(path, 'const selected = process.argv[2]\nvoid import(selected)\ndebugger\n')
-				const required = admitted ? path.replace(/\.(\w+)$/u, '.require.$1') : undefined
-				if (required !== undefined) {
-					fixture.write(
-						required,
-						'const selected = process.argv[2]\nvoid require(selected)\ndebugger\n',
-					)
-				}
-				return { path, required }
-			})
-			const paths = written.map(({ path }) => path)
-			const requires = written.flatMap(({ required }) => (required === undefined ? [] : [required]))
-			const codes = readImportDiagnostics(fixture.path, [...paths, ...requires])
-			for (const [path, admitted] of ARTIFACT_IMPORT_CASES) {
+			const codes = readImportDiagnostics(fixture.path, paths)
+			for (const path of COMPUTED_IMPORT_PATHS) {
 				expect({ path, refused: codes.has('import(no-dynamic-require) ' + path) }).toEqual({
 					path,
-					refused: !admitted,
+					refused: false,
 				})
-				expect(codes.has('eslint(no-debugger) ' + path)).toBe(true)
 			}
-			for (const path of requires) {
-				expect(codes.has('import(no-dynamic-require) ' + path)).toBe(true)
-				expect(codes.has('eslint(no-debugger) ' + path)).toBe(true)
+			for (const path of required) {
+				expect({ path, refused: codes.has('import(no-dynamic-require) ' + path) }).toEqual({
+					path,
+					refused: true,
+				})
 			}
+			// The sentinel proves each fixture was linted, so an unlinted path cannot read as permitted.
+			for (const path of paths) expect(codes.has('eslint(no-debugger) ' + path)).toBe(true)
 
-			expect(readConfigRecord(configured.rules)['import/no-dynamic-require']).toEqual([
-				'error',
-				{ esmodule: true },
-			])
-			if (!Array.isArray(configured.overrides)) throw new Error('Missing lint overrides')
-			const overrides = configured.overrides.map(readConfigRecord)
-			const artifact = overrides.filter(
-				(override) => readConfigRecord(override.rules)['import/no-dynamic-require'] !== undefined,
-			)
-			expect(artifact).toEqual([
-				{
-					files: [
-						'src/server/artifacts/**/*.{js,mjs,ts,mts}',
-						'tools/artifacts/**/*.{js,mjs,ts,mts}',
-						'.orkestrel/*/instruments/**/tools/artifacts/**/*.{js,mjs,ts,mts}',
-					],
-					rules: { 'import/no-dynamic-require': ['error', { esmodule: false }] },
-				},
-			])
+			// The control restores the ESM setting and must refuse the same computed imports.
 			fixture.write(
 				'.oxlintrc.json',
 				JSON.stringify({
 					...configured,
 					ignorePatterns: [],
-					overrides: overrides.filter((override) => !artifact.includes(override)),
+					rules: {
+						...readConfigRecord(configured.rules),
+						'import/no-dynamic-require': ['error', { esmodule: true }],
+					},
 				}),
 			)
-			const original = readImportDiagnostics(fixture.path, [...paths, ...requires])
-			for (const path of [...paths, ...requires]) {
-				expect(original.has('import(no-dynamic-require) ' + path)).toBe(true)
+			const strict = readImportDiagnostics(fixture.path, paths)
+			for (const path of paths) {
+				expect({ path, refused: strict.has('import(no-dynamic-require) ' + path) }).toEqual({
+					path,
+					refused: true,
+				})
 			}
 		} finally {
 			fixture.destroy()
@@ -3930,36 +3933,22 @@ describe('configuration helpers', () => {
 		)
 	})
 
-	it('admits computed artifact imports through Vite while retaining literal boundary inspection', async () => {
-		for (const [path] of ARTIFACT_IMPORT_CASES.filter(([, admitted]) => admitted)) {
+	it('admits a computed import() through Vite at every module path while collecting literal specifiers', async () => {
+		for (const path of [...COMPUTED_IMPORT_PATHS, '../outside/src/server/load.ts']) {
 			await expect(
 				configHelpers.environmentAssetSources(
 					'void import(process.argv[2])',
 					resolve(POLICY_ROOT, path),
 				),
 			).resolves.toEqual([])
-		}
-		for (const [path] of ARTIFACT_IMPORT_CASES.filter(([, admitted]) => !admitted)) {
 			await expect(
 				configHelpers.environmentAssetSources(
-					'void import(process.argv[2])',
+					"void import('@src/browser')",
 					resolve(POLICY_ROOT, path),
 				),
-			).rejects.toThrow('Dynamic imports must use static string values')
+			).resolves.toEqual(['@src/browser'])
 		}
-		await expect(
-			configHelpers.environmentAssetSources(
-				"void import('@src/browser')",
-				resolve(POLICY_ROOT, 'src/server/artifacts/Artifacts.ts'),
-			),
-		).resolves.toEqual(['@src/browser'])
 		expect(configHelpers.environmentSourceError('src/server', '@src/browser')).toBeDefined()
-		await expect(
-			configHelpers.environmentAssetSources(
-				'void import(process.argv[2])',
-				resolve(POLICY_ROOT, '../outside/src/server/artifacts/Artifacts.ts'),
-			),
-		).rejects.toThrow('Dynamic imports must use static string values')
 	})
 
 	it('drives each plugin through its real Vite hooks', async () => {

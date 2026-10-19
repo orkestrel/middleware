@@ -38,7 +38,7 @@
 		],
 
 		"import/no-default-export": "error",
-		"import/no-dynamic-require": ["error", { "esmodule": true }],
+		"import/no-dynamic-require": ["error", { "esmodule": false }],
 		"import/extensions": "off",
 		"import/no-unassigned-import": [
 			"error",
@@ -70,16 +70,6 @@
 		"restriction": "off"
 	},
 	"overrides": [
-		{
-			"files": [
-				"src/server/artifacts/**/*.{js,mjs,ts,mts}",
-				"tools/artifacts/**/*.{js,mjs,ts,mts}",
-				".orkestrel/*/instruments/**/tools/artifacts/**/*.{js,mjs,ts,mts}"
-			],
-			"rules": {
-				"import/no-dynamic-require": ["error", { "esmodule": false }]
-			}
-		},
 		{
 			"files": ["*.config.ts", "*.config.js"],
 			"rules": {
