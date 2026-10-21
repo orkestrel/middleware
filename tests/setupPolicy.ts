@@ -5,7 +5,7 @@ import {
 	hasCanonicalSegments,
 	resolveLink,
 } from '@orkestrel/guide'
-import { BASE_DEV_DEPENDENCIES, HOST_PATHS } from '@orkestrel/scaffold'
+import { BASE_DEV_DEPENDENCIES, DISTRIBUTION_SETUP_PATH, HOST_PATHS } from '@orkestrel/scaffold'
 import { spawnSync } from 'node:child_process'
 import { createRequire } from 'node:module'
 import {
@@ -172,7 +172,7 @@ export interface PolicyProject {
 	readonly setup: readonly string[]
 }
 
-/** Describes one physical negative control, including the population boundary it attacks. */
+/** Describes one physical negative control, including the population boundary it tests. */
 export interface PolicyControl {
 	readonly label: string
 	readonly membership: string
@@ -1105,8 +1105,27 @@ export function inspectPolicyMirrors(root: string): readonly PolicyViolation[] {
 }
 
 /**
+ * Checks whether a normalized path belongs to a scaffold-owned setup module.
+ * @param path - The workspace-relative module path.
+ * @param root - The workspace root whose manifest determines harness ownership.
+ * @returns True if scaffold owns the module; false otherwise.
+ */
+export function matchesScaffoldSetup(path: string, root: string): boolean {
+	const normalized = normalizePolicyPath(path)
+	const manifest = readPolicyJSON(join(root, 'package.json'))
+	return (
+		(normalized === DISTRIBUTION_SETUP_PATH &&
+			(!isPolicyRecord(manifest) || manifest.private !== true)) ||
+		HOST_PATHS.some(
+			(vendored) =>
+				normalized === normalizePolicyPath(vendored) ||
+				normalized.startsWith(normalizePolicyPath(vendored) + '/'),
+		)
+	)
+}
+
+/**
  * Inspects root setup modules and their proofs in both directions.
- *
  * @param root - The workspace root to inspect.
  * @returns Missing modules and uncovered exporting setup modules.
  */
@@ -1125,14 +1144,7 @@ export function inspectPolicySetup(root: string): readonly PolicyViolation[] {
 	)
 	return [...paths].sort().flatMap((path) => {
 		const module = path.endsWith('.test.ts') ? path.replace(/\.test\.ts$/u, '.ts') : path
-		if (
-			HOST_PATHS.some(
-				(vendored) =>
-					module === normalizePolicyPath(vendored) ||
-					module.startsWith(normalizePolicyPath(vendored) + '/'),
-			)
-		)
-			return []
+		if (matchesScaffoldSetup(module, root)) return []
 		if (path.endsWith('.test.ts')) {
 			return paths.has(module)
 				? []
@@ -3075,7 +3087,9 @@ export function readPolicySurface(root: string): PolicySurfacePopulation {
  *
  * @remarks
  * Source names claimed by the target's own hosted guide are grandfathered. Setup names have no
- * grandfather. An absent installed host falls back to checkout guides only with catalog coverage.
+ * grandfather. Catalog rows come from beside the guides: when reading installed guides, from the
+ * staged catalog and never from the target's own table, which can list a package without a guide in
+ * that host. An absent installed host falls back to checkout guides only with catalog coverage.
  * Missing comparison evidence and unread barrel statements produce surface violations.
  *
  * @param root - The workspace root to inspect.
@@ -3088,7 +3102,7 @@ export function inspectPolicySurface(root: string): readonly PolicyViolation[] {
 	const host = hosted ? installed : root
 	const catalog = hosted ? POLICY_SURFACE_CATALOG : POLICY_CATALOG_FILE
 	const directory = hosted ? `${POLICY_SURFACE_HOST}/guides` : 'guides'
-	const names = new Set([...readPolicyCatalog(host, catalog), ...readPolicyCatalog(root)])
+	const names = new Set(readPolicyCatalog(host, catalog))
 	if (!existsSync(join(host, 'guides')) || names.size === 0) {
 		return [
 			createPolicyViolation(
@@ -3153,12 +3167,7 @@ export function inspectPolicySurface(root: string): readonly PolicyViolation[] {
 		.map(normalizePolicyPath)
 		.sort()
 		.flatMap((path) =>
-			path.endsWith('.test.ts') ||
-			HOST_PATHS.some(
-				(vendored) =>
-					path === normalizePolicyPath(vendored) ||
-					path.startsWith(`${normalizePolicyPath(vendored)}/`),
-			)
+			path.endsWith('.test.ts') || matchesScaffoldSetup(path, root)
 				? []
 				: [collectPolicyDeclarations(root, path, readFileSync(join(root, path), 'utf8'))],
 		)
@@ -3393,11 +3402,35 @@ export const SETUP_POLICY_CONTROLS: readonly PolicyControl[] = Object.freeze([
 		],
 	},
 	{
+		label: 'admits the distribution harness without a sibling proof',
+		membership: 'content-owned distribution setup module outside the mirror population',
+		rule: 'mirror',
+		files: [{ path: 'tests/setupDistribution.ts', content: 'export const DISTRIBUTION = 1\n' }],
+		violations: [],
+	},
+	{
 		label: 'admits an inventory-vendored setup module without proof',
 		membership: 'host-inventory setup modules outside the mirror population',
 		rule: 'mirror',
 		files: [{ path: 'tests/setupPolicy.ts', content: 'export const POLICY = 1\n' }],
 		violations: [],
+	},
+	{
+		label: 'requires a proof for a private workspace distribution module',
+		membership: 'target-owned distribution setup module in a private workspace',
+		rule: 'mirror',
+		files: [
+			{ path: 'package.json', content: '{"private":true}\n' },
+			{ path: 'tests/setupDistribution.ts', content: 'export const DISTRIBUTION = 1\n' },
+		],
+		violations: [
+			{
+				rule: 'mirror',
+				path: 'tests/setupDistribution.ts',
+				message:
+					'exporting setup module requires its sibling proof or an import from tests/setup.test.ts',
+			},
+		],
 	},
 ])
 
@@ -3405,6 +3438,7 @@ export const SETUP_POLICY_CONTROLS: readonly PolicyControl[] = Object.freeze([
 export const SHEET_POLICY_SELECTIONS: ReadonlyArray<
 	Pick<Blueprint, 'src' | 'styles' | 'themes'> & {
 		readonly conformance?: boolean
+		readonly tree?: boolean
 		readonly integration?: boolean
 		readonly files?: readonly PolicySource[]
 		readonly control?: {
@@ -3416,8 +3450,25 @@ export const SHEET_POLICY_SELECTIONS: ReadonlyArray<
 > = Object.freeze([
 	{ src: [], styles: true, themes: true },
 	{ src: [], styles: false, themes: true },
-	{ src: [], styles: false, themes: true, integration: true },
+	{
+		src: [],
+		styles: false,
+		themes: true,
+		integration: true,
+		control: {
+			before: "existsSync(resolveWorkspacePath('tests/setupStyles.ts'))",
+			after: 'true',
+			failure: './tests/setupStyles.ts',
+		},
+	},
 	{ src: ['core'], styles: true, themes: true },
+	{
+		src: ['core'],
+		styles: false,
+		themes: false,
+		tree: true,
+		files: [{ path: 'tests/tree.test.ts', content: 'export {}\n' }],
+	},
 	{
 		src: ['core', 'browser'],
 		styles: true,
@@ -3457,10 +3508,10 @@ export const SHEET_POLICY_SELECTIONS: ReadonlyArray<
 		styles: true,
 		themes: false,
 		integration: true,
+		files: [{ path: 'tests/setupStyles.ts', content: 'export {}\n' }],
 		control: {
-			before:
-				"setupFiles: ['./tests/setup.ts', './tests/setupBrowser.ts', './tests/setupStyles.ts']",
-			after: "setupFiles: ['./tests/setup.ts', './tests/setupBrowser.ts']",
+			before: "? ['./tests/setupStyles.ts']",
+			after: '? []',
 			failure: './tests/setupStyles.ts',
 		},
 	},
@@ -4283,7 +4334,7 @@ export const PROSE_POLICY_MANIFEST = '{\n\t"name": "@orkestrel/sample"\n}\n'
  * Lists the physical controls for every prose-population boundary the workspace route reaches.
  *
  * @remarks
- * Each control that attacks an exclusion also writes the arrival file, whose different term proves
+ * Each control that tests an exclusion also writes the arrival file, whose different term proves
  * the sweep ran over the control workspace rather than reporting nothing because it found nothing.
  */
 export const PROSE_POLICY_CONTROLS: readonly PolicyControl[] = Object.freeze([
@@ -4559,15 +4610,22 @@ export function collectFaceWrappers(directory: string): readonly string[] {
  * Inspects sheet setup membership and themes ordering from configuration data.
  * @param project - The resolved sheet project.
  * @param script - The optional chained styles and themes build command.
+ * @param directory - The target workspace root; defaults to the policy root.
  * @returns Missing setup paths and invalid isolation or ordering fields.
  */
-export function inspectSheetConfiguration(project: unknown, script?: string): readonly string[] {
+export function inspectSheetConfiguration(
+	project: unknown,
+	script?: string,
+	directory: string = POLICY_ROOT,
+): readonly string[] {
 	const test = readConfigRecord(readConfigRecord(project).test)
 	const setup = test.setupFiles
 	return [
-		...['./tests/setup.ts', './tests/setupBrowser.ts', './tests/setupStyles.ts'].filter(
-			(path) => !Array.isArray(setup) || !setup.includes(path),
-		),
+		...[
+			'./tests/setup.ts',
+			'./tests/setupBrowser.ts',
+			...(existsSync(resolve(directory, 'tests/setupStyles.ts')) ? ['./tests/setupStyles.ts'] : []),
+		].filter((path) => !Array.isArray(setup) || !setup.includes(path)),
 		...(test.isolate !== false ? ['isolate'] : []),
 		...(script !== undefined &&
 		(!script.includes('vite.styles.config.ts') ||

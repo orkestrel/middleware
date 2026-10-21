@@ -88,10 +88,23 @@ describe('surface policy controls', () => {
 		}
 	})
 
-	it('refuses a target catalog row absent from the installed guides', () => {
+	it('ignores a target catalog row the installed scaffold does not stage', () => {
 		const scratch = createPolicySurfaceFixture()
 		try {
 			scratch.write(POLICY_CATALOG_FILE, createPolicyCatalog(['other', 'sample', 'uncovered']))
+			expect(inspectPolicyWorkspace(scratch.path)).toEqual([])
+		} finally {
+			scratch.destroy()
+		}
+	})
+
+	it('refuses a staged catalog row absent from the installed guides', () => {
+		const scratch = createPolicySurfaceFixture()
+		try {
+			scratch.write(
+				`${POLICY_SURFACE_HOST}/${POLICY_SURFACE_CATALOG}`,
+				createPolicyCatalog(['other', 'sample', 'uncovered']),
+			)
 			expect(inspectPolicyWorkspace(scratch.path)).toEqual([
 				{
 					rule: 'surface',
@@ -207,6 +220,31 @@ describe('surface policy controls', () => {
 			])
 			rmSync(join(scratch.path, 'tests/setupServer.ts'), { recursive: true, force: true })
 			expect(inspectPolicyWorkspace(scratch.path)).toEqual([])
+		} finally {
+			scratch.destroy()
+		}
+	})
+
+	it('excludes the distribution harness in an adopter while reporting target-owned collisions', () => {
+		const scratch = createPolicySurfaceFixture()
+		try {
+			scratch.write('tests/setupDistribution.ts', 'export function readShared() {}\n')
+			expect(inspectPolicyWorkspace(scratch.path)).toEqual([])
+			scratch.write('tests/setupExtra.ts', 'export function readShared() {}\n')
+			expect(inspectPolicyWorkspace(scratch.path)).toEqual([
+				{
+					rule: 'mirror',
+					path: 'tests/setupExtra.ts',
+					message:
+						'exporting setup module requires its sibling proof or an import from tests/setup.test.ts',
+				},
+				{
+					rule: 'surface',
+					path: 'tests/setupExtra.ts',
+					line: 1,
+					message: 'surface name belongs to one package: readShared (other)',
+				},
+			])
 		} finally {
 			scratch.destroy()
 		}

@@ -126,6 +126,7 @@ Exported from `@orkestrel/scaffold`, and reachable from
 | `BASE_DEV_DEPENDENCIES`           | const | Holds the tooling versions scaffold and every generated workspace share.                                                                                                               |
 | `BIN_CONFIGS`                     | const | Lists the configuration files a workspace that ships its own executable adds, frozen.                                                                                                  |
 | `BIN_ENTRY_PATH`                  | const | Names the executable entry whose presence makes a workspace `bin`.                                                                                                                     |
+| `BIN_OUTPUT_PATH`                 | const | Names the built executable a bin workspace's manifest command runs.                                                                                                                    |
 | `BROWSE_DEV_DEPENDENCIES`         | const | Names the development dependency a browser or styles surface adds.                                                                                                                     |
 | `BROWSE_UPSTREAM`                 | const | Lists the packages `@orkestrel/browser` depends on at runtime, directly or transitively, frozen.                                                                                       |
 | `CANON_PATHS`                     | const | Lists the instruction-canon paths staged for reading rather than for a target, frozen.                                                                                                 |
@@ -139,6 +140,7 @@ Exported from `@orkestrel/scaffold`, and reachable from
 | `DEFAULT_ENGINES`                 | const | Names the `engines.node` range a workspace starts with.                                                                                                                                |
 | `DEFAULT_VERSION`                 | const | Names the version a workspace starts at.                                                                                                                                               |
 | `DEPENDENCY_NAME_PATTERN`         | const | Matches the runtime dependency name syntax: the `@orkestrel` scope and a bare name.                                                                                                    |
+| `DISTRIBUTION_SETUP_PATH`         | const | Names the content-owned harness imported by the generated distribution proof.                                                                                                          |
 | `DISTRIBUTION_TEST_PATH`          | const | Names the generated packed-package proof every publishing workspace is planned at.                                                                                                     |
 | `ENGINES_PATTERN`                 | const | Matches the minimum-Node engine syntax a blueprint declares.                                                                                                                           |
 | `ENVIRONMENTS`                    | const | Lists the `Environment` values, frozen.                                                                                                                                                |
@@ -201,6 +203,7 @@ Exported from `@orkestrel/scaffold`, and reachable from
 | `TARGET_SKILL_NAMES`              | const | Lists the package-facing skills a target receives pointers for, frozen and alphabetical.                                                                                               |
 | `THEMES_BARREL_PATH`              | const | Names the themes stylesheet marker.                                                                                                                                                    |
 | `THEMES_ENTRY_PATH`               | const | Names the themes build entry marker.                                                                                                                                                   |
+| `TREE_TEST_PATH`                  | const | Names the real-tree proof whose presence makes a workspace `tree`.                                                                                                                     |
 | `VERSION_PATTERN`                 | const | Matches the exact `major.minor.patch` version syntax a blueprint declares.                                                                                                             |
 | `WORKSPACE_DEV_ENGINES`           | const | Holds the `devEngines` record every generated manifest carries.                                                                                                                        |
 | `WORKSPACE_OWNED_PATHS`           | const | Lists the vendored paths whose present bytes belong to each workspace, frozen.                                                                                                         |
@@ -663,7 +666,8 @@ answers a read and grant no verb write authority that it did not already have.
 states what each emits and what each refuses. Creation leaves `setup` empty, and the remaining
 structural facts take no creation option. Add a root `tests/setup*.test.ts` proof for `setup`,
 `tests/guides.test.ts` for `guides`, `tests/integration.test.ts` for `integration`,
-`tests/conformance.test.ts` for `conformance`, `tests/setupService.ts` for `service`, an
+`tests/conformance.test.ts` for `conformance`, `tests/tree.test.ts` for `tree`,
+`tests/setupService.ts` for `service`, an
 exact-case `*.test.ts` file beneath `tests/studies`, outside any `node_modules` or `.git` directory,
 for `studies`, `tests/setupGlobal.ts` for `global`, `configs/app/vite.journey.config.ts` for `journey`, and
 `configs/agents/tsconfig.skills.json` for `skills`; reading verbs detect each exact-case file and
@@ -685,7 +689,8 @@ it could disagree. The styles surface, its themes target, the showcase, and ever
 read from the markers Surfaces and extensions lists. The remaining facts come from exact-case
 files: `src/bin/main.ts` selects `bin`, each root `tests/setup*.test.ts` match selects `setup`,
 `tests/guides.test.ts` selects `guides`, `tests/integration.test.ts` selects `integration`,
-`tests/conformance.test.ts` selects `conformance`, `tests/setupService.ts` selects `service`,
+`tests/conformance.test.ts` selects `conformance`, `tests/tree.test.ts` selects `tree`,
+`tests/setupService.ts` selects `service`,
 any exact-case `*.test.ts` file beneath `tests/studies`, nested or direct, outside any
 `node_modules` or `.git` directory, which Vitest's default exclude never collects, selects
 `studies`, `tests/setupGlobal.ts` selects `global`, `configs/app/vite.journey.config.ts` selects `journey`,
@@ -1035,8 +1040,8 @@ because the shape is chosen once and read afterwards: `new` refuses the advisory
 `repair` need the plan to describe and restore a target that already has that shape. A library
 caller creating a workspace holds the same refusal, and the Compile section states it.
 
-`bin`, `setup`, `guides`, `integration`, `conformance`, `service`, `vendors`, `studies`, `global`,
-`styles`, `themes`, `showcase`, `journey`, and `skills` are structural facts, and `extensions` lists the
+`bin`, `setup`, `guides`, `integration`, `conformance`, `tree`, `service`, `vendors`, `studies`,
+`global`, `styles`, `themes`, `showcase`, `journey`, and `skills` are structural facts, and `extensions` lists the
 extension faces. Reading verbs set each fact and list each extension only when the workspace
 physically ships the directory or exact-case file that defines it, never because of the workspace's
 name and never because a sibling fact is set.
@@ -1048,9 +1053,9 @@ The `setup` member is a `readonly SetupRuntime[]`, empty by default. Target infe
 
 The `node` runtime registers the Node `setup` project, which loads `tests/setup.ts` and excludes
 both browser proofs. The `browser` runtime registers `setup:browser`, which collects only the two
-browser proofs and loads `tests/setup.ts` and `tests/setupBrowser.ts` through Playwright Chromium. A
-sheet face registers `setup:browser` as well, because scaffold plans `tests/setupStyles.test.ts`
-beside every sheet face. The generated manifest emits the selected `test:setup` and
+browser proofs and loads `tests/setup.ts` and `tests/setupBrowser.ts` through Playwright Chromium.
+A sheet face alone registers no setup project. A target's browser setup proof selects that project
+through the `browser` runtime. The generated manifest emits the selected `test:setup` and
 `test:setup:browser` scripts and invokes them from `test`. Scaffold generates no setup proof for an
 empty setup seed.
 
@@ -1087,8 +1092,9 @@ condition, read from the `src` axis and the styles surface the blueprint already
 packs and installs the published
 artifact, so a workspace publishing none has nothing for it to read and gets no project, no
 `test:distribution` script, and no gate entry. A workspace publishing any gets the project, the
-script, the `prepublishOnly` entry, and `tests/distribution.test.ts` itself. Limits states why this
-is the one proof scaffold generates from the workspace's own shape.
+script, the `prepublishOnly` entry, and `tests/distribution.test.ts` itself with its
+`tests/setupDistribution.ts` harness. Limits states why this is the one proof scaffold generates
+from the workspace's own shape.
 
 `service` says the workspace runs a live-service Vitest project over `tests/service`, and it alone
 registers that project, its `test:service` script, and the `tests/setupService.ts` readiness module
@@ -1112,6 +1118,15 @@ live-service project. The root `studies/` directory holds the adapters and decla
 tests run, and it selects nothing. A `prepublishOnly` chain written before the fact existed upgrades
 in place: the generated chain without its study step, and without both its study step and the release
 proof, are accepted predecessors.
+
+`tree` says the workspace holds the exact-case `tests/tree.test.ts` proof, and it alone registers
+the `tree` Vitest project over that file and its `test:tree` script, which `test` invokes in a
+publishing and a `private: true` workspace alike. The project runs in Node with the browser disabled
+and loads `tests/setup.ts` and `tests/setupServer.ts`, so scaffold plans the birth-owned
+`tests/setupServer.ts` seed for a `tree` workspace whatever environments it selects. The proof
+states the laws this package holds about its own real tree, and it reads that tree without a build,
+install, or service. Without the file, the workspace has no `tree` project and no `test:tree`
+script, and its `test` chain carries no step for one.
 
 `integration` projects a cross-environment composition proof for any workspace, independently of
 whether it has a published `src`. Its generated seed imports every selected `src` and `app`
@@ -1260,9 +1275,9 @@ same seed. In the following table, `<face>` is `styles` or the extension's name:
 | `_index.scss` in each of `src/<face>/elements`, `components`, and `utilities`       | `birth`    |
 | `src/styles/themes/index.scss`, `_default.scss`, and `sheet.ts`                     | `birth`    |
 | `tests/src/<face>/index.test.ts` and `tests/src/styles/themes/index.test.ts`        | `birth`    |
-| `tests/setupStyles.ts` and `tests/setupStyles.test.ts`                              | `birth`    |
 | `configs/src/vite.<face>.config.ts` and `configs/src/tsconfig.<face>.json`          | `content`  |
 | `configs/src/vite.themes.config.ts`                                                 | `content`  |
+| `tests/setupDistribution.ts`                                                        | `content`  |
 | `tests/distribution.test.ts`                                                        | `presence` |
 
 `sheet.ts` imports `./index.scss` and nothing else, and `index.ts` star-exports `./sheet.js`.
@@ -1293,8 +1308,9 @@ path relative to the test file. With themes, `build:src:styles`
 builds the themes target after the base face. The root configuration registers each face's project
 by its wrapper, and the wrapper composes it through the root `sheetProject` factory, which runs it
 in Playwright Chromium with `isolate: false` and loads `tests/setup.ts`, `tests/setupBrowser.ts`,
-and `tests/setupStyles.ts`. The manifest declares `sass` from `STYLES_DEV_DEPENDENCIES` beside the
-Playwright pair, and the root `tsconfig.json` aliases `@src/<face>` to the face's `index.ts`.
+and, when the target has the file, `tests/setupStyles.ts`. The manifest declares `sass` from
+`STYLES_DEV_DEPENDENCIES` beside the Playwright pair, and the root `tsconfig.json` aliases
+`@src/<face>` to the face's `index.ts`.
 
 ### The browser surface
 
@@ -1320,8 +1336,11 @@ The `vue` extension gives each axis it occupies a face of its own:
   `vue-tsc`, `build:app:vue`, `dev:vue`, and `test:app:vue`. While `app/vue` is occupied, the root
   `check` script typechecks the whole tree through `vue-tsc` in place of `tsc`.
 
-The vendored `.oxlintrc.json` holds each face to the import direction `AGENTS.md` § Project model
-fixes, and the vendored `tests/config.test.ts` drives those directions through Oxlint.
+The vendored `.oxlintrc.json` holds each face to the import direction `AGENTS.md` § Project model fixes, and
+refuses, from `src/browser`, `src/server`, `src/vue`, and `src/bin`, a relative path to `src/core`, to
+`src/browser` from `src/vue`, or to `src/server` from `src/bin` with a message naming the alias, because a face's
+build bundles what a relative path reaches. The vendored
+`tests/config.test.ts` drives those directions through Oxlint.
 
 Every published face's build decides its externals through `resolveExternal` from the vendored
 `configs/helpers.ts`. Node builtins, `@orkestrel/*` packages, declared peers with their subpaths,
@@ -1390,7 +1409,7 @@ The vendored `tests/config.test.ts` proves those files in each target that holds
 enumerates the sheet faces and the framework faces from the target's tree rather than from the
 emitted wrappers, requires a non-empty population only where a marker exists, loads every selected
 wrapper, and pairs each behaviour with a mutation control in a scratch copy: a deleted wrapper, a
-removed `tests/setupStyles.ts` entry, a reversed themes build order, a disabled Vue import
+removed `tests/setupStyles.ts` entry when the target has that file, a reversed themes build order, a disabled Vue import
 restriction, and disabled declaration rewrites each fail it. Scaffold's own release gate adds a
 scratch adopter: `tests/distribution.test.ts` generates the complete selection through the packed
 executable, installs it, runs its checks, builds, projects, journey modes, showcase builds, and CSS
@@ -1413,9 +1432,9 @@ names the fleet targets that meet the refusal.
 Scaffold plans each setup seed that declares an export beside its sibling proof, so the module and
 its proof arrive together under the mirror `.claude/rules/tests.md` states:
 
-- `tests/setupStyles.ts` exports the CSSOM instruments every sheet proof reads and arrives with
-  `tests/setupStyles.test.ts`. The emitted sheet proofs import `adoptSheet` and `readLayerNames`
-  from that module, and the sibling proof drives both against sheets it builds from text.
+- The emitted sheet proofs import `adoptSheet` and `readLayerNames` from `@orkestrel/test/browser`.
+  Scaffold seeds no styles setup module or proof because those instruments belong to the package.
+  A target can keep its own `tests/setupStyles.ts` module and sibling proof for its CSSOM instruments.
 - `tests/setupGlobal.ts` exports the Vitest global `setup` function and arrives with
   `tests/setupGlobal.test.ts`, which imports `setup` and runs in the Node `setup` project that
   `test:setup` invokes from `test`.
@@ -1424,7 +1443,10 @@ A journey workspace's `tests/setupBrowser.ts` seed declares no top-level export,
 without a proof. The vendored policy sweep in `tests/setupPolicy.ts` reads the same mirror in both
 directions: a root `tests/setup<Name>.test.ts` without its `tests/setup<Name>.ts` module fails
 `test:policy`, as does a root module that declares an export with neither its sibling proof nor an
-import from `tests/setup.test.ts`. A module `HOST_PATHS` vendors sits outside that population.
+import from `tests/setup.test.ts`. The setup modules scaffold owns sit outside that population in
+every target: a module `HOST_PATHS` vendors, and the content-owned `tests/setupDistribution.ts`
+harness a publishing workspace receives. The harness declares exports and arrives with no sibling
+proof, because the distribution proof beside it is the test that imports it.
 
 ## Compile
 
@@ -1577,12 +1599,14 @@ You own `tests/setup.ts`, the selected `tests/setupBrowser.ts`, `tests/setupServ
 and `tests/app`, the `tests/src/bin/main.test.ts` file, and the `tests/integration.test.ts` seed.
 Every sheet face's seed under `src` is yours on the same terms. Scaffold writes those
 planned files only during materialize and leaves later edits or deletions alone. You also own the
-`tests/guides.test.ts`, `tests/conformance.test.ts`, and `tests/service/**/*.test.ts` proof files,
-each of which selects its project by being written. The browser commands you register in
+`tests/guides.test.ts`, `tests/conformance.test.ts`, `tests/tree.test.ts`, and
+`tests/service/**/*.test.ts` proof files, each of which selects its project by being written. The browser commands you register in
 `configs/commands.ts` are yours too: scaffold writes the empty seed when the file is missing and
 leaves the bytes you wrote alone. Scaffold content-owns `tests/setupPolicy.ts`,
-`tests/policy.test.ts`, and `tests/config.test.ts`; `repair` and `overwrite` restore those files when
-their bytes drift or the files are missing.
+`tests/policy.test.ts`, and `tests/config.test.ts`, and in a publishing workspace the
+`tests/setupDistribution.ts` harness; `repair` and `overwrite` restore those files when their bytes
+drift or the files are missing, and leave the presence-owned `tests/distribution.test.ts` proof beside
+the harness as it stands.
 
 `tests/policy.test.ts` proves the path- and text-shaped laws, and the vendored oxlint plugin
 `configs/policy.ts` carries the syntax-shaped ones: `policy/no-malformed-summary` reads the doc
@@ -1625,9 +1649,14 @@ typechecked, and ambiguous star exports aren't resolved semantically.
 The `surface` rule in `inspectPolicyWorkspace` compares live barrel exports and target-owned root
 `tests/setup*.ts` exports with the hosted guides. It matches bare names case-sensitively across
 environments and declaration kinds. Source names claimed by the target's own hosted guide are
-grandfathered; setup exports have no grandfather, and setup paths selected by `HOST_PATHS` are
-excluded. A scaffold checkout reads its own `guides/` directory and its own catalog; every other
-target reads `node_modules/@orkestrel/scaffold/dist/host/guides/` and the catalog staged beside it.
+grandfathered; setup exports have no grandfather. The rule excludes the setup modules scaffold owns
+in every target: the setup paths `HOST_PATHS` selects and the `tests/setupDistribution.ts`
+harness. A scaffold checkout reads its own `guides/` directory and its own catalog; every other
+target reads `node_modules/@orkestrel/scaffold/dist/host/guides/` and the catalog staged beside it,
+or its own `guides/` directory and its own catalog where that installed host is absent. Beside the
+installed guides, the rule takes no row from the target's own catalog table: the `catalog` verb
+writes that table from the registry's organization package list, so the table can list a package
+whose guide the installed release doesn't stage.
 The population it compares is what the parser accounts for: each exported declaration — a variable
 declarator, function, class, interface, type alias, enum, or namespace — every name an export list
 or a re-export list names, the alias of a namespace re-export, and the names a relative star export
@@ -1714,9 +1743,21 @@ replaces it, and none ever reports it stale. Deleting the file is how you ask fo
 proof back; editing it is how you keep your own. Limits states what makes this proof generable when
 the others are not.
 
+The proof's machinery lives beside it in `tests/setupDistribution.ts`, a harness scaffold plans
+under the same condition and claims by content. The generated proof imports
+`createDistributionSuite` and `buildDistributionCases` from it, plus `checkDistributionBrowser`
+where it carries the browser branch. It binds the suite, starts and destroys it in its hooks, and
+registers one `it` per case row inside `describe`, and each `it` compares the `actual` and
+`expected` values its row observes. The harness registers no test and makes no assertion. A missing
+harness reports `missing` drift and an edited one reports `stale`, and `repair` or `overwrite`
+writes the planned bytes back byte for byte while leaving the proof beside it untouched, so a fix to
+the harness reaches a workspace that keeps its own proof. Because no verb rewrites that proof, no
+release renames or removes a harness export a released proof imports, a member it reads, or the
+`./setupDistribution.js` specifier; `.claude/rules/tests.md` names that frozen set.
+
 Content ownership does not preserve an arbitrary custom Vitest project. The optional proof projects
-are fixed: `guides`, `integration`, `conformance`, and `service` are selected by their defining
-paths, `studies` by an exact-case `*.test.ts` file beneath `tests/studies` outside any `node_modules` or
+are fixed: `guides`, `integration`, `conformance`, `tree`, and `service` are selected by their
+defining paths, `studies` by an exact-case `*.test.ts` file beneath `tests/studies` outside any `node_modules` or
 `.git` directory, and `distribution` by a published `src` environment. A workspace that needs other local
 configuration must keep those edits outside a content-owned file; `repair` restores that file to the
 canonical project set.
@@ -2126,7 +2167,7 @@ against the digest in `host.json`, then verifies the inventory against its membe
 Transport encoding is transparent and does not enter the comparison. The path never character-
 decodes and re-encodes the content.
 
-This posture supplies integrity, not authenticity. An attacker who can serve the files can also
+This posture supplies integrity, not authenticity. Anyone who can serve the files can also
 serve a matching inventory. The residual is direct: fetched bytes govern agent behavior in a target
 that has no release gate. Run `audit` to preview the change, use the `--offline` option to pin the
 distributed floors, and keep operator grants in `.claude/settings.local.json`; scaffold does not
@@ -2170,10 +2211,11 @@ Nothing is fixed except the manifest.
   `--hide-scrollbars` default argument so classic scrollbars can take layout space in every case.
   An empty or unset value preserves the launch defaults; any other value throws an `Error`.
   Pairing `classic` with `PLAYWRIGHT_WS_ENDPOINT` throws an `Error`, even with an executable
-  override, because the server owns the launch. An installed pinned revision returns empty options
-  unless `classic` is set. A pinned revision that is not installed falls through to a `chromium` alias or a
-  sibling `chromium-*` revision under the same browsers directory, because a managed container ships
-  one usable build for many Playwright versions. It is its own file rather than a block in the
+  override, because the server owns the launch. Every resolved managed path names the full Chromium
+  executable so headless launches retain browser permissions. A pinned revision that is not installed
+  falls through to a `chromium` alias or a sibling `chromium-*` revision under the same browsers
+  directory, because a managed container ships one usable build for many Playwright versions.
+  It is its own file rather than a block in the
   vendored `configs/helpers.ts`, which every workspace receives byte-identical while only a browser
   selection declares the `playwright` this module imports.
 - One template artifact, `configs/commands.ts`, for every workspace that receives
@@ -2182,29 +2224,30 @@ Nothing is fixed except the manifest.
   `test.browser.commands`. `appVue` and each `journey:<variant>` project keep it through the
   browser configuration they spread. Scaffold claims the file by presence, so `repair` and
   `overwrite` write the seed into a target that lacks it and keep the commands you register.
-- The root configuration bundles `configs/commands.ts` into every configuration load, builds
-  included, and the bundle resolves no workspace alias. A native import of `src/server/index.ts`
-  from a command body fails with `ERR_MODULE_NOT_FOUND` on that module's own `@src/core` import.
-  Import only a `node:` module or a package the manifest declares in `dependencies` or
-  `devDependencies` at the top of the file. Load workspace source inside the command body through
-  `context.project.vitest.import`, which runs on the root Vite server and its `resolve.alias`, and
-  narrow the module it returns as `unknown`. The following module registers a `greeting` command
-  that returns the `message` export of `src/server/index.ts`:
 
-  ```ts
-  import type { BrowserCommandContext, BrowserConfigOptions } from 'vitest/node'
-  import { fileURLToPath } from 'node:url'
+The root configuration bundles `configs/commands.ts` into every configuration load, builds
+included, and the bundle resolves no workspace alias. A native import of `src/server/index.ts`
+from a command body fails with `ERR_MODULE_NOT_FOUND` on that module's own `@src/core` import.
+Import only a `node:` module or a package the manifest declares in `dependencies` or
+`devDependencies` at the top of the file. Load workspace source inside the command body through
+`context.project.vitest.import`, which runs on the root Vite server and its `resolve.alias`, and
+narrow the module it returns as `unknown`. The following module registers a `greeting` command
+that returns the `message` export of `src/server/index.ts`:
 
-  const SERVER_ENTRY = fileURLToPath(new URL('../src/server/index.ts', import.meta.url))
+```ts
+import type { BrowserCommandContext, BrowserConfigOptions } from 'vitest/node'
+import { fileURLToPath } from 'node:url'
 
-  export const commands: Readonly<NonNullable<BrowserConfigOptions['commands']>> = Object.freeze({
-  	greeting: async (context: BrowserCommandContext): Promise<string | undefined> => {
-  		const loaded = await context.project.vitest.import<unknown>(SERVER_ENTRY)
-  		if (typeof loaded !== 'object' || loaded === null || !('message' in loaded)) return undefined
-  		return typeof loaded.message === 'string' ? loaded.message : undefined
-  	},
-  })
-  ```
+const SERVER_ENTRY = fileURLToPath(new URL('../src/server/index.ts', import.meta.url))
+
+export const commands: Readonly<NonNullable<BrowserConfigOptions['commands']>> = Object.freeze({
+	greeting: async (context: BrowserCommandContext): Promise<string | undefined> => {
+		const loaded = await context.project.vitest.import<unknown>(SERVER_ENTRY)
+		if (typeof loaded !== 'object' || loaded === null || !('message' in loaded)) return undefined
+		return typeof loaded.message === 'string' ? loaded.message : undefined
+	},
+})
+```
 
 - One template artifact per source and test file the selection needs: an `index.ts` barrel per
   selected environment, `main.ts` and `index.html` for an application browser, `tests/setup.ts`
@@ -2213,18 +2256,30 @@ Nothing is fixed except the manifest.
   selected public barrel and records its initial empty exports for the consumer to replace with an
   observable cross-environment flow.
 - One set of template artifacts per sheet face, and one for the themes target: the birth-owned
-  seed, the content-owned wrappers, and the birth-owned entry proof, beside the birth-owned
-  `tests/setupStyles.ts` module and its proof. Surfaces and extensions lists each path.
+  seed, the content-owned wrappers, and the birth-owned entry proof. Surfaces and extensions lists
+  each path.
 - One set of template artifacts per axis the `vue` extension occupies, and one birth-owned arrival
   journey per application of a journey workspace. Surfaces and extensions lists each face.
-- One template artifact, `tests/distribution.test.ts`, for a workspace publishing any `src`
-  environment or sheet face. It is the packed-package proof, and it is claimed by presence rather
-  than birth, so a workspace that replaces it keeps its replacement. The suite stages its consumer
-  during setup; listing the project creates no distribution staging directory. A published browser environment
-  adds the
-  real-browser stage to it: the stage bundles the installed package with the workspace's own
+- Two template artifacts for a workspace publishing any `src` environment or sheet face: the
+  packed-package proof `tests/distribution.test.ts` and its harness `tests/setupDistribution.ts`.
+  The proof is claimed by presence rather than birth, so a workspace that replaces it keeps its
+  replacement. The harness is claimed by content, so `repair` restores its planned bytes. The
+  harness's suite stages its consumer when the proof's `beforeAll` hook starts it; listing the
+  project creates no distribution staging directory. The proof registers the harness's case table,
+  including the installed source-map scan, the declaration-copy scan, and the manifest fixed point
+  under `npm pkg fix`. The source-map scan reads each output's `sourceMappingURL` map, including
+  inline data maps, or its sibling map when the comment is absent. Relative map references resolve
+  at the output; relative sources and roots resolve at the map, and file URLs become host paths.
+  The scan reports sibling sources or a map with no source of its own environment. The declaration scan reads
+  top-level declared names, including unexported names, groups declaration formats by face, and
+  refuses a roll-up declaring no names when its workspace source entry exports names. A built
+  JavaScript output holding code requires its own readable source map. An empty publication passes each scan with
+  its reason: no built face holds code, or no source entry exports names. A single declaration
+  face passes the copy check after its required-content check. The manifest check runs npm on a
+  scratch copy and reports each changed top-level key. A published browser environment adds the
+  real-browser stage to both: the harness bundles the installed package with the workspace's own
   `configs/browsers.ts` resolution, serves the bundle over a loopback server, and drives it in
-  Playwright Chromium.
+  Playwright Chromium, and the proof registers that stage through `checkDistributionBrowser`.
 - One template artifact each for `README.md` and `guides/README.md`.
 - One template artifact for `AGENTS.md`. It is a pointer rather than a contract:
   `AGENTS.md` names the coding contract, the orchestration contract, the rules, the skills, and the
@@ -2330,13 +2385,13 @@ When a `Materializer` uses a value `Host`, each mutating call stages the host un
 `#fill` root in the operating system's temporary directory and removes that root in a `finally`
 block. A process killed during the mutation can leave the temporary root behind.
 
-`resolveContainedPath` refuses a lexical escape, a physical link out of the root, and a dangling
-link whose raw target contains a `..` segment. It returns the lexical join of `root` and `path` — an
-absolute path under `root` — after checking the namespace, not an open filesystem handle. Its
-shipped example tests that answer's suffix rather than printing the whole path. Its contract
-therefore excludes a concurrent rename or link swap during the check or before the caller finishes
-using that path. A caller that admits hostile concurrent namespace mutation needs a handle-bound
-operation instead.
+`resolveContainedPath` refuses a path whose text resolves outside the root, a physical link out of
+the root, and a dangling link whose raw target contains a `..` segment. It returns the lexical join
+of `root` and `path` — an absolute path under `root` — after checking the namespace, not an open
+filesystem handle. Its shipped example tests that answer's suffix rather than printing the whole
+path. Its contract therefore excludes a concurrent rename or link swap during the check or before
+the caller finishes using that path. A caller that admits untrusted concurrent namespace mutation
+needs a handle-bound operation instead.
 
 `resolveRealPath` answers the caller's own text collapsed lexically, then resolved through every link
 in what survives that collapse. A `..` the caller wrote cancels the segment before it as text, so
@@ -2527,9 +2582,9 @@ implementation that conforms to it, then export both from the barrel — the ord
 is what separates them, and it is the whole rule. Generating a file is not the same as writing one:
 scaffold also writes `tests/policy.test.ts` and `tests/config.test.ts` into a target, byte for byte
 from the shared file set, and the distribution proof is the one it derives from the workspace it is
-writing into. A seed is not generation either: scaffold writes `tests/setupStyles.test.ts`,
-`tests/setupGlobal.test.ts`, and each arrival journey at creation, as birth-owned template bytes
-that prove the modules and applications it seeds beside them. After creation those files are the
+writing into. A seed is not generation either: scaffold writes `tests/setupGlobal.test.ts` and each
+arrival journey at creation, as birth-owned template bytes that prove the modules and applications
+it seeds beside them. After creation those files are the
 workspace's, so no verb compares or restores them.
 
 A distribution proof's every assertion derives from the artifact the workspace installs: the
@@ -2538,9 +2593,10 @@ a Node import, a CommonJS require, and a real browser hand back from that instal
 there has to be named, so one generated file measures every publishing workspace, and it stays true
 as that workspace's published surface moves.
 
-A guide, conformance, live-service, or authored setup proof asserts something scaffold cannot read: the API a
-guide fence claims, the official runner a conformance check measures against, the service a live
-proof drives, and what a setup module does. That subject is what no generated file can reach, and
+A guide, conformance, real-tree, live-service, or authored setup proof asserts something scaffold
+cannot read: the API a guide fence claims, the official runner a conformance check measures against,
+the laws a package states about its own tree, the service a live proof drives, and what a setup
+module does. That subject is what no generated file can reach, and
 the claim here is about the subject rather than about every property those files have. A structural
 property of the same files can be derivable — whether each root `tests/setup*.ts` module is
 reachable from the root configuration is one — and a file asserting it would still leave the
@@ -2548,22 +2604,22 @@ module's behavior unmeasured. A generated file there would read as a proof while
 which is worse than an absent one. So the file a consumer writes is what selects each of those
 projects. Scaffold also seeds proofs for its own setup modules, as Root setup mirror describes.
 
-Registration follows the same split. Scaffold registers `conformance`, `studies`, and `service` when their
-structural facts are set, and registers `distribution` whenever the workspace publishes at least one
-`src` environment or sheet face. In a publishing workspace, `distribution`, `studies`, and `service` run from `prepublishOnly`
-and `conformance` stays in `test`. In a `private: true` workspace, `distribution` is absent,
+Registration follows the same split. Scaffold registers `conformance`, `tree`, `studies`, and
+`service` when their structural facts are set, and registers `distribution` whenever the workspace
+publishes at least one `src` environment or sheet face. In a publishing workspace, `distribution`,
+`studies`, and `service` run from `prepublishOnly`, and `conformance` and `tree` stay in `test`. In a `private: true` workspace, `distribution` is absent,
 `studies` and then `service` run from `test`, and there is no `prepublishOnly` at all. The `policy` project reports an exporting root setup module that lacks its sibling proof or an import from `tests/setup.test.ts`.
 Separately, a filled, exporting `tests/setup*.ts` module that no `tests/setup*.test.ts`
 proof covers raises the non-blocking `setup` question in `audit`, which names the modules and the proof to add.
 For setup modules the workspace authors, the workspace supplies the behavior proof; the setup modules scaffold seeds arrive with their sibling proofs.
 
-The generated proof partitions the installed `exports` map rather than sampling it. Every published
+The harness imported by the generated proof partitions the installed `exports` map rather than sampling it. Every published
 subpath lands in exactly one of driven, undeclared, or excluded, and a totality assertion holds that
-partition against the map's own subpath list, so a subpath the proof classifies into none of them
+partition against the map's own subpath list, so a subpath the harness classifies into none of them
 reddens instead of disappearing. Another assertion beside it names every driven subpath whose entry
 resolves no Node target and no browser target: each drive retires itself for such a subpath, so
 membership of the partition alone would leave one measured by nothing. Together they hold that every
-published subpath is driven, or is named where the proof cannot drive it.
+published subpath is driven, or is named where the harness cannot drive it.
 
 A subpath is driven when its entry resolves a declaration, and each measurement resolves that entry
 under the conditions of the driver taking it rather than under one shared set. The Node ESM runtime
@@ -2604,7 +2660,7 @@ one answered first. That is what drives a `require`-only subpath declaring its t
 adjacent declaration TypeScript substitutes from its runtime target.
 
 An entry's published names are checked against its own declarations by the type system rather than
-by a walk the proof carries. Each drive writes the runtime's own key list into a generated consumer
+by a walk the harness carries. Each drive writes the runtime's own key list into a generated consumer
 module as a literal and lets the workspace's compiler judge that module under the driver's own
 resolution, in both directions. `Record<keyof typeof entry, true>` takes the literal, so a name the
 declarations carry and the runtime does not lands there. `Record<keyof typeof published, true>`
@@ -2624,14 +2680,14 @@ rather than the JavaScript one, and the addon publishes names to whatever loads 
 extension the name carries rather than a denylist of asset extensions. Reading the
 file name rather than the whole path is load-bearing: `./dist/bundle.js/feature` and
 `./dist/v1.2/index` are modules, and reading the path gets each of them wrong. What the rule
-excludes is stated where the proof is emitted: an extensionless file published for a reader, such as
+excludes is stated where the harness is emitted: an extensionless file published for a reader, such as
 a `LICENSE` at a subpath, reports undeclared until it is given an extension or a declaration. That
-is the safe direction: the proof names a subpath it cannot vouch for rather than passing one it
+is the safe direction: the harness names a subpath it cannot vouch for rather than passing one it
 never measured.
 
 A subpath is excluded when it resolves no declaration and names no runtime target: the
 `./package.json` pointer, a published stylesheet, and a WebAssembly binary are read rather than
-imported, and the proof names them where it excludes them.
+imported, and the harness names them where it excludes them.
 
 Classification reads every target the entry names under every condition, and the members of a
 fallback list with them: Node reads an array in an exports entry as a list of fallbacks, and a
@@ -2648,29 +2704,30 @@ A `./*` subpath pattern is read as an ordinary subpath, with no expansion of the
 naming a runtime target reddens rather than landing in excluded. That is deliberate: excluding the
 pattern would account for a whole family of published subpaths and measure none of them, which is
 the silence this partition exists to close. Measuring the family means expanding the pattern against
-the installed tree and driving each match, which this proof does not do. A maintainer meeting that
-red is reading the honest answer — the proof does not measure that family — rather than a defect in
-the proof.
+the installed tree and driving each match, which this harness does not do. A maintainer meeting that
+red is reading the honest answer — the harness does not measure that family — rather than a defect in
+the harness.
 
 The proof generated for a workspace publishing no browser face asserts that no browser face exists.
-That variant drives a Node import and a Node require and carries no browser branch, because the
+That variant registers the harness's Node import and Node require cases and carries no browser branch, because the
 branch follows a published browser face on the `src` axis: the browser drive measures the packed
 artifact, and only a published face is packed. A workspace that selects `browser` on its `app` axis
 alone declares `playwright` and `@vitest/browser-playwright` and gets `configs/browsers.ts` emitted,
 and its proof still carries no branch: the selector reads the `src` axis, and a generated manifest
-packs `dist/src`, so an application face is neither selected nor packed. The imports the branch
+packs `dist/src`, so an application face is neither selected nor packed. The imports the harness's branch
 needs are declared by either axis, so they do not select the branch. The `vite` import selects
 nothing either: every workspace declares `vite`, whatever it publishes. In a core-only workspace,
 those imports resolve to nothing, and emitting the branch there would fail its own `check` and
-`lint:check` gates. Its Node cases retire themselves for a browser face, so a face published after
+`lint:check` gates. The harness's Node cases retire themselves for a browser face, so a face published after
 the file was written would leave nothing measuring it. The assertion reddens instead, and names the
 subpath a browser branch is owed for. The remedy it carries is to delete the file and run `repair`,
 which writes the variant that carries the branch — the same route presence ownership already gives
 you for asking for the generated proof back.
 
 The generated distribution proof takes its release contract from the outside. The generated
-`prepublishOnly` invokes it as `npm run test:distribution -- --mode release`, and the proof reads
-`import.meta.env.MODE === 'release'` and **fails** on an unreachable registry rather than skipping.
+`prepublishOnly` invokes it as `npm run test:distribution -- --mode release`, and the harness it
+imports reads `import.meta.env.MODE === 'release'`, so the proof **fails** on an unreachable
+registry rather than skipping.
 The project factories the root configuration registers receive the invocation record, and each of
 their projects runs in the invocation's mode. Vitest runs a project whose factory returns no mode in
 Vitest's own `test` mode, where the proof skips. A journey project is such a project: its
@@ -2683,8 +2740,8 @@ a replacement alone, so a replacement that ignores the flag reports green on exa
 matter.
 
 The consequence is one empty-project case per refused proof. A blueprint carrying `conformance` with
-no `tests/conformance.test.ts` registers a project whose include resolves to nothing, and Vitest
-exits non-zero on it. A blueprint carrying `service` gets `tests/setupService.ts` — the root
+no `tests/conformance.test.ts`, or `tree` with no `tests/tree.test.ts`, registers a project whose
+include resolves to nothing, and Vitest exits non-zero on it. A blueprint carrying `service` gets `tests/setupService.ts` — the root
 configuration names that module by path, so an absent one fails the project's load rather than its
 run — and still no suite beneath `tests/service`, so `test:service` reports no test files until the
 consumer writes the first one. A blueprint carrying `studies` has no such case, because the fact is
@@ -2716,11 +2773,11 @@ The generated guide index lists each occupied Vue face with its source, tests, a
 - [`tests/src/core/helpers.test.ts`](../tests/src/core/helpers.test.ts) — the pure leaves, their
   determinism, and their input independence.
 - [`tests/src/core/validators.test.ts`](../tests/src/core/validators.test.ts) — every guard against
-  the adversarial matrix.
+  the matrix of unexpected values.
 - [`tests/src/core/parsers.test.ts`](../tests/src/core/parsers.test.ts) — parse and guard soundness
   in both directions.
 - [`tests/src/core/cloners.test.ts`](../tests/src/core/cloners.test.ts) — ownership of a snapshot
-  taken from a hostile value.
+  taken from an unexpected value.
 - [`tests/src/core/templates.test.ts`](../tests/src/core/templates.test.ts) — the frozen template
   definitions and generated configurations under live Vitest. The isolated `templates` project runs
   through `test:templates` in `prepublishOnly`; its compiler and Chromium processes run apart from

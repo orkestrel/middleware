@@ -220,6 +220,10 @@
 							{
 								"regex": "^(?:node:|(?:_(?:http_(?:agent|client|common|incoming|outgoing|server)|stream_(?:duplex|passthrough|readable|transform|wrap|writable)|tls_(?:common|wrap))|assert(?:/strict)?|async_hooks|buffer|child_process|cluster|console|constants|crypto|dgram|diagnostics_channel|dns(?:/promises)?|domain|events|fs(?:/promises)?|http|http2|https|inspector(?:/promises)?|module|net|os|path(?:/(?:posix|win32))?|perf_hooks|process|punycode|querystring|readline(?:/promises)?|repl|sqlite|stream(?:/(?:consumers|promises|web))?|string_decoder|sys|timers(?:/promises)?|tls|trace_events|tty|url|util(?:/types)?|v8|vm|wasi|worker_threads|zlib)(?:[/?#]|$)|@src/server(?:[/?#]|$)|@orkestrel/[^/]+/server(?:[/?#]|$)|(?:\\.\\./)+(?:server|src/server|app/server)(?:[/?#]|$))",
 								"message": "src/browser must not depend on Node or server-only modules"
+							},
+							{
+								"regex": "^(?:\\.\\./)+(?:src/)?core(?:[/?#]|$)",
+								"message": "src/browser must import src/core through the @src/core alias"
 							}
 						]
 					}
@@ -436,6 +440,14 @@
 							{
 								"regex": "^(?:node:|(?:_(?:http_(?:agent|client|common|incoming|outgoing|server)|stream_(?:duplex|passthrough|readable|transform|wrap|writable)|tls_(?:common|wrap))|assert(?:/strict)?|async_hooks|buffer|child_process|cluster|console|constants|crypto|dgram|diagnostics_channel|dns(?:/promises)?|domain|events|fs(?:/promises)?|http|http2|https|inspector(?:/promises)?|module|net|os|path(?:/(?:posix|win32))?|perf_hooks|process|punycode|querystring|readline(?:/promises)?|repl|sqlite|stream(?:/(?:consumers|promises|web))?|string_decoder|sys|timers(?:/promises)?|tls|trace_events|tty|url|util(?:/types)?|v8|vm|wasi|worker_threads|zlib)(?:[/?#]|$)|@src/server(?:[/?#]|$)|@orkestrel/[^/]+/server(?:[/?#]|$)|(?:\\.\\./)+(?:server|src/server|app/server)(?:[/?#]|$))",
 								"message": "src/vue must not depend on Node or server-only modules"
+							},
+							{
+								"regex": "^(?:\\.\\./)+(?:src/)?core(?:[/?#]|$)",
+								"message": "src/vue must import src/core through the @src/core alias"
+							},
+							{
+								"regex": "^(?:\\.\\./)+(?:src/)?browser(?:[/?#]|$)",
+								"message": "src/vue must import src/browser through the @src/browser alias"
 							}
 						]
 					}
@@ -488,6 +500,10 @@
 							{
 								"regex": "^(?:(?:vue|vite)(?:[/?#]|$)|@(?:vue|vitejs)/|@src/browser(?:[/?#]|$)|@orkestrel/[^/]+/browser(?:[/?#]|$)|(?:\\.\\./)+(?:browser|src/browser|app/browser)(?:[/?#]|$))",
 								"message": "src/server must not depend on Vue or browser-only modules"
+							},
+							{
+								"regex": "^(?:\\.\\./)+(?:src/)?core(?:[/?#]|$)",
+								"message": "src/server must import src/core through the @src/core alias"
 							}
 						]
 					}
@@ -720,6 +736,14 @@
 							{
 								"regex": "^(?:(?:vue|vite)(?:[/?#]|$)|@(?:vue|vitejs)/|@src/(?:browser|vue)(?:[/?#]|$)|@orkestrel/[^/]+/(?:browser|vue)(?:[/?#]|$)|(?:\\.\\./)+(?:browser|vue|src/(?:browser|vue)|app/browser)(?:[/?#]|$))",
 								"message": "src/bin must not depend on browser-only modules"
+							},
+							{
+								"regex": "^(?:\\.\\./)+(?:src/)?core(?:[/?#]|$)",
+								"message": "src/bin must import src/core through the @src/core alias"
+							},
+							{
+								"regex": "^(?:\\.\\./)+(?:src/)?server(?:[/?#]|$)",
+								"message": "src/bin must import src/server through the @src/server alias"
 							}
 						]
 					}

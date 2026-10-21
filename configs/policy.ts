@@ -386,8 +386,9 @@ export const POLICY_BANNED_TERMS: readonly PolicyTerm[] = Object.freeze([
  *
  * @remarks
  * Each row carries a permitted sense: a date value, a version value, a causal clause, the name a
- * replication topology takes, and a comparative or spatial relation. The currency check proves each
- * row is registered here.
+ * replication topology takes, a comparative or spatial relation, and a literal engineering term such
+ * as a string escape, a loop `break`, or a request payload. The currency check proves each row is
+ * registered here.
  */
 export const POLICY_JUDGED_TERMS: readonly string[] = Object.freeze([
 	'now',
@@ -398,6 +399,16 @@ export const POLICY_JUDGED_TERMS: readonly string[] = Object.freeze([
 	'above',
 	'below',
 	'master',
+	'hostile',
+	'adversarial',
+	'attack',
+	'break',
+	'forge',
+	'bypass',
+	'poison',
+	'escape',
+	'exploit',
+	'payload',
 ])
 
 /** Returns the file name a policy rule keys on, read from either host separator. */

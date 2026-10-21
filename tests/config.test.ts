@@ -323,16 +323,27 @@ describe('selected faces', () => {
 		}
 		const script =
 			'vite build --config configs/src/vite.styles.config.ts && vite build --config configs/src/vite.themes.config.ts'
-		expect(inspectSheetConfiguration(project, script)).toEqual([])
-		expect(
-			inspectSheetConfiguration(
-				{ test: { ...project.test, setupFiles: ['./tests/setup.ts', './tests/setupBrowser.ts'] } },
-				script,
-			),
-		).toContain('./tests/setupStyles.ts')
-		expect(
-			inspectSheetConfiguration(project, script.split(' && ').reverse().join(' && ')),
-		).toContain('themes order')
+		const scratch = createPolicyScratch({ prefix: 'config-sheet-setup-' })
+		const withoutStyles = {
+			test: { ...project.test, setupFiles: ['./tests/setup.ts', './tests/setupBrowser.ts'] },
+		}
+		try {
+			expect(inspectSheetConfiguration(withoutStyles, script, scratch.path)).toEqual([])
+			scratch.write('tests/setupStyles.ts', 'export {}\n')
+			expect(inspectSheetConfiguration(project, script, scratch.path)).toEqual([])
+			expect(inspectSheetConfiguration(withoutStyles, script, scratch.path)).toContain(
+				'./tests/setupStyles.ts',
+			)
+			expect(
+				inspectSheetConfiguration(
+					project,
+					script.split(' && ').reverse().join(' && '),
+					scratch.path,
+				),
+			).toContain('themes order')
+		} finally {
+			scratch.destroy()
+		}
 	})
 
 	it('resolves showcase and journey modes for every occupied application', async () => {
@@ -707,19 +718,24 @@ describe('root configuration', () => {
 			)
 				.filter(([, path]) => existsSync(resolve(POLICY_ROOT, path)))
 				.map(([label, , include, setup]): [string, PolicyProject] => [label, { include, setup }]),
-			...['policy', 'config', 'guides', 'conformance', 'distribution', 'integration']
-				.filter((label) => existsSync(resolve(POLICY_ROOT, `tests/${label}.test.ts`)))
+			...['policy', 'config', 'guides', 'conformance', 'tree', 'distribution', 'integration']
+				.filter((label) => readdirSync(resolve(POLICY_ROOT, 'tests')).includes(`${label}.test.ts`))
 				.map((label): [string, PolicyProject] => [
 					label,
 					{
 						include: `tests/${label}.test.ts`,
 						setup: [
 							'./tests/setup.ts',
-							...(label === 'conformance' ? ['./tests/setupServer.ts'] : []),
+							...(label === 'conformance' || label === 'tree' ? ['./tests/setupServer.ts'] : []),
 							...(label === 'integration' &&
 							(collectSheets(POLICY_ROOT).length > 0 ||
 								existsSync(resolve(POLICY_ROOT, 'src/styles/themes/index.scss')))
-								? ['./tests/setupBrowser.ts', './tests/setupStyles.ts']
+								? [
+										'./tests/setupBrowser.ts',
+										...(existsSync(resolve(POLICY_ROOT, 'tests/setupStyles.ts'))
+											? ['./tests/setupStyles.ts']
+											: []),
+									]
 								: []),
 						],
 					},
@@ -910,8 +926,8 @@ describe('root configuration', () => {
 		// before its result is read. Extra factories are ignored without validating their result shape.
 		expect(extraLoads).toStrictEqual([])
 		for (const [label, project] of expected) expect(configured.get(label)).toStrictEqual(project)
-		for (const label of ['setup', 'setup:browser']) {
-			const name = label === 'setup' ? 'setup' : 'setupBrowser'
+		for (const label of ['setup', 'setup:browser', 'tree']) {
+			const name = label === 'setup:browser' ? 'setupBrowser' : label
 			expect(projects.some((entry) => typeof entry === 'function' && entry.name === name)).toBe(
 				expected.has(label),
 			)
@@ -1281,6 +1297,7 @@ describe('root configuration', () => {
 		const distribution = Object.getOwnPropertyDescriptor(scripts, 'test:distribution')?.value
 		const integration = Object.getOwnPropertyDescriptor(scripts, 'test:integration')?.value
 		const conformance = Object.getOwnPropertyDescriptor(scripts, 'test:conformance')?.value
+		const tree = Object.getOwnPropertyDescriptor(scripts, 'test:tree')?.value
 		const service = Object.getOwnPropertyDescriptor(scripts, 'test:service')?.value
 		const studies = Object.getOwnPropertyDescriptor(scripts, 'test:studies')?.value
 		const publish = Object.getOwnPropertyDescriptor(scripts, 'prepublishOnly')?.value
@@ -1307,6 +1324,7 @@ describe('root configuration', () => {
 		expect(registered.has('config')).toBe(true)
 		expect(registered.has('control')).toBe(false)
 		const hasConformance = registered.has('conformance')
+		const hasTree = registered.has('tree')
 		const hasDistribution = registered.has('distribution')
 		const hasService = registered.has('service')
 		const hasStudies = registered.has('studies')
@@ -1349,6 +1367,13 @@ describe('root configuration', () => {
 		expect(typeof test === 'string' && test.includes('npm run test:conformance')).toBe(
 			hasConformance,
 		)
+		expect(tree).toBe(
+			hasTree
+				? 'vitest run --config vite.config.ts --no-cache --reporter=dot --project tree'
+				: undefined,
+		)
+		expect(typeof test === 'string' && test.includes('npm run test:tree')).toBe(hasTree)
+		expect(typeof publish === 'string' && publish.includes('npm run test:tree')).toBe(false)
 		expect(service).toBe(
 			hasService
 				? 'vitest run --config vite.config.ts --no-cache --reporter=dot --project service'
@@ -2916,72 +2941,89 @@ createSomething({
 					const pattern = readConfigRecord(patternValue)
 					const message = pattern.message
 					if (typeof message !== 'string') throw new Error('Missing pattern message')
-					const listed: ReadonlyArray<readonly [string, boolean]> = message.includes('URL schemes')
-						? [
-								['https://host/x', true],
-								['data:text/plain,x', true],
-								['node:fs', false],
-								['n:entry', true],
-								['no:entry', true],
-								['nod:entry', true],
-								['nodea:entry', true],
-								['1bad:entry', false],
-								['./data:entry', false],
-							]
-						: message.includes('noncanonical dot')
+					const alias = /@src\/(core|browser|server) alias/u.exec(message)?.[1]
+					const listed: ReadonlyArray<readonly [string, boolean]> =
+						alias !== undefined
 							? [
-									['../core/../server/index.js', true],
-									['../core/./index.js', true],
-									['../core/index.js', false],
-									['./index.js', false],
-									['../../core/index.js', false],
-									['.../../index.js', true],
-									['.name/../index.js', true],
+									[`../${alias}/index.js`, true],
+									[`../../${alias}/types.js`, true],
+									[`../../src/${alias}/index.js`, true],
+									[`../${alias}`, true],
+									[`../${alias}/`, true],
+									[`../${alias}?raw`, true],
+									[`../${alias}#fragment`, true],
+									[`@src/${alias}`, false],
+									[`./${alias}/index.js`, false],
+									[`../${alias}x/index.js`, false],
+									[`../${alias}.ext/index.js`, false],
 								]
-							: message.includes('sibling sheet')
+							: message.includes('URL schemes')
 								? [
-										['@src/print', true],
-										['../print/index.js', true],
-										['@src/core', false],
-										['@src/browser', false],
-										['@src/vue', false],
-										['@app/core', false],
-										['@app/browser', false],
-										['@src/corex', true],
-										['@src/', true],
-										['../src/print/index.js', true],
-										['../browser?x', true],
-										['../print.ext/index.js', false],
-										...(Array.isArray(block.files) &&
-										block.files.some(
-											(file: unknown) => typeof file === 'string' && file.startsWith('app/vue/'),
-										)
-											? [['@app/print', true] as const]
-											: []),
+										['https://host/x', true],
+										['data:text/plain,x', true],
+										['node:fs', false],
+										['n:entry', true],
+										['no:entry', true],
+										['nod:entry', true],
+										['nodea:entry', true],
+										['1bad:entry', false],
+										['./data:entry', false],
 									]
-								: [
-										[
-											message.includes('absolute paths')
-												? '/machine/module.js'
-												: message.includes('normalized traversal')
-													? './../core/index.js'
-													: message.includes('forward slashes')
-														? '..\\core\\index.js'
-														: message.includes('compiler API')
-															? 'typescript'
-															: message.includes('private app')
-																? '@app/core'
-																: message.includes('stylesheets')
-																	? './index.css'
-																	: message.includes('host-independent') ||
-																		  message.includes('Node or server')
-																		? 'node:fs'
-																		: message.includes('Vue extension')
-																			? '@src/vue'
-																			: '@src/browser',
-											true,
-										],
-									]
+								: message.includes('noncanonical dot')
+									? [
+											['../core/../server/index.js', true],
+											['../core/./index.js', true],
+											['../core/index.js', false],
+											['./index.js', false],
+											['../../core/index.js', false],
+											['.../../index.js', true],
+											['.name/../index.js', true],
+										]
+									: message.includes('sibling sheet')
+										? [
+												['@src/print', true],
+												['../print/index.js', true],
+												['@src/core', false],
+												['@src/browser', false],
+												['@src/vue', false],
+												['@app/core', false],
+												['@app/browser', false],
+												['@src/corex', true],
+												['@src/', true],
+												['../src/print/index.js', true],
+												['../browser?x', true],
+												['../print.ext/index.js', false],
+												...(Array.isArray(block.files) &&
+												block.files.some(
+													(file: unknown) =>
+														typeof file === 'string' && file.startsWith('app/vue/'),
+												)
+													? [['@app/print', true] as const]
+													: []),
+											]
+										: [
+												[
+													message.includes('absolute paths')
+														? '/machine/module.js'
+														: message.includes('normalized traversal')
+															? './../core/index.js'
+															: message.includes('forward slashes')
+																? '..\\core\\index.js'
+																: message.includes('compiler API')
+																	? 'typescript'
+																	: message.includes('private app')
+																		? '@app/core'
+																		: message.includes('stylesheets')
+																			? './index.css'
+																			: message.includes('host-independent') ||
+																				  message.includes('Node or server')
+																				? 'node:fs'
+																				: message.includes('Vue extension')
+																					? '@src/vue'
+																					: '@src/browser',
+													true,
+												],
+											]
 					const face =
 						message.includes('another styles face') && typeof pattern.regex === 'string'
 							? /@src\/(bootstrap|tailwindcss|styles)\(/u.exec(pattern.regex)?.[1]
@@ -3135,21 +3177,34 @@ createSomething({
 										]),
 								]
 							: []),
+						...(['src/browser', 'src/server', 'src/vue', 'src/bin'].includes(owner)
+							? ['../core/index.js', '../../src/core/index.js']
+							: []),
+						...(owner === 'src/vue' ? ['../browser/index.js', '../../src/browser/index.js'] : []),
+						...(owner === 'src/bin' ? ['../server/index.js', '../../src/server/index.js'] : []),
 					]
 					const admitted = [
 						...(owner.endsWith('/vue')
 							? [
 									'@src/core',
 									'@src/browser',
-									'../core/index.js',
-									'../browser/index.js',
 									'vue',
 									'@vue/runtime-core',
 									...(owner.startsWith('app/')
-										? ['@app/core', '@app/browser', '@src/vue', '../../src/vue/index.js']
+										? [
+												'@app/core',
+												'@app/browser',
+												'@src/vue',
+												'../../src/vue/index.js',
+												'../browser/index.js',
+											]
 										: []),
 								]
 							: ['@src/core']),
+						...(['src/browser', 'src/server', 'src/vue', 'src/bin'].includes(owner)
+							? []
+							: ['../core/index.js']),
+						...(owner === 'src/bin' ? ['@src/server'] : []),
 						...(sheet
 							? [
 									...faces
@@ -3177,7 +3232,6 @@ createSomething({
 								[
 									...admitted,
 									'./index.js',
-									'../core/index.js',
 									...(owner.endsWith('/server') || owner === 'src/bin' ? ['node:fs'] : []),
 								],
 								false,

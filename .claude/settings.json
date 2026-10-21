@@ -183,6 +183,8 @@
 			"Bash(npm run test:guides *)",
 			"Bash(npm run test:conformance)",
 			"Bash(npm run test:conformance *)",
+			"Bash(npm run test:tree)",
+			"Bash(npm run test:tree *)",
 			"Bash(npm run test:integration)",
 			"Bash(npm run test:integration *)",
 			"Bash(npm run test:distribution)",
