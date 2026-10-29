@@ -757,6 +757,26 @@ export function readCompilerOutput(compiler: string, args: readonly string[]): s
 }
 
 /**
+ * Resolves the TypeScript command from its exported package manifest.
+ * @param path - The module or manifest path whose installation supplies TypeScript.
+ * @returns The absolute compiler command path on TypeScript 6 and 7.
+ * @throws An error when the package declares no `bin.tsc` command.
+ */
+export function resolveCompiler(path: string): string {
+	const load = createRequire(path)
+	const manifest = load.resolve('typescript/package.json')
+	const declared: unknown = load(manifest)
+	if (typeof declared !== 'object' || declared === null || !('bin' in declared)) {
+		throw new Error('The TypeScript package declares no bin.tsc command')
+	}
+	const bin = declared.bin
+	if (typeof bin !== 'object' || bin === null || !('tsc' in bin) || typeof bin.tsc !== 'string') {
+		throw new Error('The TypeScript package declares no bin.tsc command')
+	}
+	return resolvePath(dirname(manifest), bin.tsc)
+}
+
+/**
  * Parses a `tsc --showConfig` reading into the compiler scope a face's roll-up requires.
  *
  * @param text - The compiler's `--showConfig` output.
@@ -886,7 +906,7 @@ export function declarationRollup(options: DeclarationRollupOptions): Plugin {
 				)
 			}
 			const load = createRequire(import.meta.url)
-			const compiler = load.resolve('typescript/bin/tsc')
+			const compiler = resolveCompiler(import.meta.url)
 			const scope = parseProjectScope(
 				readCompilerOutput(compiler, ['--showConfig', '-p', options.project]),
 				options.project,

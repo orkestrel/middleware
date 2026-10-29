@@ -1,4 +1,11 @@
 import type { Blueprint } from '@orkestrel/scaffold'
+import type {
+	PolicyComment,
+	PolicyContext,
+	PolicyDiagnostic,
+	PolicyExpression,
+	PolicyScopeCode,
+} from '../configs/policy.js'
 import {
 	createGuide,
 	extractSourceLines,
@@ -25,12 +32,14 @@ import {
 import { tmpdir } from 'node:os'
 import { basename, dirname, join, matchesGlob, relative as relativePath, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { isDeepStrictEqual } from 'node:util'
 import { parseAst, parseSync } from 'vite'
 import { stripPolicyCode, textToPolicyHits } from '../configs/policy.js'
 
 /** Names a rule the fleet sweep decides from workspace text and paths. */
 export type PolicyRule =
 	| 'bridge'
+	| 'dist'
 	| 'mirror'
 	| 'portability'
 	| 'prose'
@@ -38,11 +47,24 @@ export type PolicyRule =
 	| 'skill'
 	| 'surface'
 	| 'suppression'
+	| 'text'
 
 /** Describes one workspace file a physical control writes. */
 export interface PolicySource {
 	readonly path: string
 	readonly content: string
+}
+
+/** Pairs a collected Vue import fixture with its native and independent restriction outcomes. */
+export interface PolicyVueImportCase extends PolicySource {
+	readonly boundary: boolean
+	readonly restricted: boolean
+}
+
+/** Pairs a collected composable fixture with its placement and domain outcomes. */
+export interface PolicyVueDomainCase extends PolicySource {
+	readonly misplaced: boolean
+	readonly malformed: boolean
 }
 
 /** Describes one policy failure the sweep reports. */
@@ -348,7 +370,7 @@ export function createPolicyLazyCase<T>(
  *
  * @remarks
  * An index in `entries` produces a value the reader accepts, an index in `refusals` produces a
- * value the reader fails on once it has the value, and an index in `failures` fails when the
+ * value the reader fails on after it has the value, and an index in `failures` fails when the
  * getter runs. Every other index is a hole. A list with `iterable` set to `false` has no iterator,
  * which a loop refuses and `Array.from` and `values()` do not; it is an iterator list otherwise.
  */
@@ -416,6 +438,72 @@ export function createPolicyRevoked(): object {
 	const { proxy, revoke } = Proxy.revocable({}, {})
 	revoke()
 	return proxy
+}
+
+/**
+ * Creates a producer of revoked proxies over what another producer creates.
+ *
+ * @param entry - The producer whose value each proxy wraps.
+ * @returns A producer whose value refuses every read, which fails a reader once it holds the entry.
+ */
+export function createPolicyRefused<T extends object>(entry: () => T): () => T {
+	return () => {
+		const { proxy, revoke } = Proxy.revocable(entry(), {})
+		revoke()
+		return proxy
+	}
+}
+
+/** Creates a lint source over text and its comments that declares no variable. */
+export function createPolicySource(
+	text: string,
+	comments: readonly PolicyComment[] = [],
+): PolicyScopeCode {
+	return { text, getAllComments: () => comments, getDeclaredVariables: () => [] }
+}
+
+/** Creates a lint context over an empty source that appends each diagnostic to the given log. */
+export function createPolicyContext(
+	filename: string,
+	cwd: string,
+	reports: PolicyDiagnostic[],
+): PolicyContext {
+	return {
+		filename,
+		cwd,
+		sourceCode: createPolicySource(''),
+		report: (diagnostic) => {
+			reports.push(diagnostic)
+		},
+	}
+}
+
+/** Creates a variable declarator named `run` whose value is an arrow function. */
+export function createPolicyDeclarator(): PolicyExpression {
+	return {
+		type: 'VariableDeclarator',
+		range: [0, 0],
+		id: { type: 'Identifier', range: [0, 0], name: 'run' },
+		init: { type: 'ArrowFunctionExpression', range: [0, 0] },
+	}
+}
+
+/** Creates a named export of a function declaration named `run`. */
+export function createPolicyExport(): PolicyExpression {
+	return {
+		type: 'ExportNamedDeclaration',
+		range: [47, 63],
+		declaration: {
+			type: 'FunctionDeclaration',
+			range: [0, 0],
+			id: { type: 'Identifier', range: [0, 0], name: 'run' },
+		},
+	}
+}
+
+/** Creates the one-sentence block comment a doc reader reads above an export. */
+export function createPolicyComment(): PolicyComment {
+	return { type: 'Block', value: '* One.', range: [0, 11] }
 }
 
 /**
@@ -550,7 +638,7 @@ export const POLICY_LAZY_CASES: readonly PolicyLazyCase[] = Object.freeze([
 		'inspectPolicyConfiguration overrides',
 		(list: unknown[]) =>
 			inspectPolicyConfiguration({
-				rules: Object.fromEntries(POLICY_WIRING_RULES.map((rule) => [rule, 'error'])),
+				rules: POLICY_WIRING_SETTINGS,
 				overrides: list,
 			}),
 		{ valid: () => ({}), refusal: createPolicyRevoked },
@@ -569,7 +657,7 @@ export const POLICY_LAZY_CASES: readonly PolicyLazyCase[] = Object.freeze([
 		'inspectPolicyConfiguration ignorePatterns',
 		(list: unknown[]) =>
 			inspectPolicyConfiguration({
-				rules: Object.fromEntries(POLICY_WIRING_RULES.map((rule) => [rule, 'error'])),
+				rules: POLICY_WIRING_SETTINGS,
 				ignorePatterns: list,
 			}),
 		// The reader skips every entry that is not a string, so no entry refuses it and no row uses the
@@ -812,21 +900,60 @@ export const POLICY_SUPPRESSION_DIRECTIVE = ['oxlint', '-disable'].join('')
 /** Names the formatter directive the text sweep refuses, composed so the instrument does not report itself. */
 export const POLICY_FORMATTER_DIRECTIVE = ['prettier', '-ignore'].join('')
 
-/** Matches the source, test, config, script, and sheet files inspected for lint and formatter suppression directives. */
+/** Matches the source, test, config, script, skill script, and sheet files inspected for lint and formatter suppression directives. */
 export const POLICY_SUPPRESSION_GLOB: readonly string[] = Object.freeze([
 	'{src,app,tests,configs,scripts}/**/*.{cjs,css,cts,js,jsx,mjs,mts,scss,ts,tsx,vue}',
 	'*.{cjs,css,cts,js,jsx,mjs,mts,scss,ts,tsx,vue}',
+	'.agents/skills/*/scripts/*.ts',
 ])
 
-/** Lists the rules whose workspace-wide lint wiring must not be weakened by configuration. */
-export const POLICY_WIRING_RULES: readonly string[] = Object.freeze([
-	'policy/no-mocking',
-	'policy/no-keyword-privacy',
-	'policy/no-malformed-summary',
-	'policy/no-banned-term',
-	'typescript/parameter-properties',
-	'typescript/explicit-member-accessibility',
+/** Matches the TypeScript files inspected for an import that resolves into the built output. */
+export const POLICY_DIST_GLOB = '{src,app,tests,configs}/**/*.{cts,mts,ts,tsx}'
+
+/** Names the workspace-relative directory the build writes and no tracked TypeScript imports. */
+export const POLICY_DIST_ROOT = 'dist'
+
+/**
+ * Matches the instruction, configuration, and root text files the text sweep reads beside the
+ * authored Markdown and the suppression population.
+ */
+export const POLICY_TEXT_GLOB: readonly string[] = Object.freeze([
+	'{.agents,.claude,.codex,.cursor}/**/*.{toml,yaml,yml,mdc,json}',
+	'*.json',
+	'.*.json',
+	'.gitattributes',
+	'.prettierignore',
 ])
+
+/**
+ * Maps each rule whose workspace-wide lint wiring must not be weakened to the whole top-level
+ * setting the shipped configuration declares for it.
+ *
+ * @remarks
+ * A setting carries its options as well as its severity, so a rule listed at `error` with an option
+ * that switches its check off differs from the value declared here.
+ */
+export const POLICY_WIRING_SETTINGS: Readonly<Record<string, unknown>> = Object.freeze({
+	'policy/no-mocking': 'error',
+	'policy/no-keyword-privacy': 'error',
+	'policy/no-let': 'error',
+	'policy/no-malformed-summary': 'error',
+	'policy/no-banned-term': 'error',
+	'no-var': 'error',
+	'prefer-const': 'error',
+	'no-param-reassign': 'error',
+	'no-ex-assign': 'error',
+	'vitest/no-identical-title': 'error',
+	'vitest/no-focused-tests': 'error',
+	'vitest/no-disabled-tests': 'error',
+	'typescript/parameter-properties': 'error',
+	'typescript/explicit-member-accessibility': ['error', { accessibility: 'no-public' }],
+})
+
+/** Lists the rules whose workspace-wide lint wiring must not be weakened by configuration. */
+export const POLICY_WIRING_RULES: readonly string[] = Object.freeze(
+	Object.keys(POLICY_WIRING_SETTINGS),
+)
 
 /** Lists the linted workspace roots that ignore patterns must not reach. */
 export const POLICY_WIRING_ROOTS: readonly string[] = Object.freeze([
@@ -834,7 +961,11 @@ export const POLICY_WIRING_ROOTS: readonly string[] = Object.freeze([
 	'app',
 	'tests',
 	'configs',
+	'.agents',
 ])
+
+/** Matches a character that makes a path segment a glob rather than a literal name. */
+export const POLICY_GLOB_CHARACTER = /[*?[\]{}]/u
 
 /** Matches either lint suppression token or the formatter directive the text sweep refuses. */
 export const POLICY_SUPPRESSION_PATTERN = new RegExp(
@@ -843,6 +974,24 @@ export const POLICY_SUPPRESSION_PATTERN = new RegExp(
 	),
 	'u',
 )
+
+/**
+ * Holds the decoder the text sweep reads bytes through.
+ *
+ * @remarks
+ * `fatal` refuses a byte sequence UTF-8 does not carry, and `ignoreBOM` keeps a leading byte-order
+ * mark in the decoded text, where the default would drop it before the sweep could see it.
+ */
+export const POLICY_TEXT_DECODER = new TextDecoder('utf-8', { fatal: true, ignoreBOM: true })
+
+/** Lists the control code points a text file may carry: tab, line feed, and carriage return. */
+export const POLICY_TEXT_CONTROLS: readonly number[] = Object.freeze([0x09, 0x0a, 0x0d])
+
+/** Holds the code point of the replacement character a failed decode leaves behind. */
+export const POLICY_TEXT_REPLACEMENT = 0xfffd
+
+/** Holds the code point of the byte-order mark. */
+export const POLICY_TEXT_MARK = 0xfeff
 
 /**
  * Matches the workspace-authored path population inspected for a name a Windows checkout cannot
@@ -886,6 +1035,19 @@ export const POLICY_RESERVED_PATTERN = /[<>:"|?*]/u
 
 /** Matches a shell script named as a complete path token inside a manifest script. */
 export const POLICY_SHELL_PATTERN = /\.sh\b/u
+
+/** Lists the extensions of the shell, PowerShell, Python, and batch files a workspace keeps under one directory. */
+export const POLICY_SHELL_EXTENSIONS: readonly string[] = Object.freeze([
+	'.sh',
+	'.bash',
+	'.ps1',
+	'.py',
+	'.bat',
+	'.cmd',
+])
+
+/** Names the one directory whose files are Cloud setup hooks, the shell files a workspace admits. */
+export const POLICY_SHELL_ROOT = 'scripts'
 
 /** Names the directory whose direct Markdown files form the complete rule family. */
 export const POLICY_RULE_ROOT = '.claude/rules'
@@ -1191,6 +1353,165 @@ export function inspectPolicySuppressions(root: string): readonly PolicyViolatio
 }
 
 /**
+ * Decodes file bytes as UTF-8 without throwing.
+ *
+ * @param bytes - The raw file bytes.
+ * @returns The decoded text with any leading byte-order mark kept, or `undefined` when the bytes
+ * are not valid UTF-8.
+ */
+export function parsePolicyText(bytes: Uint8Array): string | undefined {
+	try {
+		return POLICY_TEXT_DECODER.decode(bytes)
+	} catch {
+		return undefined
+	}
+}
+
+/**
+ * Reports whether one code point is a character the text sweep refuses.
+ *
+ * @remarks
+ * The sweep refuses the replacement character, the byte-order mark, and every C0 or C1 control
+ * character other than the three {@link POLICY_TEXT_CONTROLS} lists.
+ *
+ * @param code - The code point to judge.
+ * @returns True if the code point is refused; false otherwise.
+ */
+export function matchesPolicyCharacter(code: number): boolean {
+	if (code === POLICY_TEXT_REPLACEMENT || code === POLICY_TEXT_MARK) return true
+	if (code < 0x20) return !POLICY_TEXT_CONTROLS.includes(code)
+	return code >= 0x7f && code <= 0x9f
+}
+
+/**
+ * Renders one code point as the `\u` escape a violation names it by.
+ *
+ * @param code - The code point to render.
+ * @returns The escape, four upper-case hexadecimal digits long.
+ */
+export function renderPolicyCharacter(code: number): string {
+	return `\\u${code.toString(16).toUpperCase().padStart(4, '0')}`
+}
+
+/**
+ * Inspects one file's bytes for text that is not clean UTF-8.
+ *
+ * @remarks
+ * Bytes that do not decode report once for the file. Decoded text reports each refused character
+ * once per line, so a line that repeats a character names it once.
+ *
+ * @param path - The workspace-relative path the bytes belong to.
+ * @param bytes - The raw file bytes.
+ * @returns Every text violation in line order.
+ */
+export function inspectPolicyBytes(path: string, bytes: Uint8Array): readonly PolicyViolation[] {
+	const text = parsePolicyText(bytes)
+	if (text === undefined) return [createPolicyViolation('text', path, 'text decodes as UTF-8')]
+	return text
+		.split(/\r\n|\n/u)
+		.flatMap((line, index) =>
+			[...new Set([...line].map((character) => character.codePointAt(0) ?? 0))]
+				.filter(matchesPolicyCharacter)
+				.map((code) =>
+					createPolicyViolation(
+						'text',
+						path,
+						`text carries no replacement, byte-order, or control character: ${renderPolicyCharacter(code)}`,
+						index + 1,
+					),
+				),
+		)
+}
+
+/**
+ * Collects the workspace-relative paths of the authored and source text the sweep reads.
+ *
+ * @param root - The workspace root to read.
+ * @returns The authored Markdown population joined with the source population the suppression
+ * sweep reads and the instruction, configuration, and root text population
+ * {@link POLICY_TEXT_GLOB} names, sorted by path. The three populations share no extension, so no
+ * path repeats.
+ */
+export function collectPolicyTextPaths(root: string): readonly string[] {
+	return [
+		...new Set([
+			...readPolicyProse(root),
+			...globSync(POLICY_SUPPRESSION_GLOB, { cwd: root }).map(normalizePolicyPath),
+			...globSync(POLICY_TEXT_GLOB, { cwd: root }).map(normalizePolicyPath),
+		]),
+	].sort()
+}
+
+/**
+ * Inspects every authored and source text file for text that is not clean UTF-8.
+ *
+ * @param root - The workspace root to inspect.
+ * @returns Every text violation in path and line order.
+ */
+export function inspectPolicyText(root: string): readonly PolicyViolation[] {
+	return collectPolicyTextPaths(root).flatMap((path) =>
+		inspectPolicyBytes(path, readFileSync(join(root, path))),
+	)
+}
+
+/**
+ * Collects the literal path segments the files globs of a configuration's overrides route through.
+ *
+ * @remarks
+ * A segment that carries a glob character is not literal, and neither is an empty or dot segment.
+ *
+ * @param overrides - The parsed `overrides` value of an Oxlint configuration.
+ * @returns Each literal segment, in the order the globs declare them.
+ */
+export function collectPolicyOverrideSegments(overrides: unknown): readonly string[] {
+	return (Array.isArray(overrides) ? overrides : []).flatMap((override: unknown) => {
+		const files: unknown = isPolicyRecord(override)
+			? Object.getOwnPropertyDescriptor(override, 'files')?.value
+			: undefined
+		return (Array.isArray(files) ? files : []).flatMap((glob: unknown) =>
+			typeof glob === 'string'
+				? normalizePolicyPath(glob)
+						.split('/')
+						.filter(
+							(segment) =>
+								segment !== '' &&
+								segment !== '.' &&
+								segment !== '..' &&
+								!POLICY_GLOB_CHARACTER.test(segment),
+						)
+				: [],
+		)
+	})
+}
+
+/**
+ * Checks whether an ignore pattern can silence files inside a linted workspace root.
+ *
+ * @remarks
+ * Oxlint reads an ignore pattern with gitignore semantics. A pattern with a slash before its last
+ * character is anchored to the configuration directory, so only its first segment can reach a
+ * root. A pattern without one matches a name at any depth, so it reaches a root when it carries a
+ * glob character or names a segment the overrides route through. A negation reaches nothing.
+ *
+ * @param pattern - One entry of the configuration's `ignorePatterns`.
+ * @param overrides - The parsed `overrides` value of the same configuration.
+ * @returns Whether the pattern can silence a guarded file.
+ */
+export function isPolicyIgnoreReaching(pattern: string, overrides: unknown): boolean {
+	if (pattern.startsWith('!')) return false
+	const normalized = normalizePolicyPath(pattern)
+	const [first = ''] = normalized.replace(/^\.\//u, '').replace(/^\//u, '').split('/')
+	if (
+		POLICY_WIRING_ROOTS.some((root) => first === root || (first !== '' && matchesGlob(root, first)))
+	) {
+		return true
+	}
+	const name = normalized.replace(/\/$/u, '')
+	if (name.includes('/')) return false
+	return POLICY_GLOB_CHARACTER.test(name) || collectPolicyOverrideSegments(overrides).includes(name)
+}
+
+/**
  * Inspects the lint configuration that keeps policy rules active across the workspace.
  *
  * @param configuration - The parsed Oxlint configuration to inspect.
@@ -1208,29 +1529,23 @@ export function inspectPolicyConfiguration(configuration: unknown): readonly str
 	)?.value
 	const overrides: unknown = Object.getOwnPropertyDescriptor(configuration, 'overrides')?.value
 	return [
-		...POLICY_WIRING_RULES.flatMap((rule) => {
+		...Object.entries(POLICY_WIRING_SETTINGS).flatMap(([rule, declared]) => {
 			const setting = isPolicyRecord(rules)
 				? Object.getOwnPropertyDescriptor(rules, rule)?.value
 				: undefined
-			const severity = Array.isArray(setting) ? setting[0] : setting
-			return severity === 'error' ? [] : [`${rule} must have top-level error severity`]
+			return isDeepStrictEqual(setting, declared)
+				? []
+				: [`${rule} must have the top-level setting ${JSON.stringify(declared)}`]
 		}),
 		...(ignorePatterns !== undefined && !Array.isArray(ignorePatterns)
 			? ['ignorePatterns must be an array when declared']
 			: // The mapper runs on each pattern as the iterator yields it, as the loop it replaced did.
 				Iterator.from(Array.isArray(ignorePatterns) ? ignorePatterns : [])
-					.flatMap((pattern) => {
-						if (typeof pattern !== 'string' || pattern.startsWith('!')) return []
-						const normalized = normalizePolicyPath(pattern)
-							.replace(/^\.\//u, '')
-							.replace(/^\//u, '')
-						const [first = ''] = normalized.split('/')
-						return POLICY_WIRING_ROOTS.some(
-							(root) => first === root || (first !== '' && matchesGlob(root, first)),
-						)
+					.flatMap((pattern) =>
+						typeof pattern === 'string' && isPolicyIgnoreReaching(pattern, overrides)
 							? [`ignorePatterns must not reach ${pattern}`]
-							: []
-					})
+							: [],
+					)
 					.toArray()),
 		...(overrides !== undefined && !Array.isArray(overrides)
 			? ['overrides must be an array when declared']
@@ -1281,9 +1596,15 @@ export function inspectPolicyWiring(
 			return [{ record, declared: Array.isArray(files) ? [files.join(' ')] : [] }]
 		})
 		.toArray()
+	// A name enables its rule only at error severity: the string, or the first member of an array.
 	const enabled = new Set(
 		[topRules, ...entries.map(({ record }) => record)].flatMap((record) =>
-			isPolicyRecord(record) ? Object.getOwnPropertyNames(record) : [],
+			isPolicyRecord(record)
+				? Object.getOwnPropertyNames(record).filter((name) => {
+						const setting = Object.getOwnPropertyDescriptor(record, name)?.value
+						return (Array.isArray(setting) ? setting[0] : setting) === 'error'
+					})
+				: [],
 		),
 	)
 	const declaredPopulations = entries.flatMap(({ declared }) => declared)
@@ -1638,8 +1959,8 @@ export function inspectSkillTemplateTODOs(
 					? { fence: undefined, indexes: state.indexes }
 					: state
 			}
-			const opening = fenceLine.match(/^(`{3,}|~{3,})/u)?.[1]
-			if (opening !== undefined) return { fence: opening, indexes: state.indexes }
+			const fence = fenceLine.match(/^(`{3,}|~{3,})/u)?.[1]
+			if (fence !== undefined) return { fence: fence, indexes: state.indexes }
 			return { fence: undefined, indexes: [...state.indexes, index] }
 		},
 		{ fence: undefined, indexes: [] },
@@ -2100,6 +2421,219 @@ export function inspectSkillImports(
 }
 
 /**
+ * Reads the text of a specifier source that names one literally.
+ *
+ * @remarks
+ * A string literal names its value, and a template literal with no substitution names its cooked
+ * text, which TypeScript resolves the same way. Any other source, a template literal with a
+ * substitution included, names nothing.
+ *
+ * @param source - The `source` node of a declaration or an `import()` expression.
+ * @returns The literal specifier, or `undefined` when the source is computed.
+ */
+export function readPolicyLiteral(source: unknown): string | undefined {
+	if (!isPolicyRecord(source)) return undefined
+	const value: unknown = Object.getOwnPropertyDescriptor(source, 'value')?.value
+	if (typeof value === 'string') return value
+	const expressions: unknown = Object.getOwnPropertyDescriptor(source, 'expressions')?.value
+	const quasis: unknown = Object.getOwnPropertyDescriptor(source, 'quasis')?.value
+	if (
+		Object.getOwnPropertyDescriptor(source, 'type')?.value !== 'TemplateLiteral' ||
+		!Array.isArray(expressions) ||
+		expressions.length > 0 ||
+		!Array.isArray(quasis) ||
+		quasis.length !== 1
+	) {
+		return undefined
+	}
+	const [quasi]: readonly unknown[] = quasis
+	const text: unknown = isPolicyRecord(quasi)
+		? Object.getOwnPropertyDescriptor(quasi, 'value')?.value
+		: undefined
+	const cooked: unknown = isPolicyRecord(text)
+		? Object.getOwnPropertyDescriptor(text, 'cooked')?.value
+		: undefined
+	return typeof cooked === 'string' ? cooked : undefined
+}
+
+/**
+ * Collects every module specifier a syntax tree names, in source order.
+ *
+ * @remarks
+ * A specifier is the literal source of an `import` or `export … from` declaration, or of an
+ * `import()` expression anywhere in the tree, a template literal with no substitution included. An
+ * `import()` whose source is computed names none.
+ *
+ * @param node - The syntax tree, or any node or list of nodes within it.
+ * @returns Each literal specifier the tree names.
+ */
+export function collectPolicySpecifiers(node: unknown): readonly string[] {
+	if (Array.isArray(node)) return node.flatMap((child: unknown) => collectPolicySpecifiers(child))
+	if (!isPolicyRecord(node)) return []
+	const type: unknown = Object.getOwnPropertyDescriptor(node, 'type')?.value
+	const value = readPolicyLiteral(Object.getOwnPropertyDescriptor(node, 'source')?.value)
+	return [
+		...(value !== undefined &&
+		(type === 'ImportDeclaration' ||
+			type === 'ExportAllDeclaration' ||
+			type === 'ExportNamedDeclaration' ||
+			type === 'ImportExpression')
+			? [value]
+			: []),
+		...Object.values(node).flatMap((child: unknown) => collectPolicySpecifiers(child)),
+	]
+}
+
+/** Names the asset extensions `vite/client` types through an ambient wildcard declaration. */
+export const POLICY_ASSET_EXTENSIONS: ReadonlySet<string> = new Set([
+	'.css',
+	'.scss',
+	'.sass',
+	'.less',
+	'.styl',
+	'.stylus',
+	'.pcss',
+	'.sss',
+	'.apng',
+	'.bmp',
+	'.png',
+	'.jpg',
+	'.jpeg',
+	'.jfif',
+	'.pjpeg',
+	'.pjp',
+	'.gif',
+	'.svg',
+	'.ico',
+	'.webp',
+	'.avif',
+	'.cur',
+	'.jxl',
+	'.mp4',
+	'.webm',
+	'.ogg',
+	'.mp3',
+	'.wav',
+	'.flac',
+	'.aac',
+	'.opus',
+	'.mov',
+	'.m4a',
+	'.vtt',
+	'.woff',
+	'.woff2',
+	'.eot',
+	'.ttf',
+	'.otf',
+	'.webmanifest',
+	'.pdf',
+	'.txt',
+	'.wasm',
+])
+
+/**
+ * Tells whether the type check resolves a relative specifier as a module on disk.
+ *
+ * @remarks
+ * Every relative specifier resolves on disk (a script, a declaration, a `.json` file under
+ * `resolveJsonModule`, or a dotted name the bundler resolution completes) unless an ambient wildcard
+ * declaration types it: a specifier with a query or a fragment, or one whose final segment ends in an
+ * asset extension `vite/client` declares.
+ *
+ * @param specifier - The relative import specifier.
+ * @returns True when the type check resolves the specifier as a module on disk.
+ */
+export function isPolicyCodeSpecifier(specifier: string): boolean {
+	if (/[?#]/u.test(specifier)) return false
+	const segment = specifier.slice(specifier.lastIndexOf('/') + 1)
+	const dot = segment.lastIndexOf('.')
+	return dot <= 0 || !POLICY_ASSET_EXTENSIONS.has(segment.slice(dot).toLowerCase())
+}
+
+/**
+ * Inspects the tracked TypeScript for an import that resolves into the workspace's built output.
+ *
+ * @remarks
+ * `npm run check` runs before `npm run build`, so a clean clone holds no `dist/` for such an import to
+ * resolve. Each relative specifier of a static `import`, an `export … from`, and an `import()` with a
+ * literal source, a template literal with no substitution included, resolves against its file's
+ * directory. An `import()` with a computed source names no specifier and is left out. A file the parser refuses reports a violation, because its
+ * specifiers cannot be read.
+ *
+ * @param root - The workspace root to inspect.
+ * @returns One violation per import into `dist/`, and one per unparsed file, in path order.
+ */
+export function inspectPolicyDist(root: string): readonly PolicyViolation[] {
+	// A specifier TypeScript types through an ambient wildcard declaration (an asset with a query or a
+	// non-code extension, such as a built sheet read `?raw`) never resolves on disk during the check.
+	return globSync(POLICY_DIST_GLOB, { cwd: root })
+		.map(normalizePolicyPath)
+		.sort()
+		.flatMap((path) => {
+			const source = parseSync(path, readFileSync(join(root, path), 'utf8'))
+			const [failure] = source.errors
+			if (failure !== undefined) {
+				return [
+					createPolicyViolation('dist', path, `tracked TypeScript parses: ${failure.message}`),
+				]
+			}
+			const directory = dirname(join(root, path))
+			return collectPolicySpecifiers(source.program)
+				.filter((specifier) => specifier.startsWith('.') && isPolicyCodeSpecifier(specifier))
+				.flatMap((specifier) => {
+					const target = normalizePolicyPath(relativePath(root, resolve(directory, specifier)))
+					return target === POLICY_DIST_ROOT || target.startsWith(`${POLICY_DIST_ROOT}/`)
+						? [
+								createPolicyViolation(
+									'dist',
+									path,
+									`tracked TypeScript imports nothing from dist, which exists only after npm run build: ${specifier}`,
+								),
+							]
+						: []
+				})
+		})
+}
+
+/**
+ * Inspects one skill script proof for an import of a skill file other than the script it proves.
+ *
+ * @remarks
+ * Each relative `import`, `export … from`, and literal `import()` specifier resolves against the
+ * proof's directory. A script is self-contained and no file but its own proof imports it, so a
+ * proof that reaches another script, or any other file beneath the skill family, shares a helper
+ * the script law places in the test setup modules.
+ *
+ * @param root - The workspace root to inspect.
+ * @param proof - The workspace-relative path of the proof.
+ * @param script - The workspace-relative path of the script the proof mirrors.
+ * @returns One violation per import of another skill file, in source order.
+ */
+export function inspectSkillProof(
+	root: string,
+	proof: string,
+	script: string,
+): readonly PolicyViolation[] {
+	if (!isPolicyFile(root, proof)) return []
+	const directory = dirname(join(root, proof))
+	return collectPolicySpecifiers(parseAst(readFileSync(join(root, proof), 'utf8'), { lang: 'ts' }))
+		.filter((specifier) => specifier.startsWith('.'))
+		.flatMap((specifier) => {
+			const imported = normalizePolicyPath(relativePath(root, resolve(directory, specifier)))
+			return imported.startsWith(`${SKILL_FAMILY_ROOT}/`) &&
+				imported.replace(/\.js$/u, '.ts') !== script
+				? [
+						createPolicyViolation(
+							'skill',
+							proof,
+							`skill proof imports no skill file but its own script: ${imported}`,
+						),
+					]
+				: []
+		})
+}
+
+/**
  * Inspects one discovered skill's required files, metadata, token, references, and fenced imports.
  *
  * @param root - The workspace root to inspect.
@@ -2247,6 +2781,7 @@ export function inspectSkill(
 			...(isPolicyFile(root, proof)
 				? []
 				: [createPolicyViolation('skill', proof, `skill script has a mirrored proof: ${proof}`)]),
+			...inspectSkillProof(root, proof, `${base}/${script}`),
 		]
 	})
 	const foreign = (content === undefined ? [] : extractForeignSkillScripts(content, name)).flatMap(
@@ -2643,6 +3178,53 @@ export function inspectPolicyScripts(root: string): readonly PolicyViolation[] {
 }
 
 /**
+ * Inspects a file path population for a shell, PowerShell, Python, or batch file outside the scripts
+ * directory, and for any file inside it other than a `.sh` file.
+ *
+ * @param paths - The workspace-relative file paths to inspect.
+ * @returns One violation per refused path, in path order.
+ */
+export function inspectPolicyShellPaths(paths: readonly string[]): readonly PolicyViolation[] {
+	return paths.flatMap((path) => {
+		const lower = normalizePolicyPath(path).toLowerCase()
+		const inside = lower.startsWith(`${POLICY_SHELL_ROOT}/`)
+		const shell = POLICY_SHELL_EXTENSIONS.some((extension) => lower.endsWith(extension))
+		if (inside ? lower.endsWith('.sh') : !shell) return []
+		return [
+			createPolicyViolation(
+				'portability',
+				path,
+				inside
+					? `${POLICY_SHELL_ROOT} holds .sh files and nothing else`
+					: `shell, PowerShell, Python, and batch files sit only in ${POLICY_SHELL_ROOT}`,
+			),
+		]
+	})
+}
+
+/**
+ * Inspects the workspace-authored file population for a script no Windows host runs.
+ *
+ * @remarks
+ * Only a path that could be refused is checked against the file system: a directory named like a
+ * shell file, or a directory inside the scripts directory, is no file and is left to the other
+ * sweeps.
+ *
+ * @param root - The workspace root to inspect.
+ * @returns Every shell-file violation in path order.
+ */
+export function inspectPolicyShells(root: string): readonly PolicyViolation[] {
+	const candidates = readPolicyPaths(root).filter((path) => {
+		const lower = path.toLowerCase()
+		return (
+			lower.startsWith(`${POLICY_SHELL_ROOT}/`) ||
+			POLICY_SHELL_EXTENSIONS.some((extension) => lower.endsWith(extension))
+		)
+	})
+	return inspectPolicyShellPaths(candidates.filter((path) => isPolicyFile(root, path)))
+}
+
+/**
  * Reads every authored Markdown path in one workspace, sorted by path.
  *
  * @remarks
@@ -2830,12 +3412,13 @@ export function readPolicyTerms(content: string): readonly string[] {
  * Inspects every host portability rule across one workspace.
  *
  * @param root - The workspace root to inspect.
- * @returns Every rule-map, filename, and manifest-script violation.
+ * @returns Every rule-map, filename, shell-file, and manifest-script violation.
  */
 export function inspectPolicyPortability(root: string): readonly PolicyViolation[] {
 	return [
 		...inspectPolicyRuleMap(root),
 		...inspectPolicyFilenames(root),
+		...inspectPolicyShells(root),
 		...inspectPolicyScripts(root),
 	]
 }
@@ -3010,7 +3593,7 @@ export function readPolicySurface(root: string): PolicySurfacePopulation {
 			: [createPolicyViolation('surface', path, POLICY_SURFACE_STYLES_MESSAGE, line)]
 	})
 	// Each barrel statement answers one violation, one star-export target, or neither.
-	const readings = barrels.flatMap(
+	const results = barrels.flatMap(
 		(path): ReadonlyArray<{ readonly violation?: PolicyViolation; readonly target?: string }> => {
 			const text = files[path]
 			if (text === undefined) return []
@@ -3067,7 +3650,7 @@ export function readPolicySurface(root: string): PolicySurfacePopulation {
 			})
 		},
 	)
-	const targets = new Set(readings.flatMap(({ target }) => (target === undefined ? [] : [target])))
+	const targets = new Set(results.flatMap(({ target }) => (target === undefined ? [] : [target])))
 	const reads = [...targets].flatMap((path) => {
 		const text = files[path]
 		return text === undefined ? [] : [collectPolicyDeclarations(root, path, text)]
@@ -3076,7 +3659,7 @@ export function readPolicySurface(root: string): PolicySurfacePopulation {
 		declarations: reads.flatMap((read) => read.declarations),
 		violations: [
 			...entryViolations,
-			...readings.flatMap(({ violation }) => (violation === undefined ? [] : [violation])),
+			...results.flatMap(({ violation }) => (violation === undefined ? [] : [violation])),
 			...reads.flatMap((read) => (read.violation === undefined ? [] : [read.violation])),
 		],
 	}
@@ -3209,12 +3792,15 @@ export function inspectPolicySurface(root: string): readonly PolicyViolation[] {
  * Inspects every policy rule across one workspace.
  *
  * @param root - The workspace root to inspect.
- * @returns Every mirror, suppression, skill, bridge, portability, prose, and surface violation.
+ * @returns Every mirror, suppression, dist import, text, skill, bridge, portability, prose, and
+ * surface violation.
  */
 export function inspectPolicyWorkspace(root: string): readonly PolicyViolation[] {
 	return [
 		...inspectPolicyMirrors(root),
 		...inspectPolicySuppressions(root),
+		...inspectPolicyDist(root),
+		...inspectPolicyText(root),
 		...inspectSkillFamily(root),
 		...inspectSkillBridges(root),
 		...inspectPolicyPortability(root),
@@ -3261,6 +3847,17 @@ export const POLICY_CONTROLS: readonly PolicyControl[] = Object.freeze([
 		files: [
 			{
 				path: 'scripts/control.ts',
+				content: `// ${POLICY_SUPPRESSION_DIRECTIVE}\ndebugger\n`,
+			},
+		],
+	},
+	{
+		label: 'rejects a suppression directive in a skill script',
+		membership: 'skill scripts in the suppression population',
+		rule: 'suppression',
+		files: [
+			{
+				path: '.agents/skills/sample/scripts/control.ts',
 				content: `// ${POLICY_SUPPRESSION_DIRECTIVE}\ndebugger\n`,
 			},
 		],
@@ -3616,6 +4213,61 @@ export const SKILL_POLICY_CONTROLS: readonly PolicyControl[] = Object.freeze([
 					'skill script has a mirrored proof: tests/agents/skills/sample/scripts/lone.test.ts',
 			},
 		],
+	},
+	{
+		label: 'rejects a skill proof that imports a skill file other than its own script',
+		membership: 'relative imports of skill proofs against the script each proof mirrors',
+		rule: 'skill',
+		files: [
+			{
+				path: '.agents/skills/sample/SKILL.md',
+				content: SKILL_POLICY_TEXT + '\nRun `scripts/probe.ts`.\n',
+			},
+			{ path: '.agents/skills/sample/agents/openai.yaml', content: createSkillMetadata('sample') },
+			{
+				path: '.agents/skills/sample/scripts/probe.ts',
+				content: '// Usage: node .agents/skills/sample/scripts/probe.ts\n',
+			},
+			{
+				path: 'tests/agents/skills/sample/scripts/probe.test.ts',
+				content:
+					"import { read } from '../../../../../.agents/skills/other/scripts/helpers.ts'\nvoid read\n",
+			},
+		],
+		violations: [
+			{
+				rule: 'skill',
+				path: 'tests/agents/skills/sample/scripts/probe.test.ts',
+				message:
+					'skill proof imports no skill file but its own script: .agents/skills/other/scripts/helpers.ts',
+			},
+		],
+	},
+	{
+		label: 'accepts a skill proof that imports its own script and a test setup module',
+		membership: 'relative imports of skill proofs against the script each proof mirrors',
+		rule: 'skill',
+		files: [
+			{
+				path: '.agents/skills/sample/SKILL.md',
+				content: SKILL_POLICY_TEXT + '\nRun `scripts/probe.ts`.\n',
+			},
+			{ path: '.agents/skills/sample/agents/openai.yaml', content: createSkillMetadata('sample') },
+			{
+				path: '.agents/skills/sample/scripts/probe.ts',
+				content: '// Usage: node .agents/skills/sample/scripts/probe.ts\n',
+			},
+			{
+				path: 'tests/agents/skills/sample/scripts/probe.test.ts',
+				content: [
+					"import { read } from '../../../../../.agents/skills/sample/scripts/probe.ts'",
+					"import { runSkillScript } from '../../../../setupServer.js'",
+					'void read',
+					'void runSkillScript',
+				].join('\n'),
+			},
+		],
+		violations: [],
 	},
 	{
 		label: 'rejects an unexported value binding in a skill fence',
@@ -4496,6 +5148,579 @@ export const PORTABILITY_POLICY_CONTROLS: readonly PolicyControl[] = Object.free
 			},
 		],
 	},
+	...[
+		['a shell file outside scripts', 'src/worker/run.sh'],
+		['a bash file outside scripts', 'configs/setup.bash'],
+		['a PowerShell file outside scripts', 'tests/probe.ps1'],
+		['a Python file outside scripts', 'guides/build.py'],
+		['a batch file outside scripts', 'build.bat'],
+		['a command file outside scripts', '.claude/hook.cmd'],
+	].map(([label, path]): PolicyControl => ({
+		label: `rejects ${label}`,
+		membership: 'shell, PowerShell, Python, and batch extensions in the file path population',
+		rule: 'portability',
+		message: 'shell, PowerShell, Python, and batch files sit only in scripts',
+		files: [{ path: path ?? '', content: '' }],
+	})),
+	{
+		label: 'rejects a non-shell file inside scripts',
+		membership: 'every file beneath the scripts directory',
+		rule: 'portability',
+		message: 'scripts holds .sh files and nothing else',
+		files: [{ path: 'scripts/probe.ts', content: '' }],
+	},
+])
+
+/**
+ * Holds the message prefix a dist-import violation carries, written out so the controls read the
+ * production message from a second copy.
+ */
+export const DIST_POLICY_MESSAGE =
+	'tracked TypeScript imports nothing from dist, which exists only after npm run build'
+
+/**
+ * Lists the physical controls for every import into the built output the workspace route refuses
+ * and admits.
+ *
+ * @remarks
+ * Each refusal sits beside an admission drawn from outside its population, so a sweep that reports
+ * nothing because it read nothing fails a refusal. The admissions cover a specifier the rule does
+ * not read, a path that only resembles the output directory, and a directory the rule does not walk.
+ */
+export const DIST_POLICY_CONTROLS: readonly PolicyControl[] = Object.freeze([
+	{
+		label: 'rejects a static import that resolves into dist',
+		membership: 'static import specifiers of source, app, test, and config TypeScript',
+		rule: 'dist',
+		files: [
+			{
+				path: 'tests/src/server/control.ts',
+				content:
+					"import { createServer } from '../../../dist/src/server/index.js'\nvoid createServer\n",
+			},
+		],
+		violations: [
+			{
+				rule: 'dist',
+				path: 'tests/src/server/control.ts',
+				message: `${DIST_POLICY_MESSAGE}: ../../../dist/src/server/index.js`,
+			},
+		],
+	},
+	{
+		label: 'rejects a type import that resolves into dist',
+		membership: 'static import specifiers of source, app, test, and config TypeScript',
+		rule: 'dist',
+		files: [
+			{
+				path: 'configs/control.ts',
+				content:
+					"import type { Sample } from '../dist/src/core/index.js'\nexport type Held = Sample\n",
+			},
+		],
+		violations: [
+			{
+				rule: 'dist',
+				path: 'configs/control.ts',
+				message: `${DIST_POLICY_MESSAGE}: ../dist/src/core/index.js`,
+			},
+		],
+	},
+	{
+		label: 'rejects a re-export that resolves into dist',
+		membership: 'export-from specifiers of source, app, test, and config TypeScript',
+		rule: 'dist',
+		files: [
+			{
+				path: 'src/core/control.ts',
+				content: "export * from '../../dist/src/core/index.js'\n",
+			},
+		],
+		violations: [
+			{
+				rule: 'dist',
+				path: 'src/core/control.ts',
+				message: `${DIST_POLICY_MESSAGE}: ../../dist/src/core/index.js`,
+			},
+		],
+	},
+	{
+		label: 'rejects a dynamic import with a literal specifier that resolves into dist',
+		membership: 'import() expressions with a string-literal source',
+		rule: 'dist',
+		files: [
+			{
+				path: 'app/server/control.ts',
+				content: "export const load = () => import('../../dist/app/server/main.js')\n",
+			},
+		],
+		violations: [
+			{
+				rule: 'dist',
+				path: 'app/server/control.ts',
+				message: `${DIST_POLICY_MESSAGE}: ../../dist/app/server/main.js`,
+			},
+		],
+	},
+	{
+		label: 'rejects a dynamic import whose template literal has no substitution',
+		membership: 'import() expressions with a template-literal source and no substitution',
+		rule: 'dist',
+		files: [
+			{
+				path: 'app/server/control.ts',
+				content: 'export const load = () => import(`../../dist/app/server/main.js`)\n',
+			},
+		],
+		violations: [
+			{
+				rule: 'dist',
+				path: 'app/server/control.ts',
+				message: `${DIST_POLICY_MESSAGE}: ../../dist/app/server/main.js`,
+			},
+		],
+	},
+	{
+		label: 'admits a dynamic import with a computed specifier',
+		membership: 'import() expressions with a computed source',
+		rule: 'dist',
+		files: [
+			{
+				path: 'src/core/control.ts',
+				content:
+					"const entry = '../../dist/src/core/index.js'\nexport const load = () => import(entry)\nexport const select = (name: string) => import(`../../dist/${name}.js`)\n",
+			},
+		],
+		violations: [],
+	},
+	{
+		label: 'admits a package specifier and a dist path held only as text',
+		membership: 'specifiers the rule resolves, beside strings and comments it does not read',
+		rule: 'dist',
+		files: [
+			{
+				path: 'tests/control.ts',
+				content:
+					"// import '../dist/src/core/index.js'\nimport { it } from 'vitest'\nexport const path = '../dist/src/core/index.js'\nvoid it\n",
+			},
+		],
+		violations: [],
+	},
+	{
+		label: 'admits a dist directory that is not the workspace output',
+		membership: 'relative specifiers that resolve outside the root dist directory',
+		rule: 'dist',
+		files: [
+			{
+				path: 'src/core/control.ts',
+				content:
+					"import './dist/index.js'\nimport '../distribution/index.js'\nimport '../../../sibling/dist/index.js'\n",
+			},
+		],
+		violations: [],
+	},
+	{
+		label: 'admits an import into dist from a directory the rule does not walk',
+		membership: 'TypeScript outside src, app, tests, and configs',
+		rule: 'dist',
+		files: [
+			{
+				path: 'scripts/control.ts',
+				content: "import '../dist/src/core/index.js'\n",
+			},
+		],
+		violations: [],
+	},
+	{
+		label: 'rejects a JSON import and a dotted extensionless import that resolve into dist',
+		membership:
+			'specifiers the type check reads from disk under resolveJsonModule and bundler resolution',
+		rule: 'dist',
+		files: [
+			{
+				path: 'tests/src/core/control.ts',
+				content:
+					"import meta from '../../../dist/meta.json'\nimport config from '../../../dist/configs/vite.journey.config'\nvoid meta\nvoid config\n",
+			},
+		],
+		violations: [
+			{
+				rule: 'dist',
+				path: 'tests/src/core/control.ts',
+				message: `${DIST_POLICY_MESSAGE}: ../../../dist/meta.json`,
+			},
+			{
+				rule: 'dist',
+				path: 'tests/src/core/control.ts',
+				message: `${DIST_POLICY_MESSAGE}: ../../../dist/configs/vite.journey.config`,
+			},
+		],
+	},
+	{
+		label: 'admits a built asset an ambient declaration types',
+		membership: 'specifiers with a query or a non-code extension',
+		rule: 'dist',
+		files: [
+			{
+				path: 'tests/src/styles/index.test.ts',
+				content:
+					"import sheet from '../../../dist/src/styles/index.css?raw'\nimport icon from '../../../dist/src/icon.svg'\nvoid sheet\nvoid icon\n",
+			},
+		],
+		violations: [],
+	},
+])
+
+/**
+ * Holds the message prefix a text violation carries, written out so the controls read the
+ * production message from a second copy.
+ */
+export const TEXT_POLICY_MESSAGE = 'text carries no replacement, byte-order, or control character'
+
+/**
+ * Lists the physical controls for every text-integrity refusal and admission the workspace route
+ * reaches.
+ *
+ * @remarks
+ * Every character a control plants is written as a `\u` escape here, so this file carries none of
+ * the characters it tests for. Each excluded-directory control also writes the arrival file, whose
+ * refusal proves the sweep ran over the control workspace rather than reporting nothing because it
+ * found nothing. A file whose bytes are not UTF-8 cannot be written through a text fixture, so the
+ * proofs of that refusal write the bytes themselves.
+ */
+export const TEXT_POLICY_CONTROLS: readonly PolicyControl[] = Object.freeze([
+	{
+		label: 'rejects a bell control character in a source file',
+		membership: 'source files in the suppression population, C0 controls beyond the three allowed',
+		rule: 'text',
+		files: [{ path: 'src/control.ts', content: "const bell = 'a\u0007b'\n" }],
+		violations: [
+			{
+				rule: 'text',
+				path: 'src/control.ts',
+				line: 1,
+				message: `${TEXT_POLICY_MESSAGE}: \\u0007`,
+			},
+		],
+	},
+	{
+		label: 'rejects an escape control character in authored Markdown',
+		membership: 'authored Markdown outside the excluded directories, C0 controls',
+		rule: 'text',
+		files: [{ path: 'README.md', content: '# Front page\n\ncolor \u001B[31m\n' }],
+		violations: [
+			{
+				rule: 'text',
+				path: 'README.md',
+				line: 3,
+				message: `${TEXT_POLICY_MESSAGE}: \\u001B`,
+			},
+		],
+	},
+	{
+		label: 'rejects a C1 control character',
+		membership: 'source files in the suppression population, C1 controls',
+		rule: 'text',
+		files: [{ path: 'src/control.ts', content: "const a = 1\nconst next = 'a\u0085b'\n" }],
+		violations: [
+			{
+				rule: 'text',
+				path: 'src/control.ts',
+				line: 2,
+				message: `${TEXT_POLICY_MESSAGE}: \\u0085`,
+			},
+		],
+	},
+	{
+		label: 'rejects the delete control character',
+		membership: 'source files in the suppression population, the control above the ASCII range',
+		rule: 'text',
+		files: [{ path: 'src/control.ts', content: "const del = 'a\u007Fb'\n" }],
+		violations: [
+			{
+				rule: 'text',
+				path: 'src/control.ts',
+				line: 1,
+				message: `${TEXT_POLICY_MESSAGE}: \\u007F`,
+			},
+		],
+	},
+	{
+		label: 'rejects a replacement character',
+		membership: 'authored Markdown outside the excluded directories, decoded text',
+		rule: 'text',
+		files: [{ path: 'README.md', content: '# Front page\n\nbroken \uFFFD text\n' }],
+		violations: [
+			{
+				rule: 'text',
+				path: 'README.md',
+				line: 3,
+				message: `${TEXT_POLICY_MESSAGE}: \\uFFFD`,
+			},
+		],
+	},
+	{
+		label: 'rejects a byte-order mark that opens a file',
+		membership: 'source files in the suppression population, the first character of a file',
+		rule: 'text',
+		files: [{ path: 'src/control.ts', content: '\uFEFFexport {}\n' }],
+		violations: [
+			{
+				rule: 'text',
+				path: 'src/control.ts',
+				line: 1,
+				message: `${TEXT_POLICY_MESSAGE}: \\uFEFF`,
+			},
+		],
+	},
+	{
+		label: 'rejects a byte-order mark inside a literal',
+		membership: 'source files in the suppression population, a character within a line',
+		rule: 'text',
+		files: [{ path: 'src/control.ts', content: "const path = '\uFEFFleading.txt'\n" }],
+		violations: [
+			{
+				rule: 'text',
+				path: 'src/control.ts',
+				line: 1,
+				message: `${TEXT_POLICY_MESSAGE}: \\uFEFF`,
+			},
+		],
+	},
+	{
+		label: 'names each refused character once on a line that repeats it',
+		membership: 'refused characters grouped by line, in order of first appearance',
+		rule: 'text',
+		files: [{ path: 'src/control.ts', content: "const mixed = 'a\u0007b\u0007c\u001B'\n" }],
+		violations: [
+			{
+				rule: 'text',
+				path: 'src/control.ts',
+				line: 1,
+				message: `${TEXT_POLICY_MESSAGE}: \\u0007`,
+			},
+			{
+				rule: 'text',
+				path: 'src/control.ts',
+				line: 1,
+				message: `${TEXT_POLICY_MESSAGE}: \\u001B`,
+			},
+		],
+	},
+	{
+		label: 'accepts tab, line feed, carriage return, and intentional Unicode',
+		membership: 'the characters a text file may carry, composed and decomposed forms included',
+		rule: 'text',
+		files: [
+			{
+				path: 'src/control.ts',
+				content: "const note = 'café\tcafé — \u{1F600}'\r\n\t\n",
+			},
+			{ path: 'README.md', content: '# Front page\r\n\r\nplain é — text\n' },
+		],
+		violations: [],
+	},
+	{
+		label: 'accepts a control character below an excluded directory',
+		membership: 'Markdown below a directory name the sweep never descends into',
+		rule: 'text',
+		files: [
+			{ path: 'README.md', content: '# Front page\n\ncolor \u001B[31m\n' },
+			{ path: 'node_modules/sample/README.md', content: '# Installed\n\nbell \u0007\n' },
+		],
+		violations: [
+			{
+				rule: 'text',
+				path: 'README.md',
+				line: 3,
+				message: `${TEXT_POLICY_MESSAGE}: \\u001B`,
+			},
+		],
+	},
+	...[
+		{
+			label: 'rejects a bell control character in a skill script',
+			membership: 'skill scripts in the suppression population, C0 controls',
+			path: '.agents/skills/sample/scripts/control.ts',
+			content: "const bell = 'a\u0007b'\n",
+		},
+		{
+			label: 'rejects a bell control character in a root JSON file',
+			membership: 'root JSON files in the text population, C0 controls',
+			path: 'tsconfig.json',
+			content: '{\n\t"note": "a\u0007b"\n}\n',
+		},
+		{
+			label: 'rejects a bell control character in a root dot JSON file',
+			membership: 'root dot-prefixed JSON files in the text population, C0 controls',
+			path: '.oxlintrc.json',
+			content: '{\n\t"note": "a\u0007b"\n}\n',
+		},
+		{
+			label: 'rejects a bell control character in a JSON file below an instruction folder',
+			membership: 'JSON files below .agents, .claude, .codex, and .cursor, C0 controls',
+			path: '.claude/settings.json',
+			content: '{\n\t"note": "a\u0007b"\n}\n',
+		},
+		{
+			label: 'rejects a bell control character in a TOML role file',
+			membership: 'TOML files below .agents, .claude, .codex, and .cursor, C0 controls',
+			path: '.codex/agents/sample.toml',
+			content: 'name = "sample"\nnote = "a\u0007b"\n',
+		},
+		{
+			label: 'rejects a bell control character in a skill metadata file',
+			membership: 'YAML files below .agents, .claude, .codex, and .cursor, C0 controls',
+			path: '.agents/skills/sample/agents/openai.yaml',
+			content: "interface:\n  display_name: 'a\u0007b'\n",
+		},
+		{
+			label: 'rejects a bell control character in a Cursor rule file',
+			membership: 'MDC files below .agents, .claude, .codex, and .cursor, C0 controls',
+			path: '.cursor/rules/sample.mdc',
+			content: '---\nalwaysApply: true\n---\na\u0007b\n',
+		},
+		{
+			label: 'rejects a bell control character in the attributes file',
+			membership: 'the root .gitattributes file, C0 controls',
+			path: '.gitattributes',
+			content: '* text=auto eol=lf\n# a\u0007b\n',
+		},
+		{
+			label: 'rejects a bell control character in the formatter ignore file',
+			membership: 'the root .prettierignore file, C0 controls',
+			path: '.prettierignore',
+			content: 'dist/\n# a\u0007b\n',
+		},
+	].map(({ label, membership, path, content }): PolicyControl => ({
+		label,
+		membership,
+		rule: 'text',
+		files: [{ path, content }],
+		violations: [
+			{
+				rule: 'text',
+				path,
+				line: content.split('\n').findIndex((line) => line.includes('\u0007')) + 1,
+				message: `${TEXT_POLICY_MESSAGE}: \\u0007`,
+			},
+		],
+	})),
+	{
+		label: 'accepts a control character in JSON outside the instruction folders and the root',
+		membership: 'JSON files below src and tmp, which the text population does not reach',
+		rule: 'text',
+		files: [
+			{ path: 'README.md', content: '# Front page\n\ncolor \u001B[31m\n' },
+			{ path: 'src/data.json', content: '{\n\t"note": "a\u0007b"\n}\n' },
+			{ path: 'tmp/probe.json', content: '{\n\t"note": "a\u0007b"\n}\n' },
+		],
+		violations: [
+			{
+				rule: 'text',
+				path: 'README.md',
+				line: 3,
+				message: `${TEXT_POLICY_MESSAGE}: \\u001B`,
+			},
+		],
+	},
+])
+
+/** Pairs a setup-module import fence with the specifiers it refuses and the ones it admits. */
+export interface PolicyImportCase {
+	/** Names the text of the fence's message the lint configuration carries. */
+	readonly marker: string
+	/** Lists each module specifier with whether the fence refuses it. */
+	readonly cases: ReadonlyArray<readonly [string, boolean]>
+	/** States whether a relative specifier outside the fence is also a case that must be admitted. */
+	readonly controlled: boolean
+}
+
+/** Pairs a setup-module named-import fence with the import clauses it refuses and the ones it admits. */
+export interface PolicyNameCase {
+	/** Names the text of the fence's message the lint configuration carries. */
+	readonly marker: string
+	/** Lists the import clauses the fence refuses, each written as the text between the braces. */
+	readonly refused: readonly string[]
+	/** Lists the import clauses the fence admits, each written as the text between the braces. */
+	readonly admitted: readonly string[]
+}
+
+/**
+ * Lists the refused and admitted specifiers of every setup-module `no-restricted-imports` pattern.
+ *
+ * @remarks
+ * The isolated-pattern proof reads a case from here when a pattern's message carries the marker, and
+ * refuses a configuration that carries no pattern for a marker, so a deleted fence cannot pass by
+ * leaving nothing to test.
+ */
+export const POLICY_IMPORT_CASES: readonly PolicyImportCase[] = Object.freeze([
+	{
+		marker: 'tests/setup.ts must stay host-independent: import no node:',
+		controlled: true,
+		cases: [
+			['node:fs', true],
+			['node:fs/promises', true],
+			['node:path', true],
+			['nodes:fs', false],
+			['fs', false],
+			['vitest', false],
+			['./setupServer.js', false],
+		],
+	},
+	{
+		marker: 'tests/setup.ts must stay host-independent: import no Vue',
+		controlled: true,
+		cases: [
+			['vue', true],
+			['vue/server-renderer', true],
+			['vue?raw', true],
+			['@vue/test-utils', true],
+			['vue-router', false],
+			['vuex', false],
+			['node:fs', false],
+			['./vue.js', false],
+		],
+	},
+	{
+		marker: 'the browser and styles setup modules hold no Node',
+		controlled: true,
+		cases: [
+			['node:fs', true],
+			['node:child_process', true],
+			['nodes:fs', false],
+			['vue', false],
+			['playwright', false],
+			['./setup.js', false],
+		],
+	},
+	{
+		marker: 'configs/policy.ts imports nothing',
+		controlled: false,
+		cases: [
+			['node:fs', true],
+			['./helpers.js', true],
+			['vitest', true],
+			['@orkestrel/test', true],
+		],
+	},
+])
+
+/** Lists the refused and admitted named imports of every setup-module `no-restricted-imports` path. */
+export const POLICY_NAME_CASES: readonly PolicyNameCase[] = Object.freeze([
+	{
+		marker: 'nothing an assertion is',
+		refused: [
+			'describe',
+			'it',
+			'test',
+			'expect',
+			'describe as suite',
+			'expect, vi',
+			'type TestContext, it',
+		],
+		admitted: ['vi', 'TestRunner', 'afterEach', 'beforeAll', 'bench'],
+	},
 ])
 
 /**
@@ -4656,16 +5881,468 @@ export const COMPUTED_IMPORT_PATHS: readonly string[] = Object.freeze([
 	'.orkestrel/sample/instruments/harness/load.mts',
 ])
 
+/** Lists nested same-face imports carrying a native collection sentinel in each source. */
+export const POLICY_VUE_RELATIVE_SOURCES: readonly PolicySource[] = Object.freeze([
+	{
+		path: 'app/vue/components/Panel.vue',
+		content: [
+			'<script lang="ts">',
+			"import * as boundary from '../composables/useTheme.js'",
+			'void boundary',
+			'debugger',
+			'</script>',
+			'',
+		].join('\n'),
+	},
+	{
+		path: 'app/vue/components/dialogs/Panel.vue',
+		content: [
+			'<script setup lang="ts">',
+			"import * as boundary from '../../composables/useTheme.js'",
+			'void boundary',
+			'debugger',
+			'</script>',
+			'',
+		].join('\n'),
+	},
+	{
+		path: 'app/vue/features/editor/dialogs/helpers.ts',
+		content: [
+			"import * as boundary from '../../../components/Toolbar.vue'",
+			'void boundary',
+			'debugger',
+			'',
+		].join('\n'),
+	},
+	{
+		path: 'app/vue/features/helpers.ts',
+		content: [
+			"import * as boundary from '../print/index.js'",
+			'void boundary',
+			'debugger',
+			'',
+		].join('\n'),
+	},
+	{
+		path: 'src/vue/features/helpers.ts',
+		content: [
+			"import * as boundary from '../print/index.js'",
+			'void boundary',
+			'debugger',
+			'',
+		].join('\n'),
+	},
+	{
+		path: 'src/vue/features/editor/helpers.ts',
+		content: [
+			"import * as boundary from '../../components/Toolbar.js'",
+			'void boundary',
+			'debugger',
+			'',
+		].join('\n'),
+	},
+])
+
+/** Supplies a valid direct Vue composable with its collection sentinel inside the exported function. */
+export const POLICY_VUE_COMPOSABLE_SOURCE: PolicySource = Object.freeze({
+	path: 'app/vue/composables/useTheme.ts',
+	content: [
+		'/** Reads the selected theme. */',
+		'export function useTheme(): string {',
+		'\tdebugger',
+		"\treturn 'light'",
+		'}',
+		'',
+	].join('\n'),
+})
+
+/** Lists lexical destinations independently of the host running the test. */
+export const POLICY_VUE_TARGET_CASES: ReadonlyArray<
+	readonly [string, string, string, string | undefined]
+> = Object.freeze([
+	[
+		'/work/app/vue/components/Panel.vue',
+		'/work',
+		'../composables/useTheme.js',
+		'app/vue/composables/useTheme.js',
+	],
+	[
+		'/work/app/vue/components/dialogs/Panel.vue',
+		'/work/',
+		'../../composables/useTheme.js',
+		'app/vue/composables/useTheme.js',
+	],
+	['/work/src/vue/features/editor/helpers.ts', '/work', '../../types.js', 'src/vue/types.js'],
+	[
+		'/work/app/vue/features/editor/dialogs/Panel.vue',
+		'/work',
+		'../../../components/Toolbar.vue',
+		'app/vue/components/Toolbar.vue',
+	],
+	['/work/app/vue/helpers.ts', '/work', '../print/index.js', 'app/print/index.js'],
+	['/work/app/vue/features/helpers.ts', '/work', '../print/index.js', 'app/vue/print/index.js'],
+	['/work/src/vue/features/helpers.ts', '/work', '../print/index.js', 'src/vue/print/index.js'],
+	['/work/app/vue/helpers.ts', '/work', '../browser?x', 'app/browser'],
+	['/work/app/vue/helpers.ts', '/work', '../browser/#fragment', 'app/browser'],
+	['/work/app/vue/helpers.ts', '/work', './entry.js?raw#fragment', 'app/vue/entry.js'],
+	['/work/app/vue/helpers.ts', '/work', './%2e%2e/entry.js', 'app/vue/%2e%2e/entry.js'],
+	['/work/app/vue/helpers.ts', '/work', '../../src/vue/helpers.js', 'src/vue/helpers.js'],
+	[
+		'/work/src/vue/nested/app/vue/helpers.ts',
+		'/work',
+		'../print/index.js',
+		'src/vue/nested/app/print/index.js',
+	],
+	['/app/vue/helpers.ts', '/', './entry.js', 'app/vue/entry.js'],
+	['C:/work/app/vue/features/helpers.ts', 'C:/work/', '../types.js', 'app/vue/types.js'],
+	['C:\\work\\app\\vue\\features\\helpers.ts', 'C:\\work\\', '../types.js', 'app/vue/types.js'],
+	['C:\\app\\vue\\helpers.ts', 'C:\\', './entry.js', 'app/vue/entry.js'],
+	[
+		'\\\\host\\share\\work\\app\\vue\\features\\helpers.ts',
+		'\\\\host\\share\\work\\',
+		'../types.js',
+		'app/vue/types.js',
+	],
+	['//host/share/app/vue/helpers.ts', '//host/share', './entry.js', 'app/vue/entry.js'],
+	['/work-other/app/vue/helpers.ts', '/work', './entry.js', undefined],
+	['C:/work-other/app/vue/helpers.ts', 'C:/work', './entry.js', undefined],
+	['c:/work/app/vue/helpers.ts', 'C:/work', './entry.js', undefined],
+	['D:/work/app/vue/helpers.ts', 'C:/work', './entry.js', undefined],
+	['//host/other/app/vue/helpers.ts', '//host/share', './entry.js', undefined],
+	['/work/app/vuex/helpers.ts', '/work', './entry.js', undefined],
+	['/work/other/app/vue/helpers.ts', '/work', './entry.js', undefined],
+	['app/vue/helpers.ts', '/work', './entry.js', undefined],
+	['/work/app/vue/helpers.ts', 'work', './entry.js', undefined],
+	['/work/../other/app/vue/helpers.ts', '/work/../other', './entry.js', undefined],
+	['/work/app/vue/helpers.ts', '/work', '../../../print/index.js', undefined],
+	['/work/app/vue/helpers.ts', '/work', './../types.js', undefined],
+	['/work/app/vue/helpers.ts', '/work', '.././types.js', undefined],
+	['/work/app/vue/helpers.ts', '/work', './name/../types.js', undefined],
+	['/work/app/vue/helpers.ts', '/work', './name/./types.js', undefined],
+	['/work/app/vue/helpers.ts', '/work', './name//types.js', undefined],
+	['/work/app/vue/helpers.ts', '/work', '..\\types.js', undefined],
+	['/work/app/vue/helpers.ts', '/work', '/machine/entry.js', undefined],
+	['/work/app/vue/helpers.ts', '/work', '@src/vue', undefined],
+	['/work/app/vue/helpers.ts', '/work', '././entry.js', undefined],
+	['/work/app/vue/helpers.ts', '/work', './.', undefined],
+	['/work/app/vue/helpers.ts', '/work', '././entry.js?raw#fragment', undefined],
+	['/work/app/vue/helpers.ts', '/work', './entry.js', 'app/vue/entry.js'],
+	['/work/app/vue/features/helpers.ts', '/work', '../entry.js', 'app/vue/entry.js'],
+	['/work/app/vue/helpers.ts', '/work', '.', 'app/vue'],
+	['/work/app/vue/helpers.ts', '/work', './', 'app/vue'],
+])
+
+/** Lists the two existing override owners without inferring faces from a filename suffix. */
+export const POLICY_VUE_FACES = Object.freeze(['src/vue', 'app/vue'] as const)
+
+/** Lists importer locations that a directly invoked Vue rule must refuse to classify. */
+export const POLICY_VUE_UNCLASSIFIED_FILES = Object.freeze([
+	'../outside/app/vue/helpers.ts',
+	'other/app/vue/helpers.ts',
+	'app/vuex/helpers.ts',
+])
+
+/** Lists native source-bearing syntax, distinguishing forms that need TypeScript parsing. */
+export const POLICY_VUE_IMPORT_FORMS = Object.freeze([
+	{ name: 'value', before: 'import * as boundary from ', after: '\nvoid boundary', typed: false },
+	{ name: 'type', before: 'import type { Boundary } from ', after: '', typed: true },
+	{ name: 'named', before: 'export { boundary } from ', after: '', typed: false },
+	{ name: 'star', before: 'export * from ', after: '', typed: false },
+	{ name: 'namedType', before: 'export type { Boundary } from ', after: '', typed: true },
+	{ name: 'starType', before: 'export type * from ', after: '', typed: true },
+	{ name: 'dynamic', before: 'void import(', after: ')', typed: false },
+])
+
+/** Lists every configured extension and both native Vue script extraction forms. */
+export const POLICY_VUE_POPULATIONS = Object.freeze([
+	{ name: 'cjs', extension: 'cjs', before: '', after: '', typed: false },
+	{ name: 'cts', extension: 'cts', before: '', after: '', typed: true },
+	{ name: 'js', extension: 'js', before: '', after: '', typed: false },
+	{ name: 'jsx', extension: 'jsx', before: '', after: '', typed: false },
+	{ name: 'mjs', extension: 'mjs', before: '', after: '', typed: false },
+	{ name: 'mts', extension: 'mts', before: '', after: '', typed: true },
+	{ name: 'ts', extension: 'ts', before: '', after: '', typed: true },
+	{ name: 'tsx', extension: 'tsx', before: '', after: '', typed: true },
+	{
+		name: 'script',
+		extension: 'vue',
+		before: '<script lang="ts">\n',
+		after: '</script>\n',
+		typed: true,
+	},
+	{
+		name: 'setup',
+		extension: 'vue',
+		before: '<script setup lang="ts">\n',
+		after: '</script>\n',
+		typed: true,
+	},
+])
+
+/** Crosses admitted nested imports and refused sibling imports with the actual syntax populations. */
+export const POLICY_VUE_IMPORT_CASES: readonly PolicyVueImportCase[] = Object.freeze(
+	POLICY_VUE_FACES.flatMap((face) =>
+		POLICY_VUE_POPULATIONS.flatMap((population) =>
+			POLICY_VUE_IMPORT_FORMS.filter((form) => !form.typed || population.typed).flatMap((form) =>
+				[false, true].map((boundary) => ({
+					path: `${face}/${boundary ? '' : 'features/editor/'}${population.name}${form.name}.${population.extension}`,
+					content:
+						population.before +
+						form.before +
+						JSON.stringify(boundary ? '../print/index.js' : '../../components/Toolbar.vue') +
+						form.after +
+						'\ndebugger\n' +
+						population.after,
+					boundary,
+					restricted: false,
+				})),
+			),
+		),
+	),
+)
+
+/** Lists relative destinations and independent raw-spelling bans under the complete configuration. */
+export const POLICY_VUE_BOUNDARY_ROWS: ReadonlyArray<readonly [string, string, boolean, boolean]> =
+	Object.freeze([
+		['helpers.ts', '../print/index.js', true, false],
+		['helpers.ts', '../src/print/index.js', true, false],
+		['helpers.ts', '../print.ext/index.js', true, false],
+		['helpers.ts', '../vuex/index.js', true, false],
+		['helpers.ts', '../corex/index.js', true, false],
+		['helpers.ts', '../browserx/index.js', true, false],
+		['helpers.ts', '../print?raw', true, false],
+		['helpers.ts', '../print#fragment', true, false],
+		['features/helpers.ts', '../print/index.js', false, false],
+		['features/helpers.ts', '../print.ext/index.js', false, false],
+		['features/editor/dialogs/helpers.ts', '../../../components/Toolbar.vue', false, false],
+		['features/editor/helpers.ts', '../../../print/index.js', true, false],
+		['features/editor/helpers.ts', '../../../../src/print/index.js', true, false],
+		['features/helpers.ts', '../types.js?raw#fragment', false, false],
+		['helpers.ts', './index.js', false, false],
+		['helpers.ts', '../../../outside/index.js', true, false],
+		['helpers.ts', '@src/core', false, false],
+		['helpers.ts', '@src/browser', false, false],
+		['helpers.ts', '@src/vue', false, false],
+		['helpers.ts', '@src/print', false, true],
+		['helpers.ts', '@src/corex', false, true],
+		['helpers.ts', '@src/', false, true],
+		['helpers.ts', '@src/server', false, true],
+		['helpers.ts', '@orkestrel/sample/server', false, true],
+		['helpers.ts', 'node:fs', false, true],
+		['helpers.ts', 'fs/promises', false, true],
+		['helpers.ts', '/machine/entry.js', false, true],
+		['helpers.ts', 'C:/machine/entry.js', false, true],
+		['helpers.ts', 'C:\\machine\\entry.js', false, true],
+		['helpers.ts', 'file:///machine/entry.js', false, true],
+		['helpers.ts', 'https://host/entry.js', false, true],
+		['helpers.ts', 'data:text/javascript,export{}', false, true],
+		['helpers.ts', '..\\print\\index.js', false, true],
+		['helpers.ts', './../types.js', true, true],
+		['helpers.ts', '.././types.js', true, true],
+		['helpers.ts', './name/../types.js', true, true],
+		['helpers.ts', './name/./types.js', true, true],
+		['helpers.ts', './name//types.js', true, true],
+		['helpers.ts', 'typescript', false, true],
+		['helpers.ts', '../server/index.js', true, true],
+		['features/helpers.ts', '../server/index.js', false, true],
+	])
+
+/** Supplies face-specific alias requirements and preserves existing application-relative admissions. */
+export const POLICY_VUE_OWNER_ROWS: Readonly<
+	Record<string, ReadonlyArray<readonly [string, string, boolean, boolean]>>
+> = Object.freeze({
+	'src/vue': [
+		['helpers.ts', '../browser?x', false, true],
+		['helpers.ts', '../browser#fragment', false, true],
+		['helpers.ts', '@app/core', false, true],
+		['features/helpers.ts', '../../../app/core/types.js', true, true],
+		['features/helpers.ts', '../../core/helpers.js', false, true],
+		['features/helpers.ts', '../../browser/helpers.js', false, true],
+		['features/helpers.ts', '../core/helpers.js', false, true],
+		['features/helpers.ts', '../browser/helpers.js', false, true],
+		['nested/app/vue/helpers.ts', '../print/index.js', false, false],
+	],
+	'app/vue': [
+		['helpers.ts', '../browser?x', false, false],
+		['helpers.ts', '../browser#fragment', false, false],
+		['helpers.ts', '../browser/index.js', false, false],
+		['features/helpers.ts', '../../browser/helpers.js', false, false],
+		['helpers.ts', '../core/index.js', false, false],
+		['helpers.ts', '../../src/core/index.js', false, false],
+		['helpers.ts', '../../src/browser/index.js', false, false],
+		['helpers.ts', '../../src/vue/index.js', false, false],
+		['helpers.ts', '@app/core', false, false],
+		['helpers.ts', '@app/browser', false, false],
+		['helpers.ts', '@app/vue', false, false],
+		['helpers.ts', '@app/print', false, true],
+		['helpers.ts', '@app/server', false, true],
+		['features/helpers.ts', '../../server/index.js', true, true],
+		['helpers.ts', '../../src/server/index.js', true, true],
+		['nested/src/vue/helpers.ts', '../print/index.js', false, false],
+	],
+})
+
+/** Materializes the boundary rows as separate collected modules without resolving their targets. */
+export const POLICY_VUE_BOUNDARY_CASES: readonly PolicyVueImportCase[] = Object.freeze([
+	...POLICY_VUE_FACES.flatMap((face) =>
+		[...POLICY_VUE_BOUNDARY_ROWS, ...(POLICY_VUE_OWNER_ROWS[face] ?? [])].map(
+			([file, source, boundary, restricted], index) => ({
+				path: `${face}/${file.replace('helpers.ts', `boundary${index}.ts`)}`,
+				content:
+					'import * as boundary from ' + JSON.stringify(source) + '\nvoid boundary\ndebugger\n',
+				boundary,
+				restricted,
+			}),
+		),
+	),
+	...POLICY_VUE_FACES.flatMap((face) => [
+		{
+			path: `${face}/leadingdotentry.ts`,
+			content: 'import * as boundary from "././entry.js"\nvoid boundary\ndebugger\n',
+			boundary: true,
+			restricted: false,
+		},
+		{
+			path: `${face}/leadingdotonly.ts`,
+			content: 'import * as boundary from "./."\nvoid boundary\ndebugger\n',
+			boundary: true,
+			restricted: false,
+		},
+		{
+			path: `${face}/leadingdotquery.ts`,
+			content: 'import * as boundary from "././entry.js?raw#fragment"\nvoid boundary\ndebugger\n',
+			boundary: true,
+			restricted: false,
+		},
+	]),
+])
+
+/** Lists nonliteral sources and source-less exports the relative rule leaves to their existing owners. */
+export const POLICY_VUE_COMPUTED_FORMS = Object.freeze([
+	'const target = "../print/index.js"; void import(target)',
+	'void import("../print/" + "index.js")',
+	'void import(`../print/index.js`)',
+	'const boundary = 1; export { boundary }',
+])
+
+/** Supplies collection sentinels for nonliteral and source-less forms in every configured population. */
+export const POLICY_VUE_COMPUTED_CASES: readonly PolicyVueImportCase[] = Object.freeze(
+	POLICY_VUE_FACES.flatMap((face) =>
+		POLICY_VUE_POPULATIONS.flatMap((population) =>
+			POLICY_VUE_COMPUTED_FORMS.map((content, index) => ({
+				path: `${face}/computed${population.name}${index}.${population.extension}`,
+				content: population.before + content + '\ndebugger\n' + population.after,
+				boundary: false,
+				restricted: false,
+			})),
+		),
+	),
+)
+
+/** Lists the measured CommonJS parser refusals by original relative filename, token, and offset. */
+export const POLICY_VUE_PARSER_ROWS: ReadonlyArray<readonly [string, string, number]> =
+	Object.freeze([
+		['cjsvalue.cjs', 'import', 0],
+		['features/editor/cjsvalue.cjs', 'import', 0],
+		['cjsnamed.cjs', 'export', 0],
+		['features/editor/cjsnamed.cjs', 'export', 0],
+		['cjsstar.cjs', 'export', 0],
+		['features/editor/cjsstar.cjs', 'export', 0],
+		['computedcjs3.cjs', 'export', 20],
+	])
+
+/** Retains each original parser-refused input on both faces with its exact expected native location. */
+export const POLICY_VUE_PARSER_CASES = Object.freeze(
+	POLICY_VUE_FACES.flatMap((face) =>
+		POLICY_VUE_PARSER_ROWS.map(([file, keyword, offset]) => {
+			const path = `${face}/${file}`
+			const source = [...POLICY_VUE_IMPORT_CASES, ...POLICY_VUE_COMPUTED_CASES].find(
+				(candidate) => candidate.path === path,
+			)
+			if (source === undefined) throw new Error(`Missing original Vue parser fixture ${path}`)
+			return {
+				...source,
+				keyword,
+				message: `Cannot use ${keyword} statement outside a module`,
+				span: { offset, length: keyword.length, line: 1, column: offset + 1 },
+			}
+		}),
+	),
+)
+
+/** Retains all other original inputs under strict rule-code and debugger-sentinel validation. */
+export const POLICY_VUE_PARSED_CASES: readonly PolicyVueImportCase[] = Object.freeze(
+	[...POLICY_VUE_IMPORT_CASES, ...POLICY_VUE_COMPUTED_CASES].filter(
+		(source) => !POLICY_VUE_PARSER_CASES.some((refused) => refused.path === source.path),
+	),
+)
+
+/** Preserves the two removed relative alternatives solely for scratch regression controls. */
+export const POLICY_VUE_ORIGINAL_RELATIVES: Readonly<Record<string, string>> = Object.freeze({
+	'src/vue': String.raw`(?:\.\./)+(?:src/)?(?:[^/.scbv][^/.]*|s|s[^/.r][^/.]*|sr|sr[^/.c][^/.]*|src[^/.][^/.]*|c|c[^/.o][^/.]*|co|co[^/.r][^/.]*|cor|cor[^/.e][^/.]*|core[^/.][^/.]*|b|b[^/.r][^/.]*|br|br[^/.o][^/.]*|bro|bro[^/.w][^/.]*|brow|brow[^/.s][^/.]*|brows|brows[^/.e][^/.]*|browse|browse[^/.r][^/.]*|browser[^/.][^/.]*|v|v[^/.u][^/.]*|vu|vu[^/.e][^/.]*|vue[^/.][^/.]*)(?:/|$)`,
+	'app/vue': String.raw`(?:\.\./)+(?:src/|app/)?(?:[^/.sacbv][^/.]*|s|s[^/.r][^/.]*|sr|sr[^/.c][^/.]*|src[^/.][^/.]*|a|a[^/.p][^/.]*|ap|ap[^/.p][^/.]*|app[^/.][^/.]*|c|c[^/.o][^/.]*|co|co[^/.r][^/.]*|cor|cor[^/.e][^/.]*|core[^/.][^/.]*|b|b[^/.r][^/.]*|br|br[^/.o][^/.]*|bro|bro[^/.w][^/.]*|brow|brow[^/.s][^/.]*|brows|brows[^/.e][^/.]*|browse|browse[^/.r][^/.]*|browser[^/.][^/.]*|v|v[^/.u][^/.]*|vu|vu[^/.e][^/.]*|vue[^/.][^/.]*)(?:/|$)`,
+})
+
+/** Lists direct domain failures and look-alike folders that must remain unregistered. */
+export const POLICY_VUE_DOMAIN_CASES: readonly PolicyVueDomainCase[] = Object.freeze([
+	{ ...POLICY_VUE_COMPOSABLE_SOURCE, misplaced: false, malformed: false },
+	{
+		path: 'app/vue/composables/useWrong.ts',
+		content: 'export function useMode(): void { debugger }\n',
+		misplaced: false,
+		malformed: true,
+	},
+	{
+		path: 'app/vue/composables/useHidden.ts',
+		content: 'function useHidden(): void { debugger }\n',
+		misplaced: false,
+		malformed: true,
+	},
+	{
+		path: 'app/vue/composables/useMany.ts',
+		content: 'export function useMany(): void { debugger }\nexport function useOther(): void {}\n',
+		misplaced: false,
+		malformed: true,
+	},
+	{
+		path: 'app/vue/composables/useExtra.ts',
+		content: 'const extra = 1\nexport function useExtra(): void { debugger; void extra }\n',
+		misplaced: false,
+		malformed: true,
+	},
+	...[
+		'app/vue/composables/nested/useTheme.ts',
+		'app/vue/composables/nested/app/vue/composables/useTheme.ts',
+		'app/vue/composablesExtra/useTheme.ts',
+		'app/vue/other/useTheme.ts',
+		'src/vue/composables/useTheme.ts',
+		'app/vue/composables/index.ts',
+		'app/vue/composables/main.ts',
+		'app/vue/composables/UseTheme.ts',
+	].map((path) => ({
+		path,
+		content: POLICY_VUE_COMPOSABLE_SOURCE.content,
+		misplaced: true,
+		malformed: false,
+	})),
+	{
+		path: 'app/vue/composables/helpers.ts',
+		content: POLICY_VUE_COMPOSABLE_SOURCE.content,
+		misplaced: false,
+		malformed: false,
+	},
+])
+
 /**
- * Reads import restrictions and collection sentinels from the installed linter.
+ * Reads native diagnostic records through the installed linter without assigning rule codes.
  * @param directory - The fixture workspace containing the lint configuration.
- * @param paths - The fixtures carrying debugger collection sentinels.
- * @returns Diagnostic codes paired with workspace-relative paths.
+ * @param paths - The fixtures expected to produce native diagnostics.
+ * @returns Readonly native records for the caller's rule or parser validation contract.
  */
-export function readImportDiagnostics(
+export function readNativeDiagnostics(
 	directory: string,
 	paths: readonly string[],
-): ReadonlySet<string> {
+): ReadonlyArray<Readonly<Record<string, unknown>>> {
 	const manifestPath = createRequire(import.meta.url).resolve('oxlint/package.json')
 	const manifest = readConfigRecord(JSON.parse(readFileSync(manifestPath, 'utf8')))
 	const entry =
@@ -4691,11 +6368,37 @@ export function readImportDiagnostics(
 		)
 	const diagnostics = readConfigRecord(JSON.parse(result.stdout)).diagnostics
 	if (!Array.isArray(diagnostics)) throw new Error('Missing lint diagnostics')
+	return diagnostics.map(readConfigRecord)
+}
+
+/**
+ * Reads import restrictions and collection sentinels from the installed linter.
+ * @param directory - The fixture workspace containing the lint configuration.
+ * @param paths - The fixtures carrying debugger collection sentinels.
+ * @returns Diagnostic codes paired with workspace-relative paths.
+ */
+export function readImportDiagnostics(
+	directory: string,
+	paths: readonly string[],
+): ReadonlySet<string> {
+	const diagnostics = readNativeDiagnostics(directory, paths)
 	const codes = new Set(
 		diagnostics.map((value: unknown) => {
 			const diagnostic = readConfigRecord(value)
 			if (typeof diagnostic.code !== 'string' || typeof diagnostic.filename !== 'string')
-				throw new Error('Missing diagnostic location')
+				throw new Error(
+					'Missing diagnostic location: ' +
+						JSON.stringify({
+							offending: value,
+							invalidDiagnostics: diagnostics.filter((candidate: unknown) => {
+								const candidateRecord = readConfigRecord(candidate)
+								return (
+									typeof candidateRecord.code !== 'string' ||
+									typeof candidateRecord.filename !== 'string'
+								)
+							}),
+						}),
+				)
 			return (
 				diagnostic.code +
 				' ' +

@@ -302,9 +302,9 @@ export function distribution(override?: UserConfig): UserConfig {
 
 // A workbench, not a proof. No gate selects this project. Run in test mode by the
 // `test:probe` script, it collects `tmp/probes/**/*.test.ts`. Run in benchmark mode by the
-// `test:bench` script, the same workbench also collects `tests/**/*.test.ts` for a `bench` block,
-// so a suite may carry a bench beside its ordinary tests without a second project. The mode
-// guard around each `bench` call keeps it out of test mode, so it never executes there.
+// `test:bench` script, it collects `*.bench.ts` files under `tmp/probes` and `tests`.
+// Each benchmark is a regular test that uses its context's `bench` fixture and awaits
+// `bench(name, options, fn).run()` or `bench.compare(...)`.
 export function probe(override?: UserConfig): UserConfig {
 	const project: UserConfig = {
 		resolve,
@@ -317,7 +317,7 @@ export function probe(override?: UserConfig): UserConfig {
 			fileParallelism: false,
 			sequence: { groupOrder: 1 },
 			pool: 'threads',
-			benchmark: { include: ['tmp/probes/**/*.test.ts', 'tests/**/*.test.ts'] },
+			benchmark: { include: ['tmp/probes/**/*.bench.ts', 'tests/**/*.bench.ts'] },
 		},
 	}
 	return mergeOverride(project, override)
