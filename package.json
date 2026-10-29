@@ -104,9 +104,9 @@
 		"@types/node": "^24.19.2",
 		"oxfmt": "^0.75.0",
 		"oxlint": "^1.90.0",
-		"typescript": "^6.0.3",
+		"typescript": "^7.0.2",
 		"vite": "^8.3.5",
-		"vitest": "^4.1.12"
+		"vitest": "^5.0.5"
 	},
 	"peerDependencies": {
 		"@orkestrel/database": "^0.0.18",
