@@ -1,5 +1,13 @@
 import type { MultipartErrorCode } from './types.js'
-import { isNumber, isObject, literalOf } from '@orkestrel/contract'
+import {
+	holds,
+	INTRINSICS,
+	isFunction,
+	isInstance,
+	isNumber,
+	isObject,
+	literalOf,
+} from '@orkestrel/contract'
 import { HTTPError } from '@orkestrel/server'
 import { MULTIPART_ERROR_BRAND, MULTIPART_STATUS } from './constants.js'
 
@@ -26,7 +34,7 @@ import { MULTIPART_ERROR_BRAND, MULTIPART_STATUS } from './constants.js'
  */
 export class MultipartError extends HTTPError {
 	readonly code: MultipartErrorCode
-	readonly [MULTIPART_ERROR_BRAND] = true
+	declare readonly [MULTIPART_ERROR_BRAND]: MultipartError
 
 	constructor(
 		code: MultipartErrorCode,
@@ -34,6 +42,7 @@ export class MultipartError extends HTTPError {
 		context?: Readonly<Record<string, unknown>>,
 	) {
 		super(MULTIPART_STATUS[code], message, context)
+		Object.defineProperty(this, MULTIPART_ERROR_BRAND, { value: this })
 		this.name = 'MultipartError'
 		this.code = code
 	}
@@ -43,10 +52,10 @@ export class MultipartError extends HTTPError {
  * Narrows an unknown caught value to a {@link MultipartError}.
  *
  * @remarks
- * Structural, not `instanceof` — tests that `value` is a non-null object
- * carrying {@link MULTIPART_ERROR_BRAND}, a numeric `status`, and a `code`
- * in the parser's {@link MultipartErrorCode} set (`'limit' | 'malformed' | 'rejected'`).
- * Total: never throws, returns `false` for any off-shape input.
+ * Requires an Error subclass with its own identity under {@link MULTIPART_ERROR_BRAND},
+ * a numeric status, a declared code, and an optional object or callable context.
+ * Accepts subclasses across package copies and refuses transparent proxies.
+ * Returns false when inspection throws.
  *
  * @param value - The value to test (typically a `catch` binding)
  * @returns True if `value` is a {@link MultipartError}; false otherwise
@@ -63,10 +72,17 @@ export class MultipartError extends HTTPError {
  * ```
  */
 export function isMultipartError(value: unknown): value is MultipartError {
-	if (!isObject(value)) return false
-	if (!(MULTIPART_ERROR_BRAND in value)) return false
-	if (!('status' in value) || !('code' in value)) return false
-	if (!isNumber(value.status)) return false
-	if (!literalOf('limit', 'malformed', 'rejected')(value.code)) return false
-	return true
+	return holds(() => {
+		if (!isInstance(value, Error)) return false
+		if (INTRINSICS.prototype(value) === Error.prototype) return false
+		if (INTRINSICS.describe(value, MULTIPART_ERROR_BRAND)?.value !== value) return false
+		const code = INTRINSICS.reflect.read(value, 'code')
+		const status = INTRINSICS.reflect.read(value, 'status')
+		const context = INTRINSICS.reflect.read(value, 'context')
+		return (
+			literalOf('limit', 'malformed', 'rejected')(code) &&
+			isNumber(status) &&
+			(context === undefined || isObject(context) || isFunction(context))
+		)
+	})
 }

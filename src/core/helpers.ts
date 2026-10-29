@@ -11,7 +11,7 @@ import type {
 	SessionSnapshot,
 } from './types.js'
 import type { Encoding, MiddlewareContext } from '@orkestrel/server'
-import { isFiniteNumber, isInteger } from '@orkestrel/contract'
+import { isFiniteNumber, isInteger, isRecord, isString } from '@orkestrel/contract'
 import {
 	computeClientKey,
 	isCompressibleType,
@@ -46,6 +46,28 @@ export function resolveKey(state: BearerState & ClientState & ConnectionState): 
 	const ip = state.client?.ip ?? state.connection?.ip
 	if (ip !== undefined) return `ip:${computeClientKey(ip)}`
 	return 'ip:unknown'
+}
+
+/**
+ * Extracts a token after a case-insensitive scheme and one space.
+ * @param raw - The header value.
+ * @param scheme - The required scheme, or an empty string for an unprefixed token.
+ * @returns The token, or undefined when the prefix does not match.
+ */
+export function extractBearerToken(raw: string, scheme: string): string | undefined {
+	if (scheme === '') return raw
+	const prefix = `${scheme.toLowerCase()} `
+	return raw.toLowerCase().startsWith(prefix) ? raw.slice(prefix.length) : undefined
+}
+
+/**
+ * Extracts a string field from a parsed body record.
+ * @param body - The parsed request body.
+ * @param field - The token field name.
+ * @returns The string field, or undefined when the record or field is absent.
+ */
+export function extractFieldToken(body: unknown, field: string): string | undefined {
+	return isRecord(body) && isString(body[field]) ? body[field] : undefined
 }
 
 /**
@@ -200,13 +222,10 @@ export function resolveForwardedFor(
 	if (rightmost === undefined) return undefined
 	const rightmostTrusted = trust.trusted.some((entry) => matchesTrustedEntry(rightmost, entry))
 	if (!rightmostTrusted) return undefined
-	for (let index = hops.length - 2; index >= 0; index -= 1) {
-		const hop = hops[index]
-		if (hop === undefined) return undefined
-		const trusted = trust.trusted.some((entry) => matchesTrustedEntry(hop, entry))
-		if (!trusted) return hop
-	}
-	return undefined
+	return hops
+		.slice(0, -1)
+		.reverse()
+		.find((hop) => !trust.trusted.some((entry) => matchesTrustedEntry(hop, entry)))
 }
 
 /**
@@ -289,10 +308,10 @@ export async function compressBytes(
  *
  * @example
  * ```ts
- * isBufferingIneligible('GET', new Response(null, { status: 204 }), 'content-encoding') // true
+ * isResponseUnbufferable('GET', new Response(null, { status: 204 }), 'content-encoding') // true
  * ```
  */
-export function isBufferingIneligible(
+export function isResponseUnbufferable(
 	method: string,
 	response: Response,
 	skipHeader: string,
@@ -385,7 +404,7 @@ export function rebuildResponse(
  * compression over a caller-supplied set of feature-detected codings.
  *
  * @remarks
- * Decision order: {@link isBufferingIneligible} → `options.filter` → stamp
+ * Decision order: {@link isResponseUnbufferable} → `options.filter` → stamp
  * `Vary: Accept-Encoding` (every negotiation-eligible response carries it,
  * even when a later skip declines to compress) → `negotiateEncoding` over
  * `options.encodings` → {@link isCompressionNegotiated} → `isCompressibleType`
@@ -418,7 +437,7 @@ export async function compressResponse(
 	response: Response,
 	options: CompressResponseOptions,
 ): Promise<Response> {
-	if (isBufferingIneligible(context.method, response, 'content-encoding')) return response
+	if (isResponseUnbufferable(context.method, response, 'content-encoding')) return response
 	if (options.filter !== undefined && !options.filter(request, response)) return response
 	response.headers.set(
 		'vary',
@@ -517,9 +536,9 @@ export function buildClient(ip: string | undefined): Client {
  */
 export function equalsConstantTime(a: string, b: string): boolean {
 	if (a.length !== b.length) return false
-	let diff = 0
-	for (let index = 0; index < a.length; index += 1)
-		diff |= a.charCodeAt(index) ^ b.charCodeAt(index)
+	const diff = a.matchAll(/[\s\S]/g).reduce((difference, match) => {
+		return difference | (match[0].charCodeAt(0) ^ b.charCodeAt(match.index))
+	}, 0)
 	return diff === 0
 }
 

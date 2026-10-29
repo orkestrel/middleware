@@ -1,6 +1,9 @@
 import type { FileHandle } from 'node:fs/promises'
 import type { ScratchInterface } from '@orkestrel/test/server'
 import type { Asset, AssetSourceInterface } from '@src/server'
+import type { ConnectionState, SessionState } from '@src/core'
+import { attempt } from '@orkestrel/contract'
+import { MiddlewareValue } from './setup.js'
 import { statSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -18,6 +21,14 @@ import { createScratch } from '@orkestrel/test/server'
 
 /** Carries a real PNG magic-byte header (8 bytes) — the shortest genuine PNG signature. */
 export const PNG_MAGIC = Uint8Array.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a])
+
+/** Carries the real-socket middleware composition's request state. */
+export interface CapstoneState extends ConnectionState, SessionState {
+	readonly identifier?: string
+	readonly client?: { readonly ip?: string }
+	readonly token?: string
+	readonly csrf?: string
+}
 
 /** Carries a real JPEG magic-byte header (3 bytes) — the shortest genuine JPEG signature. */
 export const JPEG_MAGIC = Uint8Array.from([0xff, 0xd8, 0xff])
@@ -54,12 +65,9 @@ export const SECOND_DEVICE_CANDIDATES: readonly string[] = Object.freeze([
  * ```
  */
 export function resolveSecondDevicePath(reference: string): string | undefined {
-	let device: number
-	try {
-		device = statSync(reference).dev
-	} catch {
-		return undefined
-	}
+	const reading = attempt(() => statSync(reference).dev)
+	if (!reading.success) return undefined
+	const device = reading.value
 	for (const candidate of SECOND_DEVICE_CANDIDATES) {
 		try {
 			const info = statSync(candidate)
@@ -344,16 +352,16 @@ export function buildCancelTrackingMultipartRequest(
 	chunkSize = 64,
 ): CancelTrackingRequestInterface {
 	const { body, contentType } = buildMultipartBody(parts, boundary)
-	const cancelled = { value: false }
-	let offset = 0
+	const cancelled = new MiddlewareValue(false)
+	const offset = new MiddlewareValue(0)
 	const stream = new ReadableStream<Uint8Array>({
 		pull(controller) {
-			if (offset >= body.length) {
+			if (offset.value >= body.length) {
 				controller.close()
 				return
 			}
-			const chunk = body.subarray(offset, offset + chunkSize)
-			offset += chunkSize
+			const chunk = body.subarray(offset.value, offset.value + chunkSize)
+			offset.value += chunkSize
 			controller.enqueue(chunk)
 		},
 		cancel() {
@@ -429,11 +437,10 @@ export function buildMultipartBody(
 	chunks.push(encoder.encode(`--${boundary}--\r\n`))
 	const total = chunks.reduce((sum, chunk) => sum + chunk.byteLength, 0)
 	const body = new Uint8Array(total)
-	let offset = 0
-	for (const chunk of chunks) {
+	chunks.reduce((offset, chunk) => {
 		body.set(chunk, offset)
-		offset += chunk.byteLength
-	}
+		return offset + chunk.byteLength
+	}, 0)
 	return { body, contentType: `multipart/form-data; boundary=${boundary}` }
 }
 
@@ -453,15 +460,15 @@ export function buildMultipartBody(
  * ```
  */
 export function buildChunkedStream(bytes: Uint8Array, chunkSize = 64): ReadableStream<Uint8Array> {
-	let offset = 0
+	const offset = new MiddlewareValue(0)
 	return new ReadableStream<Uint8Array>({
 		pull(controller) {
-			if (offset >= bytes.length) {
+			if (offset.value >= bytes.length) {
 				controller.close()
 				return
 			}
-			const chunk = bytes.subarray(offset, offset + chunkSize)
-			offset += chunkSize
+			const chunk = bytes.subarray(offset.value, offset.value + chunkSize)
+			offset.value += chunkSize
 			controller.enqueue(chunk)
 		},
 	})

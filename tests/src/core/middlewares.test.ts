@@ -1,3 +1,4 @@
+import { MiddlewareValue, createOversizedContext, createCountedStore } from '../../setup.js'
 import type {
 	BearerState,
 	BodyState,
@@ -557,16 +558,16 @@ describe('createDeadline', () => {
 	it('a slow handler triggers the default 503 and the downstream sees an aborted signal', async () => {
 		const deadline = createDeadline<Record<string, never>>({ ms: 20 })
 		const context = createTestContext(buildTestRequest('/'), {})
-		let sawAborted = false
+		const sawAborted = new MiddlewareValue(false)
 		const response = await deadline(buildTestRequest('/'), context, async (substituted) => {
 			const request = substituted ?? buildTestRequest('/')
 			await waitForDelay(100)
-			sawAborted = request.signal.aborted
+			sawAborted.value = request.signal.aborted
 			return new Response('too slow')
 		})
 		expect(response.status).toBe(503)
 		await waitForDelay(150)
-		expect(sawAborted).toBe(true)
+		expect(sawAborted.value).toBe(true)
 	})
 
 	it('accepts a custom status', async () => {
@@ -1175,17 +1176,17 @@ describe('createBody', () => {
 			body: '{"a":1}',
 		})
 		const context = createTestContext(request, {})
-		let sawBody: unknown
+		const sawBody = new MiddlewareValue<unknown>(undefined)
 		await runChain(
 			[body],
 			async (_request, requestContext) => {
-				sawBody = await requestContext.body()
+				sawBody.value = await requestContext.body()
 				return new Response()
 			},
 			request,
 			context,
 		)
-		expect(sawBody).toEqual({ a: 1 })
+		expect(sawBody.value).toEqual({ a: 1 })
 	})
 
 	it('stashes the parsed body onto state.body', async () => {
@@ -1233,17 +1234,7 @@ describe('createBody', () => {
 		const body = createBody<Record<string, never>>()
 		const oversized = 'x'.repeat(2_000_000)
 		const request = new Request('http://test.local/', { method: 'POST', body: oversized })
-		let cached: Promise<unknown> | undefined
-		const context = {
-			url: new URL(request.url),
-			method: request.method,
-			state: {},
-			body() {
-				if (cached === undefined)
-					cached = (async () => Promise.reject(new ContentTooLargeError(1024)))()
-				return cached
-			},
-		}
+		const context = createOversizedContext(request)
 		await expect(body(request, context, async () => new Response())).rejects.toBeInstanceOf(
 			ContentTooLargeError,
 		)
@@ -1517,22 +1508,15 @@ describe('createSession', () => {
 	})
 
 	it('persists a freshly-minted session exactly once (no redundant mint-time store.set)', async () => {
-		let setCount = 0
+		const setCount = new MiddlewareValue(0)
 		const transport = createTestTransport()
 		const memory = createMemorySessionStore<SessionInterface>()
-		const store = {
-			get: (id: string, now: number) => memory.get(id, now),
-			set: (value: SessionInterface, now: number) => {
-				setCount += 1
-				return memory.set(value, now)
-			},
-			delete: (id: string) => memory.delete(id),
-		}
+		const store = createCountedStore(memory, setCount)
 		const session = createSession<SessionInterface, SessionState>({ transport, store })
 		const request = buildTestRequest('/')
 		const state: SessionState = {}
 		await runChain([session], createEchoTerminal(), request, createTestContext(request, state))
-		expect(setCount).toBe(1)
+		expect(setCount.value).toBe(1)
 	})
 
 	it('threads capacity/evict into the default MemorySessionStore, which evicts and notifies at capacity', async () => {

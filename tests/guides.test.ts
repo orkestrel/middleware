@@ -30,7 +30,7 @@ const MODULES = Object.freeze({
  * intentional rather than forgotten — and the assertion that follows it fails when a name
  * here stops being stranded, so the list cannot rot.
  */
-const INTERNAL: readonly string[] = Object.freeze(['class MultipartParser'])
+const INTERNAL: readonly string[] = Object.freeze(['class MultipartParser', 'class Upload'])
 
 await new GuideCommand({
 	root: new URL('../', import.meta.url),

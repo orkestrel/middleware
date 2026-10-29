@@ -22,7 +22,6 @@ import type {
 	SessionStoreInterface,
 	TelemetryOptions,
 } from './types.js'
-import type { BudgetInterface } from '@orkestrel/budget'
 import type { MiddlewareHandler } from '@orkestrel/server'
 import {
 	isBoolean,
@@ -35,7 +34,6 @@ import {
 	isString,
 } from '@orkestrel/contract'
 import { linkSignal } from '@orkestrel/abort'
-import { createBudget } from '@orkestrel/budget'
 import {
 	HTTPError,
 	isHTTPError,
@@ -84,16 +82,19 @@ import {
 	compressResponse,
 	detectEncodings,
 	equalsConstantTime,
-	isBufferingIneligible,
+	extractBearerToken,
+	extractFieldToken,
+	isResponseUnbufferable,
 	isPreflight,
 	rebuildResponse,
 	resolveForwardedFor,
 	resolveKey,
 	resolveOptInHeader,
-	transferSessionState,
 } from './helpers.js'
 import { MemorySessionStore } from './stores/MemorySessionStore.js'
+import { MemoryLimiterStore } from './stores/MemoryLimiterStore.js'
 import { Session } from './Session.js'
+import { SessionControl } from './SessionControl.js'
 import { computeBodyETag, matchesETag } from '@orkestrel/server'
 
 /**
@@ -172,19 +173,16 @@ export function createTelemetry<TState>(options: TelemetryOptions): MiddlewareHa
 	// The entry is built from `context` alone, so the first position is conformance-only.
 	return async (_request, context, next) => {
 		const start = Date.now()
-		let response: Response | undefined
+		const [outcome] = await Promise.allSettled([next()])
+		const duration = Date.now() - start
+		const status = outcome.status === 'fulfilled' ? outcome.value.status : 500
 		try {
-			response = await next()
-			return response
-		} finally {
-			const duration = Date.now() - start
-			const status = response?.status ?? 500
-			try {
-				record({ method: context.method, pathname: context.url.pathname, status, duration })
-			} catch {
-				// record's own throw is swallowed — a broken sink can never fail the response.
-			}
+			record({ method: context.method, pathname: context.url.pathname, status, duration })
+		} catch {
+			// A broken sink cannot fail the response.
 		}
+		if (outcome.status === 'rejected') throw outcome.reason
+		return outcome.value
 	}
 }
 
@@ -299,13 +297,13 @@ export function createSecurity<TState extends IdentifierState>(
 	const trust = isRecord(identifierOption) ? identifierOption.trust === true : false
 
 	return async (request, context, next) => {
-		let identifier: string | undefined
-		if (identifierEnabled) {
-			const incoming = request.headers.get(DEFAULT_IDENTIFIER_HEADER)
-			identifier =
-				trust && incoming !== null && isValidRequestId(incoming) ? incoming : crypto.randomUUID()
-			Object.assign(context.state, { identifier })
-		}
+		const incoming = identifierEnabled ? request.headers.get(DEFAULT_IDENTIFIER_HEADER) : null
+		const identifier = !identifierEnabled
+			? undefined
+			: trust && incoming !== null && isValidRequestId(incoming)
+				? incoming
+				: crypto.randomUUID()
+		if (identifierEnabled) Object.assign(context.state, { identifier })
 		const response = await next()
 		response.headers.set('x-content-type-options', 'nosniff')
 		const headerTable: ReadonlyArray<readonly [string, string | undefined]> = [
@@ -405,32 +403,22 @@ export function createDeadline<TState>(options: DeadlineOptions): MiddlewareHand
 		const linked = linkSignal(timeout.signal, request.signal)
 		timeout.start()
 		const downstream = next(new Request(request, { signal: linked }))
+		const expired = new Response(null, { status })
 		const deadline = new Promise<Response>((resolve) => {
-			timeout.signal.addEventListener('abort', () => resolve(new Response(null, { status })), {
+			timeout.signal.addEventListener('abort', () => resolve(expired), {
 				once: true,
 			})
 		})
-		let deadlineWon = false
 		try {
-			const winner = await Promise.race([
-				downstream,
-				deadline.then((response) => {
-					deadlineWon = true
-					return response
-				}),
-			])
+			const winner = await Promise.race([downstream, deadline])
+			downstream
+				.then((response) => {
+					if (winner === expired) response.body?.cancel().catch(() => {})
+				})
+				.catch(() => {})
 			return winner
 		} finally {
 			timeout.clear()
-			// The losing `next()` promise is settled-and-discarded — a late throw
-			// from it can never surface as an unhandled rejection; when the
-			// deadline won the race, best-effort cancel its late body so the
-			// runtime can reclaim the underlying stream.
-			downstream
-				.then((response) => {
-					if (deadlineWon) response.body?.cancel().catch(() => {})
-				})
-				.catch(() => {})
 		}
 	}
 }
@@ -495,7 +483,7 @@ export function createETag<TState>(options?: ETagOptions): MiddlewareHandler<TSt
 	return async (request, context, next) => {
 		const response = await next()
 		if (context.method !== 'GET' || response.status !== 200) return response
-		if (isBufferingIneligible(context.method, response, 'etag')) return response
+		if (isResponseUnbufferable(context.method, response, 'etag')) return response
 		const buffer = await response.arrayBuffer()
 		const bytes = new Uint8Array(buffer)
 		const etag = await computeBodyETag(bytes, weak)
@@ -542,12 +530,8 @@ export function createBearer<TState extends BearerState>(
 	return async (request, context, next) => {
 		const raw = request.headers.get(header)
 		if (raw === null) throw new HTTPError(401, 'missing token')
-		let candidate = raw
-		if (scheme !== '') {
-			const prefix = `${scheme.toLowerCase()} `
-			if (!raw.toLowerCase().startsWith(prefix)) throw new HTTPError(401, 'missing token')
-			candidate = raw.slice(prefix.length)
-		}
+		const candidate = extractBearerToken(raw, scheme)
+		if (candidate === undefined) throw new HTTPError(401, 'missing token')
 		const verified = await verifyToken(candidate, secret)
 		if (verified === undefined) throw new HTTPError(401, 'invalid token')
 		Object.assign(context.state, { token: verified })
@@ -558,6 +542,9 @@ export function createBearer<TState extends BearerState>(
 /**
  * Creates the fixed-window rate-limiting battery — checks a key's budget before
  * consuming it, so one window admits exactly `max` requests.
+ *
+ * @remarks
+ * The store admits atomically. A fresh window takes the current maximum from its limits.
  *
  * @typeParam TState - The consumer's opaque per-request state type, must carry {@link BearerState}, {@link ClientState}, and {@link ConnectionState}
  * @param options - See {@link LimiterOptions}
@@ -596,49 +583,29 @@ export function createLimiter<TState extends BearerState & ClientState & Connect
 	const clock = options.clock ?? Date.now
 	const policy = options.policy ?? false
 	const evict = options.evict
-	const buckets = new Map<string, { budget: BudgetInterface<number>; resetAt: number }>()
+	if (options.store !== undefined && !isFunction(options.store.consume))
+		throw new TypeError('LimiterOptions.store must implement LimiterStoreInterface')
+	const store =
+		options.store ??
+		new MemoryLimiterStore({
+			capacity,
+			...(evict === undefined ? {} : { evict }),
+		})
+	const limits = { max, window }
 	// The key is derived from `context` alone, so the first position is conformance-only.
 	return async (_request, context, next) => {
 		const key = deriveKey === undefined ? resolveKey(context.state) : deriveKey(context)
 		const now = clock()
-		let bucket = buckets.get(key)
-		if (bucket === undefined) {
-			if (buckets.size >= capacity) {
-				const oldest = buckets.keys().next().value
-				if (oldest !== undefined) {
-					buckets.delete(oldest)
-					if (evict !== undefined) {
-						try {
-							evict(oldest)
-						} catch {
-							// swallowed — a broken evict callback can never fail the request
-						}
-					}
-				}
-			}
-			bucket = {
-				budget: createBudget<number>({ max, consumer: Number }),
-				resetAt: now + window,
-			}
-			buckets.set(key, bucket)
-		} else {
-			buckets.delete(key)
-			buckets.set(key, bucket)
-			if (now >= bucket.resetAt) {
-				bucket.budget.clear()
-				bucket.resetAt = now + window
-			}
-		}
-		if (bucket.budget.exhausted) {
+		const result = await store.consume(key, now, limits)
+		if (!result.admitted) {
 			const headers = new Headers()
-			headers.set('retry-after', buildRetryAfter(bucket.resetAt, now))
+			headers.set('retry-after', buildRetryAfter(result.resetAt, now))
 			if (policy) {
-				headers.set('ratelimit', buildRateLimitField(0, bucket.resetAt, now))
+				headers.set('ratelimit', buildRateLimitField(0, result.resetAt, now))
 				headers.set('ratelimit-policy', buildRateLimitPolicyField(max, window))
 			}
 			return new Response(message, { status: 429, headers })
 		}
-		bucket.budget.consume(1)
 		return next()
 	}
 }
@@ -743,59 +710,39 @@ export function createSession<
 		const now = clock()
 		const encrypted = context.state.connection?.encrypted ?? false
 		const incomingId = await transport.read(request)
-		let session = incomingId !== undefined ? await store.get(incomingId, now) : undefined
+		const resolved = incomingId !== undefined ? await store.get(incomingId, now) : undefined
+		const shouldMint = resolved === undefined && (mint !== undefined ? await mint(context) : true)
+		const minted = shouldMint
+			? create === undefined
+				? new Session(crypto.randomUUID())
+				: create(crypto.randomUUID())
+			: undefined
+		if (requireSession && resolved === undefined && minted === undefined)
+			throw new HTTPError(404, 'session required')
+		const activeSession = resolved ?? minted
+		const control =
+			activeSession === undefined ? undefined : new SessionControl(activeSession, create)
 
-		let minted = false
-		if (session === undefined) {
-			const shouldMint = mint !== undefined ? await mint(context) : true
-			if (shouldMint) {
-				const id = crypto.randomUUID()
-				session = create === undefined ? new Session(id) : create(id)
-				minted = true
-			} else if (requireSession) {
-				throw new HTTPError(404, 'session required')
-			}
-		}
-
-		let destroyed = false
-		let regenerated: SessionInterface | undefined
-		const activeSession = session
-
-		if (activeSession !== undefined) {
+		if (activeSession !== undefined && control !== undefined) {
 			Object.assign<
 				object,
 				{ readonly session: SessionInterface; readonly control: SessionControlInterface }
-			>(context.state, {
-				session: activeSession,
-				control: {
-					regenerate() {
-						if (destroyed) return
-						const newSession =
-							create === undefined ? new Session(crypto.randomUUID()) : create(crypto.randomUUID())
-						transferSessionState(activeSession, newSession)
-						regenerated = newSession
-					},
-					destroy() {
-						destroyed = true
-						regenerated = undefined
-					},
-				},
-			})
+			>(context.state, { session: activeSession, control })
 		}
 
 		const response = await next()
 
 		if (activeSession !== undefined) {
-			if (destroyed) {
+			if (control?.destroyed) {
 				await store.delete(activeSession.id)
 				await transport.clear(response)
-			} else if (regenerated !== undefined) {
-				await store.set(regenerated, clock())
+			} else if (control?.successor !== undefined) {
+				await store.set(control.successor, clock())
 				await store.delete(activeSession.id)
-				await transport.write(response, regenerated.id, encrypted)
+				await transport.write(response, control.successor.id, encrypted)
 			} else {
 				await store.set(activeSession, clock())
-				if (minted) await transport.write(response, activeSession.id, encrypted)
+				if (minted !== undefined) await transport.write(response, activeSession.id, encrypted)
 			}
 		}
 
@@ -853,14 +800,7 @@ export function createCSRF<TState extends CSRFState & SessionState & ConnectionS
 			return response
 		}
 
-		const headerToken = request.headers.get(header)
-		let submitted: string | undefined
-		if (headerToken !== null) {
-			submitted = headerToken
-		} else {
-			const body = await context.body()
-			if (isRecord(body) && isString(body[field])) submitted = body[field]
-		}
+		const submitted = request.headers.get(header) ?? extractFieldToken(await context.body(), field)
 		if (submitted === undefined) throw new HTTPError(403, 'invalid csrf token')
 		const cookieToken = await readSignedCookie(request, cookieName, secret)
 		if (cookieToken === undefined || !equalsConstantTime(cookieToken, submitted))

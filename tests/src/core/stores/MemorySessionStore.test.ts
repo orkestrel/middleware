@@ -119,7 +119,7 @@ describe('MemorySessionStore created stamping', () => {
 describe('MemorySessionStore capacity', () => {
 	it('defaults to DEFAULT_SESSION_CAPACITY and evicts the oldest-written entry once exceeded', async () => {
 		const store = new MemorySessionStore<Session>()
-		for (let index = 0; index < DEFAULT_SESSION_CAPACITY; index += 1)
+		for (const index of Array.from({ length: DEFAULT_SESSION_CAPACITY }, (_, position) => position))
 			await store.set(buildSession(`id-${index}`), 0)
 		expect((await store.get('id-0', 0))?.id).toBe('id-0')
 		await store.set(buildSession('overflow'), 0)
@@ -129,10 +129,13 @@ describe('MemorySessionStore capacity', () => {
 
 	it('keeps size at or below an explicit capacity when inserting capacity+1 distinct never-read ids', async () => {
 		const store = new MemorySessionStore<Session>({ capacity: 5 })
-		for (let index = 0; index < 6; index += 1) await store.set(buildSession(`id-${index}`), 0)
-		let alive = 0
-		for (let index = 0; index < 6; index += 1)
-			if ((await store.get(`id-${index}`, 0)) !== undefined) alive += 1
+		for (const index of Array.from({ length: 6 }, (_, position) => position))
+			await store.set(buildSession(`id-${index}`), 0)
+		const entries: Array<Session | undefined> = []
+		for (const index of Array.from({ length: 6 }, (_, position) => position)) {
+			entries.push(await store.get(`id-${index}`, 0))
+		}
+		const alive = entries.filter((entry) => entry !== undefined).length
 		expect(alive).toBeLessThanOrEqual(5)
 	})
 

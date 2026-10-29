@@ -9,6 +9,7 @@ import type { TestContext } from 'vitest'
 import { isArray, isObject, isString } from '@orkestrel/contract'
 import { spawnSync } from 'node:child_process'
 import {
+	cpSync,
 	existsSync,
 	mkdirSync,
 	mkdtempSync,
@@ -31,7 +32,10 @@ const NPM = process.platform === 'win32' ? 'npm.cmd' : 'npm'
 // compiler majors this toolchain supports, and its in-process API is not. It is
 // resolved from the workspace under proof, so a consumer of the packed artifact is
 // checked by the same compiler that workspace's own `check` script runs.
-const TSC = createRequire(join(ROOT, 'package.json')).resolve('typescript/bin/tsc')
+const TSC = join(
+	dirname(createRequire(join(ROOT, 'package.json')).resolve('typescript/package.json')),
+	'bin/tsc',
+)
 // Windows needs a shell to launch a `.cmd`: Node refuses one directly since the
 // batch-argument hardening, and `spawnSync` returns `EINVAL` with a null status
 // rather than an exit code a caller can read. Every following argument is a literal or
@@ -190,13 +194,18 @@ function isNames(value: unknown): value is readonly string[] {
 // package and a target containing a dot, parent, or node_modules segment during
 // package-target resolution. A later module-resolution failure is not the same
 // thing: an array falls through the former and keeps the latter.
+function decodePackageSegment(segment: string): string {
+	try {
+		return decodeURIComponent(segment)
+	} catch {
+		return segment
+	}
+}
+
 function isPackageTarget(target: string): boolean {
 	if (!target.startsWith('./')) return false
 	for (const segment of target.slice(2).split(/[\\/]/u)) {
-		let decoded = segment
-		try {
-			decoded = decodeURIComponent(segment)
-		} catch {}
+		const decoded = decodePackageSegment(segment)
 		const normalized = decoded.toLowerCase()
 		if (normalized === '.' || normalized === '..' || normalized === 'node_modules') return false
 	}
@@ -284,12 +293,18 @@ function matchesFile(path: string): boolean {
 // the containing condition or fallback list unresolved, so the walk continues.
 function targetToDeclaration(target: string, installed: string): string | undefined {
 	if (!isPackageTarget(target)) return undefined
-	let declaration = target
-	if (target.endsWith('.cjs')) declaration = `${target.slice(0, -4)}.d.cts`
-	else if (target.endsWith('.mjs')) declaration = `${target.slice(0, -4)}.d.mts`
-	else if (target.endsWith('.js')) declaration = `${target.slice(0, -3)}.d.ts`
-	else if (!isDeclaration(target)) return undefined
-	return matchesFile(join(installed, declaration)) ? declaration : undefined
+	const declaration = target.endsWith('.cjs')
+		? `${target.slice(0, -4)}.d.cts`
+		: target.endsWith('.mjs')
+			? `${target.slice(0, -4)}.d.mts`
+			: target.endsWith('.js')
+				? `${target.slice(0, -3)}.d.ts`
+				: isDeclaration(target)
+					? target
+					: undefined
+	return declaration !== undefined && matchesFile(join(installed, declaration))
+		? declaration
+		: undefined
 }
 
 // The declaration TypeScript resolves through one importing format's conditions.
@@ -320,22 +335,22 @@ function resolveDeclaration(
 // physical nested manifest starts a scope even when it omits `type` or cannot be
 // parsed. A directory at that spelling is not a manifest, so the walk continues.
 function readPackageType(installed: string, target: string): unknown {
-	let directory = dirname(join(installed, target))
-	while (true) {
-		const path = join(directory, 'package.json')
-		if (matchesFile(path)) {
-			try {
-				const manifest = readJson(path)
-				return isRecord(manifest) ? manifest.type : undefined
-			} catch {
-				return undefined
-			}
+	return readPackageScope(installed, dirname(join(installed, target)))
+}
+
+function readPackageScope(installed: string, directory: string): unknown {
+	const path = join(directory, 'package.json')
+	if (matchesFile(path)) {
+		try {
+			const manifest = readJson(path)
+			return isRecord(manifest) ? manifest.type : undefined
+		} catch {
+			return undefined
 		}
-		if (directory === installed) return undefined
-		const parent = dirname(directory)
-		if (parent === directory) return undefined
-		directory = parent
 	}
+	if (directory === installed) return undefined
+	const parent = dirname(directory)
+	return parent === directory ? undefined : readPackageScope(installed, parent)
 }
 
 function resolvesBrowser(entry: unknown): boolean {
@@ -916,3 +931,44 @@ for (const entry of STAGE?.entries ?? []) {
 		)
 	})
 }
+
+describe('middleware error brands', () => {
+	it('recognizes distinct installed copies and refuses unbranded and proxy values', (context) => {
+		const stage = requireStage(context)
+		const copy = join(stage.consumer, 'node_modules', '@orkestrel', 'middleware-copy')
+		cpSync(stage.installed, copy, { recursive: true })
+		const driver = join(stage.consumer, 'middleware-errors.mjs')
+		writeFile(
+			driver,
+			`import assert from 'node:assert/strict'
+import { createRequire } from 'node:module'
+import * as imported from '@orkestrel/middleware/server'
+import * as copied from './node_modules/@orkestrel/middleware-copy/dist/src/server/index.js'
+const required = createRequire(import.meta.url)('@orkestrel/middleware/server')
+const copies = [imported, required, copied]
+assert.equal(new Set(copies.map((entry) => entry.MultipartError)).size, copies.length)
+for (const source of copies) {
+	const error = new source.MultipartError('limit', 'Reserved')
+	class Derived extends source.MultipartError {
+		constructor() {
+			super('limit', 'Reserved')
+			this.name = 'Derived'
+		}
+	}
+	for (const reader of copies) {
+		assert.equal(reader.isMultipartError(error), true)
+		assert.equal(reader.isMultipartError(new Derived()), true)
+		assert.equal(reader.isMultipartError(Object.assign(new Error('Reserved'), { code: 'limit' })), false)
+		assert.equal(reader.isMultipartError(new Proxy(error, {})), false)
+		const plain = {}
+		Object.defineProperty(plain, Symbol.for('@orkestrel/middleware.MultipartError'), { value: plain })
+		assert.equal(reader.isMultipartError(plain), false)
+	}
+}
+`,
+		)
+		const result = runNode([driver], stage.consumer)
+		expect(readOutput(result)).toBe('')
+		expect(result.status).toBe(0)
+	})
+})

@@ -1,3 +1,4 @@
+import { MiddlewareValue } from '../../setup.js'
 import { describe, expect, it } from 'vitest'
 import { createScratch } from '@orkestrel/test/server'
 import {
@@ -137,12 +138,12 @@ describe('MultipartParser abort mid-upload', () => {
 				`--${boundary}\r\nContent-Disposition: form-data; name="avatar"; filename="a.bin"\r\nContent-Type: application/octet-stream\r\n\r\n${'x'.repeat(256)}`,
 			)
 			const controller = new AbortController()
-			let pulls = 0
+			const pulls = new MiddlewareValue(0)
 			const stream = new ReadableStream<Uint8Array>(
 				{
 					pull(streamController) {
-						pulls += 1
-						if (pulls === 1) {
+						pulls.value += 1
+						if (pulls.value === 1) {
 							streamController.enqueue(head)
 							return
 						}

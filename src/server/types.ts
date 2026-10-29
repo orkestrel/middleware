@@ -1,4 +1,20 @@
 import type { MultipartFile } from '@src/core'
+import type { Stats } from 'node:fs'
+import type { FileHandle } from 'node:fs/promises'
+
+/** Describes an opened static file and the facts read from its handle. */
+export interface StaticFile {
+	readonly path: string
+	readonly handle: FileHandle
+	readonly info: Stats
+}
+
+/** Describes response headers and the optional byte interval of a static file. */
+export interface StaticPlan {
+	readonly status: number
+	readonly headers: Headers
+	readonly range: ByteRange | undefined
+}
 
 /**
  * Describes one in-memory asset representation returned by an {@link AssetSourceInterface}.
@@ -42,9 +58,42 @@ export interface AssetSourceInterface {
  *   and evicts nothing. A `source` that synthesizes a representation for an
  *   arbitrary key therefore grows that cache without limit under request
  *   pressure.
+ * - `store` — the pluggable representation cache; defaults to MemoryAssetStore.
+ *   Concurrent misses may read and hash the same source key independently.
  */
 export interface AssetOptions {
 	readonly source: AssetSourceInterface
+	readonly store?: AssetStoreInterface
+}
+
+/** Holds copied asset representations and their shared identity validator. */
+export interface AssetRecord {
+	readonly key: string
+	readonly identity: Uint8Array
+	readonly brotli: Uint8Array | undefined
+	readonly etag: string
+}
+
+/** Provides asynchronous point access to cached asset representations. */
+export interface AssetStoreInterface {
+	/**
+	 * Reads a cached representation by key.
+	 * @param key - The decoded relative asset key.
+	 * @returns The record, or undefined on a miss.
+	 */
+	get(key: string): Promise<AssetRecord | undefined>
+	/**
+	 * Stores a representation under its own key.
+	 * @param record - The owned representations and validator.
+	 * @returns A promise settled after storage.
+	 */
+	set(record: AssetRecord): Promise<void>
+	/**
+	 * Removes a cached key; an absent key is a no-op.
+	 * @param key - The key to invalidate.
+	 * @returns A promise settled after deletion.
+	 */
+	delete(key: string): Promise<void>
 }
 
 /**

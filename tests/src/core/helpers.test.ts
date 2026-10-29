@@ -7,7 +7,9 @@ import {
 	compressResponse,
 	detectEncodings,
 	equalsConstantTime,
-	isBufferingIneligible,
+	extractBearerToken,
+	extractFieldToken,
+	isResponseUnbufferable,
 	isCompressionNegotiated,
 	isPreflight,
 	matchesTrustedEntry,
@@ -27,6 +29,23 @@ import { buildTestRequest, buildSession, createTestContext, decompress } from '.
 //  @orkestrel/middleware — core helpers.ts unit tests. Every scenario is built
 //  from the shared harness plus real Request/Response/Headers/Map values.
 // ============================================================================
+
+describe('token extraction', () => {
+	it('extracts bearer schemes without trimming or changing token case', () => {
+		expect(extractBearerToken('bEaReR A b', 'Bearer')).toBe('A b')
+		expect(extractBearerToken('Bearer ', 'Bearer')).toBe('')
+		expect(extractBearerToken('BearerX value', 'Bearer')).toBeUndefined()
+		expect(extractBearerToken('raw', '')).toBe('raw')
+	})
+
+	it('extracts only string fields from parsed records', () => {
+		expect(extractFieldToken({ csrf: 'token' }, 'csrf')).toBe('token')
+		expect(extractFieldToken({ csrf: '' }, 'csrf')).toBe('')
+		expect(extractFieldToken({ csrf: 1 }, 'csrf')).toBeUndefined()
+		expect(extractFieldToken({}, 'csrf')).toBeUndefined()
+		expect(extractFieldToken(null, 'csrf')).toBeUndefined()
+	})
+})
 
 describe('resolveKey', () => {
 	it('prefers a bearer token over client and connection facts', () => {
@@ -201,21 +220,21 @@ describe('compressBytes', () => {
 
 describe('isBufferingIneligible', () => {
 	it('is ineligible for a HEAD request', () => {
-		expect(isBufferingIneligible('HEAD', new Response('body'), 'content-encoding')).toBe(true)
+		expect(isResponseUnbufferable('HEAD', new Response('body'), 'content-encoding')).toBe(true)
 	})
 
 	it('is ineligible for a 204 or 304 response', () => {
 		expect(
-			isBufferingIneligible('GET', new Response(null, { status: 204 }), 'content-encoding'),
+			isResponseUnbufferable('GET', new Response(null, { status: 204 }), 'content-encoding'),
 		).toBe(true)
 		expect(
-			isBufferingIneligible('GET', new Response(null, { status: 304 }), 'content-encoding'),
+			isResponseUnbufferable('GET', new Response(null, { status: 304 }), 'content-encoding'),
 		).toBe(true)
 	})
 
 	it('is ineligible for a bodyless response', () => {
 		expect(
-			isBufferingIneligible('GET', new Response(null, { status: 200 }), 'content-encoding'),
+			isResponseUnbufferable('GET', new Response(null, { status: 200 }), 'content-encoding'),
 		).toBe(true)
 	})
 
@@ -223,12 +242,12 @@ describe('isBufferingIneligible', () => {
 		const response = new Response('data: x\n\n', {
 			headers: { 'content-type': 'text/event-stream' },
 		})
-		expect(isBufferingIneligible('GET', response, 'content-encoding')).toBe(true)
+		expect(isResponseUnbufferable('GET', response, 'content-encoding')).toBe(true)
 	})
 
 	it('is ineligible when the skip header is already present', () => {
 		const response = new Response('body', { headers: { 'content-encoding': 'gzip' } })
-		expect(isBufferingIneligible('GET', response, 'content-encoding')).toBe(true)
+		expect(isResponseUnbufferable('GET', response, 'content-encoding')).toBe(true)
 	})
 
 	it('is eligible for a plain buffered GET response', () => {
@@ -236,7 +255,7 @@ describe('isBufferingIneligible', () => {
 			status: 200,
 			headers: { 'content-type': 'text/plain' },
 		})
-		expect(isBufferingIneligible('GET', response, 'content-encoding')).toBe(false)
+		expect(isResponseUnbufferable('GET', response, 'content-encoding')).toBe(false)
 	})
 })
 

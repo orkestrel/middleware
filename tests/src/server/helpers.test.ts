@@ -1,13 +1,16 @@
 import { join, resolve as resolvePath } from 'node:path'
 import { tmpdir } from 'node:os'
-import { open, readFile, writeFile } from 'node:fs/promises'
+import { open, readFile, realpath, writeFile } from 'node:fs/promises'
 import { randomUUID } from 'node:crypto'
-import { gunzipSync, inflateSync } from 'node:zlib'
+import { brotliCompressSync, gunzipSync, inflateSync } from 'node:zlib'
 import { describe, expect, it } from 'vitest'
 import { waitForCondition } from '@orkestrel/test'
 import { createScratch } from '@orkestrel/test/server'
 import {
 	computeFileETag,
+	buildAssetResponse,
+	readAssetRecord,
+	resolveAssetKey,
 	compressNodeBytes,
 	createUploadedFile,
 	detectMIME,
@@ -25,11 +28,14 @@ import {
 	DEFAULT_MULTIPART_FILE_COUNT,
 	DEFAULT_MULTIPART_TOTAL,
 	moveUploadedFile,
+	openStaticFile,
+	planStaticResponse,
 	parsePartHeaders,
 	readUploadedFile,
 	resolveMultipartLimits,
 	resolveStaticFallbackPath,
 	resolveStaticPath,
+	resolveStaticFile,
 	streamFile,
 	streamUploadedFile,
 	unlinkStagedFiles,
@@ -46,6 +52,150 @@ import {
 const secondDevice = resolveSecondDevicePath(tmpdir())
 
 // ── resolveStaticPath — the traversal matrix ────────────────────────────────
+
+describe('asset stages', () => {
+	it('resolves decoded keys and refuses malformed or hidden paths', () => {
+		expect(resolveAssetKey('/')).toBe('index.html')
+		expect(resolveAssetKey('/a%20b.js')).toBe('a b.js')
+		for (const path of ['/%zz', '/a//b', '/a/../b', '/.hidden', '/a%5Cb']) {
+			expect(resolveAssetKey(path)).toBeUndefined()
+		}
+	})
+
+	it('copies identity bytes and derives Brotli records with the same validator', async () => {
+		const bytes = new TextEncoder().encode('asset')
+		const identity = await readAssetRecord({ read: () => ({ body: bytes }) }, 'a.txt')
+		const encoded = await readAssetRecord(
+			{ read: () => ({ body: brotliCompressSync(bytes), encoding: 'br' }) },
+			'a.txt',
+		)
+		expect(encoded?.identity).toEqual(bytes)
+		expect(encoded?.etag).toBe(identity?.etag)
+		bytes.fill(0)
+		expect(new TextDecoder().decode(identity?.identity)).toBe('asset')
+		expect(await readAssetRecord({ read: () => undefined }, 'missing')).toBeUndefined()
+		await expect(
+			readAssetRecord({ read: () => ({ body: new Uint8Array([0]), encoding: 'br' }) }, 'bad'),
+		).rejects.toThrow(/unexpected end|decompress/i)
+	})
+
+	it('builds negotiated HEAD and conditional responses from a record', async () => {
+		const record = await readAssetRecord(
+			{ read: () => ({ body: brotliCompressSync('asset'), encoding: 'br' }) },
+			'a.txt',
+		)
+		if (record === undefined) throw new Error('expected asset')
+		const plain = buildAssetResponse(new Request('http://test/a'), 'GET', record)
+		expect(await plain.text()).toBe('asset')
+		const encoded = buildAssetResponse(
+			new Request('http://test/a', { headers: { 'accept-encoding': 'br' } }),
+			'GET',
+			record,
+		)
+		expect(encoded.headers.get('content-encoding')).toBe('br')
+		expect(new Uint8Array(await encoded.arrayBuffer())).toEqual(record.brotli)
+		const head = buildAssetResponse(new Request('http://test/a'), 'HEAD', record)
+		expect(await head.text()).toBe('')
+		expect(head.headers.get('content-length')).toBe('5')
+		const fresh = buildAssetResponse(
+			new Request('http://test/a', { headers: { 'if-none-match': record.etag } }),
+			'GET',
+			record,
+		)
+		expect(fresh.status).toBe(304)
+		expect(fresh.headers.get('vary')).toBe('accept-encoding')
+	})
+})
+
+describe('static file stages', () => {
+	it('resolves contained files and directory indexes and refuses missing paths', async () => {
+		const directory = createScratch({ prefix: 'static-stages-' })
+		try {
+			const path = join(directory.path, 'index.html')
+			await writeFile(path, 'hello')
+			const root = await realpath(directory.path)
+			expect(await resolveStaticFile(root, root, 'index.html')).toBe(await realpath(path))
+			expect(await resolveStaticFile(path, root, 'index.html')).toBe(await realpath(path))
+			expect(await resolveStaticFile(join(root, 'missing'), root, 'index.html')).toBeUndefined()
+			expect(await resolveStaticFile(root, join(root, 'child'), 'index.html')).toBeUndefined()
+		} finally {
+			await directory.destroy()
+		}
+	})
+
+	it('opens regular files with handle metadata and refuses directories and missing files', async () => {
+		const directory = createScratch({ prefix: 'static-open-' })
+		try {
+			const path = join(directory.path, 'a.txt')
+			await writeFile(path, 'hello')
+			const file = await openStaticFile(path)
+			if (file === undefined) throw new Error('expected an opened file')
+			try {
+				expect(file.path).toBe(path)
+				expect(file.info.size).toBe(5)
+				expect(await file.handle.readFile('utf8')).toBe('hello')
+			} finally {
+				await file.handle.close()
+			}
+			expect(await openStaticFile(directory.path)).toBeUndefined()
+			expect(await openStaticFile(join(directory.path, 'missing'))).toBeUndefined()
+		} finally {
+			await directory.destroy()
+		}
+	})
+
+	it('plans conditional HEAD and range responses from the opened file', async () => {
+		const directory = createScratch({ prefix: 'static-plan-' })
+		try {
+			const path = join(directory.path, 'a.txt')
+			await writeFile(path, 'hello')
+			const file = await openStaticFile(path)
+			if (file === undefined) throw new Error('expected an opened file')
+			try {
+				const full = planStaticResponse(new Request('http://test/a'), 'GET', file.info, path, {
+					cache: 60,
+				})
+				expect(full.status).toBe(200)
+				expect(full.headers.get('cache-control')).toBe('max-age=60')
+				expect(full.headers.get('content-length')).toBe('5')
+				const head = planStaticResponse(new Request('http://test/a'), 'HEAD', file.info, path, {})
+				expect(head.status).toBe(200)
+				expect(head.range).toBeUndefined()
+				const partial = planStaticResponse(
+					new Request('http://test/a', { headers: { range: 'bytes=1-3' } }),
+					'GET',
+					file.info,
+					path,
+					{},
+				)
+				expect(partial.status).toBe(206)
+				expect(partial.range).toEqual({ start: 1, end: 3 })
+				const refused = planStaticResponse(
+					new Request('http://test/a', { headers: { range: 'bytes=8-' } }),
+					'GET',
+					file.info,
+					path,
+					{},
+				)
+				expect(refused.status).toBe(416)
+				const fresh = planStaticResponse(
+					new Request('http://test/a', {
+						headers: { 'if-none-match': computeFileETag(file.info.size, file.info.mtimeMs) },
+					}),
+					'GET',
+					file.info,
+					path,
+					{},
+				)
+				expect(fresh.status).toBe(304)
+			} finally {
+				await file.handle.close()
+			}
+		} finally {
+			await directory.destroy()
+		}
+	})
+})
 
 describe('resolveStaticPath', () => {
 	const root = resolvePath('/srv/public')
@@ -808,14 +958,10 @@ describe('lookupContentType', () => {
 // ── isMultipartError — brand narrowing ───────────────────────────────────────
 
 describe('isMultipartError', () => {
-	it('accepts a structurally-branded plain object built WITHOUT the class', () => {
-		// Simulates the "other module face" case: a value carrying the SAME
-		// well-known Symbol.for brand plus code/status, but never
-		// constructed through `new MultipartError(...)` — the guard is structural,
-		// not `instanceof`.
+	it('rejects a branded plain object built without the error class', () => {
 		const brand = Symbol.for('@orkestrel/middleware.MultipartError')
 		const value = { [brand]: true, status: 413, code: 'limit' }
-		expect(isMultipartError(value)).toBe(true)
+		expect(isMultipartError(value)).toBe(false)
 	})
 
 	it('rejects a plain Error (no brand)', () => {

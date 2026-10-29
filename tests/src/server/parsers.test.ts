@@ -1,3 +1,4 @@
+import { MiddlewareValue } from '../../setup.js'
 import type { MultipartPartInput } from '../../setupServer.js'
 import { dirname } from 'node:path'
 import { readFile, stat, unlink } from 'node:fs/promises'
@@ -278,15 +279,14 @@ describe('parseMultipartRequest', () => {
 		// a passing "rejected before the source was exhausted" assertion holds
 		// for any chunk size rather than coupling to the exact chunk arithmetic.
 		const totalChunks = 100_000
-		let sent = 0
-		let rejectedDuringFeed = false
+		const sent = new MiddlewareValue(0)
 		const stream = new ReadableStream<Uint8Array>({
 			async pull(controller) {
-				if (sent >= totalChunks) {
+				if (sent.value >= totalChunks) {
 					controller.close()
 					return
 				}
-				sent += 1
+				sent.value += 1
 				controller.enqueue(new TextEncoder().encode('x'.repeat(chunkSize)))
 			},
 		})
@@ -301,7 +301,7 @@ describe('parseMultipartRequest', () => {
 		await expect(promise).rejects.toSatisfy(
 			(error: unknown) => isMultipartError(error) && error.code === 'malformed',
 		)
-		rejectedDuringFeed = sent < totalChunks
+		const rejectedDuringFeed = sent.value < totalChunks
 		// The cap is checked incrementally, per chunk — rejection happens well
 		// before the source would have produced its full chunk count, proving
 		// the scan is bounded rather than buffering the whole (never-arriving)
@@ -351,24 +351,24 @@ describe('parseMultipartRequest', () => {
 			])
 			const controller = new AbortController()
 			const chunkSize = 64
-			let offset = 0
-			let abortedOnce = false
+			const offset = new MiddlewareValue(0)
+			const abortedOnce = new MiddlewareValue(false)
 			const stream = new ReadableStream<Uint8Array>({
 				async pull(streamController) {
-					if (offset >= body.length) {
+					if (offset.value >= body.length) {
 						streamController.close()
 						return
 					}
 					await waitForDelay(5)
 					// Fire the abort only after at least one file chunk has already
-					// been staged (offset > chunkSize guarantees a prior enqueue was
+					// been staged (offset.value > chunkSize guarantees a prior enqueue was
 					// consumed and written to disk by the multipart parser).
-					if (offset > chunkSize && !abortedOnce) {
-						abortedOnce = true
+					if (offset.value > chunkSize && !abortedOnce.value) {
+						abortedOnce.value = true
 						controller.abort()
 					}
-					const chunk = body.subarray(offset, offset + chunkSize)
-					offset += chunkSize
+					const chunk = body.subarray(offset.value, offset.value + chunkSize)
+					offset.value += chunkSize
 					streamController.enqueue(chunk)
 				},
 			})
@@ -402,12 +402,12 @@ describe('parseMultipartRequest', () => {
 				`--${boundary}\r\nContent-Disposition: form-data; name="avatar"; filename="a.bin"\r\nContent-Type: application/octet-stream\r\n\r\n${'x'.repeat(256)}`,
 			)
 			const waiting = new AbortController()
-			let pulls = 0
+			const pulls = new MiddlewareValue(0)
 			const stream = new ReadableStream<Uint8Array>(
 				{
 					pull(streamController) {
-						pulls += 1
-						if (pulls === 1) {
+						pulls.value += 1
+						if (pulls.value === 1) {
 							streamController.enqueue(initial)
 							return
 						}

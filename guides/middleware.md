@@ -90,14 +90,14 @@ A `Shape` cell holds an interface's data members as bare names in braces, `?` ma
 | `ForwardedOptions`          | type      | `{ proxies } \| { trusted }`                                                                   | Configures `createForwarded` — the trusted-proxy client-IP resolver.                                                                                                                                                                                                                                    |
 | `ETagOptions`               | interface | `{ weak? }`                                                                                    | Configures `createETag` — dynamic response ETag + conditional GET.                                                                                                                                                                                                                                      |
 | `BearerOptions`             | interface | `{ secret, header?, scheme? }`                                                                 | Configures `createBearer` — bearer-token authentication.                                                                                                                                                                                                                                                |
-| `LimiterOptions`            | interface | `{ max, window, capacity?, key?, message?, clock?, policy?, evict? }`                          | Configures `createLimiter` — fixed-window rate limiting.                                                                                                                                                                                                                                                |
+| `LimiterOptions`            | interface | `{ store?, max, window, capacity?, key?, message?, clock?, policy?, evict? }`                  | Configures `createLimiter` — fixed-window rate limiting.                                                                                                                                                                                                                                                |
 | `BearerState`               | interface | `{ token? }`                                                                                   | Describes the bearer-authentication state slice `createBearer` stashes on `context.state` once a token verifies.                                                                                                                                                                                        |
 | `IdentifierState`           | interface | `{ identifier? }`                                                                              | Describes the request-identifier state slice `createSecurity` stashes when its `identifier` option is enabled.                                                                                                                                                                                          |
 | `Client`                    | interface | `{ ip? }`                                                                                      | Describes the resolved client connection facts `createForwarded` stashes.                                                                                                                                                                                                                               |
 | `ClientState`               | interface | `{ client? }`                                                                                  | Describes the client-facts state slice `createForwarded` stashes.                                                                                                                                                                                                                                       |
 | `ConnectionState`           | interface | `{ connection? }`                                                                              | Describes the connection-facts state slice `createLimiter`'s default key derivation falls back to when neither `BearerState` nor `ClientState` is present — the raw socket peer surfaced on `context.state` by the server's `state` option.                                                             |
 | `SessionInterface`          | interface | `{ id, state } plus set, delete, clear`                                                        | Represents a server-managed session's public surface — an id, its live state, and the mutators that write it.                                                                                                                                                                                           |
-| `SessionControlInterface`   | interface | `{} plus regenerate, destroy`                                                                  | Describes the mid-handler control handle `createSession` stashes alongside the session itself — the OWASP anti-fixation / logout primitives.                                                                                                                                                            |
+| `SessionControlInterface`   | interface | `{ destroyed, successor } plus regenerate, destroy`                                            | Describes the mid-handler control handle `createSession` stashes alongside the session itself — the OWASP anti-fixation / logout primitives.                                                                                                                                                            |
 | `SessionState`              | interface | `{ session?, control? }`                                                                       | Describes the session state slice `createSession` stashes.                                                                                                                                                                                                                                              |
 | `BodyState`                 | interface | `{ body? }`                                                                                    | Describes the body state slice `createBody` stashes.                                                                                                                                                                                                                                                    |
 | `SessionStoreInterface`     | interface | `{} plus get, set, delete`                                                                     | Describes the pluggable session persistence seam `createSession`'s `store` option implements — a point-access store keyed by session id.                                                                                                                                                                |
@@ -119,7 +119,7 @@ A `Shape` cell holds an interface's data members as bare names in braces, `?` ma
 | `MultipartState`            | interface | `{ multipart? }`                                                                               | Describes the multipart state slice `createMultipart` stashes.                                                                                                                                                                                                                                          |
 | `Asset`                     | interface | `{ body, encoding? }`                                                                          | Describes one in-memory asset representation returned by an `AssetSourceInterface`.                                                                                                                                                                                                                     |
 | `AssetSourceInterface`      | interface | `{} plus read`                                                                                 | Reads in-memory assets by decoded, browser-build-relative path.                                                                                                                                                                                                                                         |
-| `AssetOptions`              | interface | `{ source }`                                                                                   | Configures `createAssets` — in-memory identity/Brotli asset serving.                                                                                                                                                                                                                                    |
+| `AssetOptions`              | interface | `{ source, store? }`                                                                           | Configures `createAssets` — in-memory identity/Brotli asset serving.                                                                                                                                                                                                                                    |
 | `StaticOptions`             | interface | `{ root, prefix?, index?, dotfiles?, cache?, etag?, fallback? }`                               | Configures `createStatic` — node `fs`-backed static file serving.                                                                                                                                                                                                                                       |
 | `MultipartLimitsInput`      | interface | `{ file?, field?, total? }`                                                                    | Describes the caller's partial `MultipartLimits` — `createMultipart`'s `limits` option, with every member optional.                                                                                                                                                                                     |
 | `MultipartLimits`           | interface | `{ file, field, total }`                                                                       | Describes the per-category size/count caps `createMultipart` enforces mid-stream — the effective limits, every documented default already applied.                                                                                                                                                      |
@@ -130,6 +130,38 @@ A `Shape` cell holds an interface's data members as bare names in braces, `?` ma
 | `UploadedFile`              | interface | `Omit<MultipartFile, 'status'> plus { status }`                                                | Describes one uploaded file's post-parse record — the node-bound, richer sibling of the pure core's `MultipartFile` (identical fields, `status` narrowed to `UploadStatus`). Structurally assignable into `MultipartFile` so a `createMultipart`-built `MultipartBody` satisfies the shared core shape. |
 | `PartHeaders`               | interface | `{ name, filename, mime }`                                                                     | Describes one multipart part's parsed header block — `parsePartHeaders`'s return shape.                                                                                                                                                                                                                 |
 | `ByteRange`                 | interface | `{ start, end }`                                                                               | Describes one inclusive byte range over a file — `streamFile`'s optional `range` argument and the shape `createStatic` builds for a satisfiable `Range` request.                                                                                                                                        |
+
+### Store and response types
+
+| Type                        | Kind      | Shape                             | Summary                                                                     |
+| --------------------------- | --------- | --------------------------------- | --------------------------------------------------------------------------- |
+| `StaticFile`                | interface | `{ path, handle, info }`          | Describes an opened static file and the facts read from its handle.         |
+| `StaticPlan`                | interface | `{ status, headers, range }`      | Describes response headers and the optional byte interval of a static file. |
+| `LimiterLimits`             | interface | `{ max, window }`                 | Describes the budget and duration used when a limiter window starts.        |
+| `LimiterResult`             | interface | `{ admitted, resetAt }`           | Reports an atomic admission decision and its window reset instant.          |
+| `LimiterEntry`              | interface | `{ budget, resetAt }`             | Holds the budget and reset instant of an in-memory limiter entry.           |
+| `LimiterStoreInterface`     | interface | `{} plus consume`                 | Provides atomic per-key fixed-window admission.                             |
+| `MemoryLimiterStoreOptions` | interface | `{ capacity?, evict? }`           | Configures the in-memory limiter's capacity and eviction observation.       |
+| `AssetRecord`               | interface | `{ key, identity, brotli, etag }` | Holds copied asset representations and their shared identity validator.     |
+| `AssetStoreInterface`       | interface | `{} plus get, set, delete`        | Provides asynchronous point access to cached asset representations.         |
+
+### Request control and stores
+
+| API                        | Kind     | Summary                                                                             |
+| -------------------------- | -------- | ----------------------------------------------------------------------------------- |
+| `SessionControl`           | class    | Records one request's session regeneration or destruction intent.                   |
+| `MemoryLimiterStore`       | class    | Stores fixed-window budgets with atomic admission and bounded LRU retention.        |
+| `MemoryAssetStore`         | class    | Stores asset representations by key for the lifetime of the store.                  |
+| `createMemoryLimiterStore` | function | Creates a bounded in-memory atomic limiter store.                                   |
+| `createMemoryAssetStore`   | function | Creates an in-memory asset representation store.                                    |
+| `extractBearerToken`       | function | Extracts a token after a case-insensitive scheme and one space.                     |
+| `extractFieldToken`        | function | Extracts a string field from a parsed body record.                                  |
+| `resolveStaticFile`        | function | Resolves a contained static path, including a directory's index.                    |
+| `openStaticFile`           | function | Opens a static file and reads its handle's metadata.                                |
+| `planStaticResponse`       | function | Plans conditional, HEAD, and byte-range responses from opened-file metadata.        |
+| `resolveAssetKey`          | function | Resolves a decoded relative asset key while refusing hidden or traversing segments. |
+| `readAssetRecord`          | function | Copies an asset, derives its identity bytes, and computes their validator.          |
+| `buildAssetResponse`       | function | Builds a conditional asset response with identity or Brotli negotiation.            |
 
 ### Constants
 
@@ -201,7 +233,7 @@ A `Shape` cell holds the constant's declared type.
 | `resolveForwardedFor`       | function | Walks `X-Forwarded-For` right-to-left and resolves the first untrusted hop address — `createForwarded`'s core algorithm.                                                                                                                                                                                                                                          |
 | `detectEncodings`           | function | Feature-detects which of `candidates` the runtime's `CompressionStream` actually supports — `createCompression`'s construction-time intersection.                                                                                                                                                                                                                 |
 | `compressBytes`             | function | Compresses bytes with the host-independent `CompressionStream` primitive.                                                                                                                                                                                                                                                                                         |
-| `isBufferingIneligible`     | function | Checks whether a response must skip the compression and ETag buffering pipeline — the shared cheap-skip predicate both batteries apply before ever touching `response.arrayBuffer()`, true for a `HEAD` request, a `204`/`304` or otherwise bodyless response, an `event-stream` response, and a response already carrying the header the caller is about to set. |
+| `isResponseUnbufferable`    | function | Checks whether a response must skip the compression and ETag buffering pipeline — the shared cheap-skip predicate both batteries apply before ever touching `response.arrayBuffer()`, true for a `HEAD` request, a `204`/`304` or otherwise bodyless response, an `event-stream` response, and a response already carrying the header the caller is about to set. |
 | `isCompressionNegotiated`   | function | Checks whether a negotiated `Accept-Encoding` outcome is worth acting on — `createCompression`'s negotiation-eligibility half of the skip list.                                                                                                                                                                                                                   |
 | `rebuildResponse`           | function | Rebuilds a `Response` around a replacement body while preserving its status/statusText — the buffered-response reconstruction shared by the compression and ETag batteries after they have consumed `response.arrayBuffer()`.                                                                                                                                     |
 | `compressResponse`          | function | Runs the shared negotiate → skip → threshold → compress → header-set skeleton both faces' `createCompression` batteries compose — response-body compression over a caller-supplied set of feature-detected codings.                                                                                                                                               |
@@ -297,6 +329,10 @@ The public methods of `AssetSourceInterface`, `SessionInterface`,
 compose (their `readonly` data members, where any exist, stay Surface rows
 in the preceding section).
 
+The multipart guard requires an Error subclass with its own identity brand,
+a declared code, a numeric status, and a context of the declared type. It accepts
+subclasses across package copies and refuses transparent proxies and plain objects.
+
 #### `AssetSourceInterface`
 
 The in-memory lookup seam. `createAssets` validates a request key before it
@@ -356,6 +392,20 @@ returning onion makes "before send" automatic).
 | `read`  | `string \| undefined \| Promise<...>` | Reads the incoming session id from the request — `undefined` on any failure.                                               |
 | `write` | `void \| Promise<void>`               | Writes a freshly minted or regenerated session id onto the response, together with the request's encrypted-transport fact. |
 | `clear` | `void`                                | Clears the transport's credential on `destroy()`.                                                                          |
+
+#### `LimiterStoreInterface`
+
+| Method    | Returns                  | Summary                                                                   |
+| --------- | ------------------------ | ------------------------------------------------------------------------- |
+| `consume` | `Promise<LimiterResult>` | Checks and consumes a budget without interleaving its admission decision. |
+
+#### `AssetStoreInterface`
+
+| Method   | Returns                             | Summary                                         |
+| -------- | ----------------------------------- | ----------------------------------------------- |
+| `get`    | `Promise<AssetRecord \| undefined>` | Reads a cached representation by key.           |
+| `set`    | `Promise<void>`                     | Stores a representation under its own key.      |
+| `delete` | `Promise<void>`                     | Removes a cached key; an absent key is a no-op. |
 
 ## Contract
 
@@ -484,7 +534,8 @@ prevents:
 22. **Assets.** `createAssets` decodes a browser-relative key and refuses
     malformed escapes, backslashes, empty segments, `.`/`..`, and dotfiles
     before it calls `AssetSourceInterface.read`. A successful value is copied
-    and cached. A Brotli value is decompressed once; Brotli and identity share
+    and cached through the configured store. Concurrent misses can decompress
+    and hash the same key independently. Brotli and identity share
     the identity body's `computeBodyETag` validator and vary on
     `Accept-Encoding`. Gzip is not offered. `Range` is ignored and serves the
     selected complete representation as `200`.
@@ -856,6 +907,122 @@ still served through the fallback, because the operator configured that path.
 - **Pick your `createSecurity` position deliberately** — inside the
   boundary (default; headers only on returned responses) or above it
   (headers on every response, thrown errors included) — see Contract §7.
+
+### Session control intent
+
+```ts
+import { Session, SessionControl } from '@orkestrel/middleware'
+
+const control = new SessionControl(new Session('original'))
+control.regenerate()
+console.log(control.successor?.id)
+control.destroy()
+console.log(control.destroyed) // true
+```
+
+### Atomic limiter store
+
+A fresh window takes the current maximum and duration. An active window retains
+its budget. Share a store when middleware instances must enforce the same quota.
+
+```ts
+import { createBudget } from '@orkestrel/budget'
+import { createLimiter, createMemoryLimiterStore, MemoryLimiterStore } from '@orkestrel/middleware'
+import type {
+	LimiterEntry,
+	LimiterLimits,
+	LimiterResult,
+	LimiterStoreInterface,
+	MemoryLimiterStoreOptions,
+} from '@orkestrel/middleware'
+
+const options: MemoryLimiterStoreOptions = { capacity: 100 }
+const store: LimiterStoreInterface = createMemoryLimiterStore(options)
+const limits: LimiterLimits = { max: 3, window: 1000 }
+const result: LimiterResult = await store.consume('client', Date.now(), limits)
+const entry: LimiterEntry = {
+	budget: createBudget({ max: limits.max, consumer: Number }),
+	resetAt: result.resetAt,
+}
+const limiter = createLimiter({ ...limits, store })
+console.log(result.admitted, entry.resetAt, limiter, new MemoryLimiterStore(options))
+```
+
+### Asset store and response stages
+
+The default store retains successful records until replacement or deletion.
+Concurrent cache misses can read, decompress, and hash the same key independently.
+
+```ts
+import {
+	buildAssetResponse,
+	createAssets,
+	createMemoryAssetStore,
+	MemoryAssetStore,
+	readAssetRecord,
+	resolveAssetKey,
+} from '@orkestrel/middleware/server'
+import type {
+	AssetRecord,
+	AssetSourceInterface,
+	AssetStoreInterface,
+} from '@orkestrel/middleware/server'
+
+const source: AssetSourceInterface = {
+	read: (path) =>
+		path === 'index.html' ? { body: new TextEncoder().encode('<h1>Home</h1>') } : undefined,
+}
+const store: AssetStoreInterface = createMemoryAssetStore()
+const key = resolveAssetKey('/')
+const record: AssetRecord | undefined =
+	key === undefined ? undefined : await readAssetRecord(source, key)
+if (record !== undefined) {
+	await store.set(record)
+	console.log(await store.get(record.key))
+	console.log(buildAssetResponse(new Request('https://example.test/'), 'HEAD', record))
+	await store.delete(record.key)
+}
+console.log(createAssets({ source, store }), new MemoryAssetStore())
+```
+
+### Static file response stages
+
+The opened handle supplies response metadata. Close it after a bodiless response;
+a streamed response transfers ownership to `streamFile`.
+
+```ts
+import { realpath } from 'node:fs/promises'
+import { join } from 'node:path'
+import { openStaticFile, planStaticResponse, resolveStaticFile } from '@orkestrel/middleware/server'
+import type { StaticFile, StaticPlan } from '@orkestrel/middleware/server'
+
+const root = await realpath('./public')
+const path = await resolveStaticFile(join(root, 'index.html'), root, 'index.html')
+const file: StaticFile | undefined = path === undefined ? undefined : await openStaticFile(path)
+if (file !== undefined) {
+	try {
+		const plan: StaticPlan = planStaticResponse(
+			new Request('https://example.test/', { method: 'HEAD' }),
+			'HEAD',
+			file.info,
+			file.path,
+			{ etag: true },
+		)
+		console.log(new Response(null, { status: plan.status, headers: plan.headers }))
+	} finally {
+		await file.handle.close()
+	}
+}
+```
+
+### Token extraction
+
+```ts
+import { extractBearerToken, extractFieldToken } from '@orkestrel/middleware'
+
+console.log(extractBearerToken('Bearer credential', 'Bearer'))
+console.log(extractFieldToken({ csrf: 'credential' }, 'csrf'))
+```
 
 ## Tests
 

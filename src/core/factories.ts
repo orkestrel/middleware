@@ -2,6 +2,8 @@ import type {
 	CookieTransportOptions,
 	HeaderTransportOptions,
 	MemorySessionStoreOptions,
+	MemoryLimiterStoreOptions,
+	LimiterStoreInterface,
 	SessionInterface,
 	SessionLimits,
 	SessionRow,
@@ -16,6 +18,18 @@ import { DEFAULT_SESSION_COOKIE, DEFAULT_SESSION_HEADER } from './constants.js'
 import { Session } from './Session.js'
 import { DatabaseSessionStore } from './stores/DatabaseSessionStore.js'
 import { MemorySessionStore } from './stores/MemorySessionStore.js'
+import { MemoryLimiterStore } from './stores/MemoryLimiterStore.js'
+
+/**
+ * Creates a bounded in-memory atomic limiter store.
+ * @param options - The capacity and eviction callback.
+ * @returns An atomic limiter store.
+ */
+export function createMemoryLimiterStore(
+	options?: MemoryLimiterStoreOptions,
+): LimiterStoreInterface {
+	return new MemoryLimiterStore(options)
+}
 
 /**
  * Creates a signed-cookie {@link SessionTransportInterface} — the session id travels as

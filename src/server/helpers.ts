@@ -1,21 +1,36 @@
 import type { MultipartBody } from '@src/core'
 import type {
+	AssetRecord,
+	AssetSourceInterface,
 	ByteRange,
+	StaticFile,
+	StaticPlan,
+	StaticOptions,
 	MultipartLimits,
 	MultipartLimitsInput,
 	PartHeaders,
 	UploadedFile,
 } from './types.js'
+import type { Stats } from 'node:fs'
 import type { FileHandle } from 'node:fs/promises'
 import type { Encoding } from '@orkestrel/server'
 import { createReadStream } from 'node:fs'
-import { copyFile, readFile, realpath, rename, unlink } from 'node:fs/promises'
+import { computeBodyETag, matchesETag, negotiateEncoding, parseRange } from '@orkestrel/server'
+import { copyFile, open, readFile, realpath, rename, stat, unlink } from 'node:fs/promises'
 import { extname, isAbsolute, join, normalize, relative, resolve, sep } from 'node:path'
 import { promisify } from 'node:util'
-import { deflate as zlibDeflate, gzip as zlibGzip } from 'node:zlib'
-import { isError, isString, isUint8Array } from '@orkestrel/contract'
+import { brotliDecompressSync, deflate as zlibDeflate, gzip as zlibGzip } from 'node:zlib'
+import {
+	attempt,
+	isArrayBuffer,
+	isError,
+	isObject,
+	isString,
+	isUint8Array,
+} from '@orkestrel/contract'
 import {
 	DEFAULT_CONTENT_TYPE,
+	DEFAULT_STATIC_INDEX,
 	DEFAULT_MULTIPART_FIELD_SIZE,
 	DEFAULT_MULTIPART_FIELD_COUNT,
 	DEFAULT_MULTIPART_FILE_SIZE,
@@ -142,17 +157,12 @@ export function resolveStaticPath(
 	prefix: string | undefined,
 	pathname: string,
 ): string | undefined {
-	let remainder = pathname
-	if (prefix !== undefined) {
-		if (!isUnderPath(pathname, prefix)) return undefined
-		remainder = pathname === prefix ? '/' : pathname.slice(prefix.length)
-	}
-	let decoded: string
-	try {
-		decoded = decodeURIComponent(remainder)
-	} catch {
-		return undefined
-	}
+	if (prefix !== undefined && !isUnderPath(pathname, prefix)) return undefined
+	const remainder =
+		prefix === undefined ? pathname : pathname === prefix ? '/' : pathname.slice(prefix.length)
+	const decodedResult = attempt(() => decodeURIComponent(remainder))
+	if (!decodedResult.success) return undefined
+	const decoded = decodedResult.value
 	if (decoded.includes('\0')) return undefined
 	const stripped = decoded.replace(/^[/\\]+/, '')
 	const normalized = normalize(stripped)
@@ -187,13 +197,12 @@ export async function resolveContainedRealPath(
 	candidate: string,
 	rootReal: string,
 ): Promise<string | undefined> {
-	let real: string
 	try {
-		real = await realpath(candidate)
+		const real = await realpath(candidate)
+		return isContainedPath(real, rootReal) ? real : undefined
 	} catch {
 		return undefined
 	}
-	return isContainedPath(real, rootReal) ? real : undefined
 }
 
 /**
@@ -353,9 +362,7 @@ export function detectMIME(head: Uint8Array): string | undefined {
  */
 export function matchesBytes(bytes: Uint8Array, signature: readonly number[], offset = 0): boolean {
 	if (bytes.length < offset + signature.length) return false
-	for (let index = 0; index < signature.length; index += 1)
-		if (bytes[offset + index] !== signature[index]) return false
-	return true
+	return signature.keys().every((index) => bytes[offset + index] === signature[index])
 }
 
 /**
@@ -381,9 +388,9 @@ export function extractMultipartBoundary(contentType: string | null): string | u
 		if (equals === -1) continue
 		const key = param.slice(0, equals).trim().toLowerCase()
 		if (key !== 'boundary') continue
-		let value = param.slice(equals + 1).trim()
-		if (value.startsWith('"') && value.endsWith('"') && value.length >= 2)
-			value = value.slice(1, -1)
+		const raw = param.slice(equals + 1).trim()
+		const value =
+			raw.startsWith('"') && raw.endsWith('"') && raw.length >= 2 ? raw.slice(1, -1) : raw
 		return value.length > 0 ? value : undefined
 	}
 	return undefined
@@ -431,24 +438,25 @@ export function resolveMultipartLimits(limits: MultipartLimitsInput | undefined)
  * ```
  */
 export function parsePartHeaders(block: string): PartHeaders {
-	let name: string | undefined
-	let filename: string | undefined
-	let mime: string | undefined
-	for (const line of block.split('\r\n')) {
-		const colon = line.indexOf(':')
-		if (colon === -1) continue
-		const key = line.slice(0, colon).trim().toLowerCase()
-		const value = line.slice(colon + 1).trim()
-		if (key === 'content-disposition') {
-			const nameMatch = /;\s*name="([^"]*)"/.exec(value)
-			const filenameMatch = /;\s*filename="([^"]*)"/.exec(value)
-			if (nameMatch !== null) name = nameMatch[1]
-			if (filenameMatch !== null) filename = filenameMatch[1]
-		} else if (key === 'content-type') {
-			mime = value
-		}
-	}
-	return { name, filename, mime }
+	return block.split('\r\n').reduce<PartHeaders>(
+		(headers, line) => {
+			const colon = line.indexOf(':')
+			if (colon === -1) return headers
+			const key = line.slice(0, colon).trim().toLowerCase()
+			const value = line.slice(colon + 1).trim()
+			if (key === 'content-disposition') {
+				const nameMatch = /;\s*name="([^"]*)"/.exec(value)
+				const filenameMatch = /;\s*filename="([^"]*)"/.exec(value)
+				return {
+					...headers,
+					name: nameMatch === null ? headers.name : nameMatch[1],
+					filename: filenameMatch === null ? headers.filename : filenameMatch[1],
+				}
+			}
+			return key === 'content-type' ? { ...headers, mime: value } : headers
+		},
+		{ name: undefined, filename: undefined, mime: undefined },
+	)
 }
 
 /**
@@ -641,4 +649,162 @@ export async function moveUploadedFile(
 		status: 'moved',
 		path: destination,
 	})
+}
+/**
+ * Resolves a contained static path, including a directory's index.
+ * @param target - The requested absolute path.
+ * @param rootReal - The canonical serving root.
+ * @param index - The index filename.
+ * @returns The contained file path, or undefined for an unavailable path.
+ */
+export async function resolveStaticFile(
+	target: string,
+	rootReal: string,
+	index: string,
+): Promise<string | undefined> {
+	const path = await resolveContainedRealPath(target, rootReal)
+	if (path === undefined) return undefined
+	const info = await stat(path).catch(() => undefined)
+	if (info === undefined) return undefined
+	return info.isDirectory() ? resolveContainedRealPath(join(path, index), rootReal) : path
+}
+
+/**
+ * Opens a static file and reads its handle's metadata.
+ * @param path - The resolved file path.
+ * @returns An open regular file, or undefined after closing any unsuitable handle.
+ */
+export async function openStaticFile(path: string): Promise<StaticFile | undefined> {
+	const handle = await open(path, 'r').catch(() => undefined)
+	if (handle === undefined) return undefined
+	const info = await handle.stat().catch(() => undefined)
+	if (info === undefined || !info.isFile()) {
+		await handle.close().catch(() => {})
+		return undefined
+	}
+	return { path, handle, info }
+}
+
+/**
+ * Plans conditional, HEAD, and byte-range responses from opened-file metadata.
+ * @param request - The request carrying conditional and range headers.
+ * @param method - The effective request method.
+ * @param info - The opened file's metadata.
+ * @param path - The path used for content-type selection.
+ * @param options - The cache duration and ETag switch.
+ * @returns The status, headers, and optional byte range without consuming the file.
+ */
+export function planStaticResponse(
+	request: Request,
+	method: string,
+	info: Stats,
+	path: string,
+	options: Pick<StaticOptions, 'cache' | 'etag'>,
+): StaticPlan {
+	const headers = new Headers({
+		'content-type': lookupContentType(path),
+		'accept-ranges': 'bytes',
+	})
+	if (options.cache !== undefined) headers.set('cache-control', `max-age=${options.cache}`)
+	if (options.etag !== false) {
+		const etag = computeFileETag(info.size, info.mtimeMs)
+		headers.set('etag', etag)
+		const conditional = request.headers.get('if-none-match')
+		if (conditional !== null && matchesETag(conditional, etag)) {
+			return { status: 304, headers, range: undefined }
+		}
+	}
+	if (method === 'HEAD') {
+		headers.set('content-length', String(info.size))
+		return { status: 200, headers, range: undefined }
+	}
+	const range = parseRange(request.headers.get('range') ?? undefined, info.size)
+	if (range === undefined) {
+		headers.set('content-length', String(info.size))
+		return { status: 200, headers, range: undefined }
+	}
+	if (!range.satisfiable) {
+		headers.set('content-range', `bytes */${info.size}`)
+		return { status: 416, headers, range: undefined }
+	}
+	headers.set('content-range', `bytes ${range.start}-${range.end}/${info.size}`)
+	headers.set('content-length', String(range.end - range.start + 1))
+	return { status: 206, headers, range: { start: range.start, end: range.end } }
+}
+/**
+ * Resolves a decoded relative asset key while refusing hidden or traversing segments.
+ * @param pathname - The URL pathname.
+ * @returns The asset key, or undefined when decoding or validation fails.
+ */
+export function resolveAssetKey(pathname: string): string | undefined {
+	const decoded = attempt(() => decodeURIComponent(pathname))
+	if (!decoded.success) return undefined
+	const key = decoded.value === '/' ? DEFAULT_STATIC_INDEX : decoded.value.slice(1)
+	if (
+		key.length === 0 ||
+		key.includes('\\') ||
+		key.split('/').some((segment) => segment.length === 0 || segment === '.' || segment === '..') ||
+		isDotfilePath(key)
+	)
+		return undefined
+	return key
+}
+
+/**
+ * Copies an asset, derives its identity bytes, and computes their validator.
+ * @param source - The bounded asset source.
+ * @param key - The validated relative asset key.
+ * @returns Owned representations, or undefined on a source miss.
+ * @throws {TypeError} When the source returns malformed asset data.
+ * @throws {Error} When Brotli data cannot be decompressed.
+ */
+export async function readAssetRecord(
+	source: AssetSourceInterface,
+	key: string,
+): Promise<AssetRecord | undefined> {
+	const asset = source.read(key)
+	if (asset === undefined) return undefined
+	if (!isObject(asset)) throw new TypeError('AssetSourceInterface.read must return an Asset')
+	const body = asset.body
+	const encoding = asset.encoding
+	if (
+		(!isArrayBuffer(body) && !isUint8Array(body)) ||
+		(encoding !== undefined && encoding !== 'br')
+	)
+		throw new TypeError('AssetSourceInterface.read must return an Asset')
+	const content = isArrayBuffer(body)
+		? Uint8Array.from(new Uint8Array(body))
+		: Uint8Array.from(body)
+	const brotli = encoding === 'br' ? content : undefined
+	const identity = brotli === undefined ? content : Uint8Array.from(brotliDecompressSync(brotli))
+	return { key, identity, brotli, etag: await computeBodyETag(identity) }
+}
+
+/**
+ * Builds a conditional asset response with identity or Brotli negotiation.
+ * @param request - The request carrying negotiation and conditional headers.
+ * @param method - The effective GET or HEAD method.
+ * @param record - The cached asset representations.
+ * @returns A full, HEAD, or not-modified response.
+ */
+export function buildAssetResponse(
+	request: Request,
+	method: string,
+	record: AssetRecord,
+): Response {
+	const encoded =
+		record.brotli !== undefined &&
+		negotiateEncoding(request.headers.get('accept-encoding') ?? '', ['br']) === 'br'
+	const body = encoded ? record.brotli : record.identity
+	const headers = new Headers({
+		'content-type': lookupContentType(record.key),
+		etag: record.etag,
+		vary: 'accept-encoding',
+	})
+	if (encoded) headers.set('content-encoding', 'br')
+	const cached = request.headers.get('if-none-match')
+	if (cached !== null && matchesETag(cached, record.etag))
+		return new Response(null, { status: 304, headers })
+	headers.set('content-length', String(body.byteLength))
+	return new Response(method === 'HEAD' ? undefined : Uint8Array.from(body), { headers })
 }

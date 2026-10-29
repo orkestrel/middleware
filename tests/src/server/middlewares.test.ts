@@ -1,5 +1,7 @@
-import type { ConnectionState, SessionInterface } from '@src/core'
+import type { CapstoneState } from '../../setupServer.js'
+import type { SessionInterface } from '@src/core'
 import type { MultipartState } from '@src/core'
+import { MiddlewareValue } from '../../setup.js'
 import { join } from 'node:path'
 import http from 'node:http'
 import { brotliCompressSync } from 'node:zlib'
@@ -316,12 +318,12 @@ describe('createStatic', () => {
 		try {
 			const handler = createStatic({ root: fixture.scratch.path })
 			const context = createTestContext(buildTestRequest('/nope.html'), {})
-			let called = false
+			const called = new MiddlewareValue(false)
 			const response = await handler(buildTestRequest('/nope.html'), context, async () => {
-				called = true
+				called.value = true
 				return new Response('miss', { status: 200 })
 			})
-			expect(called).toBe(true)
+			expect(called.value).toBe(true)
 			expect(await response.text()).toBe('miss')
 		} finally {
 			fixture.scratch.destroy()
@@ -332,16 +334,16 @@ describe('createStatic', () => {
 		const fixture = buildStaticFixture()
 		try {
 			const ignoreHandler = createStatic({ root: fixture.scratch.path, dotfiles: 'ignore' })
-			let nextCalled = false
+			const nextCalled = new MiddlewareValue(false)
 			const ignoreResponse = await ignoreHandler(
 				buildTestRequest('/.env'),
 				createTestContext(buildTestRequest('/.env'), {}),
 				async () => {
-					nextCalled = true
+					nextCalled.value = true
 					return new Response('miss')
 				},
 			)
-			expect(nextCalled).toBe(true)
+			expect(nextCalled.value).toBe(true)
 			expect(await ignoreResponse.text()).toBe('miss')
 
 			const denyHandler = createStatic({ root: fixture.scratch.path, dotfiles: 'deny' })
@@ -375,16 +377,16 @@ describe('createStatic', () => {
 				'/%2e%2e/%2e%2e/etc/passwd',
 				'/..%2f..%2fetc%2fpasswd',
 			]) {
-				let nextCalled = false
+				const nextCalled = new MiddlewareValue(false)
 				const response = await handler(
 					buildTestRequest(path),
 					createTestContext(buildTestRequest(path), {}),
 					async () => {
-						nextCalled = true
+						nextCalled.value = true
 						return new Response('fell through')
 					},
 				)
-				expect(nextCalled).toBe(true)
+				expect(nextCalled.value).toBe(true)
 				expect(await response.text()).not.toContain('root:')
 			}
 		} finally {
@@ -396,16 +398,16 @@ describe('createStatic', () => {
 		const fixture = buildStaticFixture()
 		try {
 			const handler = createStatic({ root: fixture.scratch.path })
-			let nextCalled = false
+			const nextCalled = new MiddlewareValue(false)
 			const reservedResponse = await handler(
 				buildTestRequest('/NUL.json'),
 				createTestContext(buildTestRequest('/NUL.json'), {}),
 				async () => {
-					nextCalled = true
+					nextCalled.value = true
 					return new Response('miss')
 				},
 			)
-			expect(nextCalled).toBe(true)
+			expect(nextCalled.value).toBe(true)
 			expect(await reservedResponse.text()).toBe('miss')
 
 			const okResponse = await handler(
@@ -429,12 +431,12 @@ describe('createStatic', () => {
 				fallback: true,
 			})
 			const request = new Request('http://test.local/.env', { headers: { accept: 'text/html' } })
-			let nextCalled = false
+			const nextCalled = new MiddlewareValue(false)
 			const response = await handler(request, createTestContext(request, {}), async () => {
-				nextCalled = true
+				nextCalled.value = true
 				return new Response('fell through', { status: 404 })
 			})
-			expect(nextCalled).toBe(true)
+			expect(nextCalled.value).toBe(true)
 			expect(response.status).toBe(404)
 			expect(await response.text()).not.toContain('root index')
 		} finally {
@@ -460,12 +462,12 @@ describe('createStatic', () => {
 			const apiRequest = new Request('http://test.local/api/missing', {
 				headers: { accept: 'text/html' },
 			})
-			let nextCalled = false
+			const nextCalled = new MiddlewareValue(false)
 			const apiResponse = await handler(apiRequest, createTestContext(apiRequest, {}), async () => {
-				nextCalled = true
+				nextCalled.value = true
 				return new Response('api miss', { status: 404 })
 			})
-			expect(nextCalled).toBe(true)
+			expect(nextCalled.value).toBe(true)
 			expect(apiResponse.status).toBe(404)
 
 			// SEGMENT-boundary exclude: `/apifoo` is not under `/api`, so it still
@@ -612,12 +614,12 @@ describe('createStatic', () => {
 			const request = new Request('http://test.local/app/dashboard', {
 				headers: { accept: 'application/json' },
 			})
-			let nextCalled = false
+			const nextCalled = new MiddlewareValue(false)
 			const response = await handler(request, createTestContext(request, {}), async () => {
-				nextCalled = true
+				nextCalled.value = true
 				return new Response('json miss', { status: 404 })
 			})
-			expect(nextCalled).toBe(true)
+			expect(nextCalled.value).toBe(true)
 			expect(response.status).toBe(404)
 			expect(await response.text()).not.toContain('root index')
 		} finally {
@@ -696,16 +698,16 @@ describe('createStatic', () => {
 			try {
 				const handler = createStatic({ root: symlinkFixture.scratch.path })
 
-				let nextCalled = false
+				const nextCalled = new MiddlewareValue(false)
 				const escapeResponse = await handler(
 					buildTestRequest('/link-outside.html'),
 					createTestContext(buildTestRequest('/link-outside.html'), {}),
 					async () => {
-						nextCalled = true
+						nextCalled.value = true
 						return new Response('miss', { status: 404 })
 					},
 				)
-				expect(nextCalled).toBe(true)
+				expect(nextCalled.value).toBe(true)
 				expect(escapeResponse.status).toBe(404)
 				expect(await escapeResponse.text()).not.toContain('outside secret')
 
@@ -728,16 +730,16 @@ describe('createStatic', () => {
 			const fixture = buildDirectoryIndexFixture()
 			try {
 				const handler = createStatic({ root: fixture.scratch.path })
-				let nextCalled = false
+				const nextCalled = new MiddlewareValue(false)
 				const response = await handler(
 					buildTestRequest('/sub/'),
 					createTestContext(buildTestRequest('/sub/'), {}),
 					async () => {
-						nextCalled = true
+						nextCalled.value = true
 						return new Response('miss', { status: 404 })
 					},
 				)
-				expect(nextCalled).toBe(true)
+				expect(nextCalled.value).toBe(true)
 				expect(response.status).toBe(404)
 				expect(await response.text()).not.toContain('outside secret')
 			} finally {
@@ -892,12 +894,12 @@ describe('createMultipart', () => {
 			])
 			const state: MultipartState = {}
 			const context = createTestContext(request, state)
-			let nextCalled = false
+			const nextCalled = new MiddlewareValue(false)
 			await handler(request, context, async () => {
-				nextCalled = true
+				nextCalled.value = true
 				return new Response('ok')
 			})
-			expect(nextCalled).toBe(true)
+			expect(nextCalled.value).toBe(true)
 			expect(isMultipartBody(state.multipart)).toBe(true)
 			const files = state.multipart?.files.avatar
 			expect(files?.[0]?.name).toBe('a.png')
@@ -1015,12 +1017,12 @@ describe('createMultipart', () => {
 				},
 			])
 			const state: MultipartState = {}
-			let nextCalled = false
+			const nextCalled = new MiddlewareValue(false)
 			const response = await handler(request, createTestContext(request, state), async () => {
-				nextCalled = true
+				nextCalled.value = true
 				return new Response('ok', { status: 200 })
 			})
-			expect(nextCalled).toBe(true)
+			expect(nextCalled.value).toBe(true)
 			expect(response.status).toBe(200)
 			expect(Object.prototype.hasOwnProperty.call(state.multipart?.files ?? {}, '__proto__')).toBe(
 				false,
@@ -1049,12 +1051,12 @@ describe('createMultipart', () => {
 			body: '{}',
 		})
 		const state: MultipartState = {}
-		let nextCalled = false
+		const nextCalled = new MiddlewareValue(false)
 		await handler(request, createTestContext(request, state), async () => {
-			nextCalled = true
+			nextCalled.value = true
 			return new Response('ok')
 		})
-		expect(nextCalled).toBe(true)
+		expect(nextCalled.value).toBe(true)
 		expect(state.multipart).toBeUndefined()
 	})
 
@@ -1188,15 +1190,6 @@ describe('createCompression (node face)', () => {
 // `Server` class is swapped for its two documented conversion primitives.
 
 describe('capstone: real socket + Dispatcher + canonical onion', () => {
-	interface CapstoneState extends ConnectionState {
-		identifier?: string
-		client?: { readonly ip?: string }
-		token?: string
-		session?: SessionInterface
-		control?: { regenerate(): void; destroy(): void }
-		csrf?: string
-	}
-
 	it('one authenticated JSON round-trip fingerprints every layer on the wire, plus a 429 and a CSRF 403', async () => {
 		const secret = 'capstone-secret'
 		const bearerToken = await signToken('capstone-user', { secret })

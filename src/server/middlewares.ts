@@ -1,32 +1,16 @@
-import type { MultipartBody, MultipartState } from '@src/core'
+import type { MultipartState } from '@src/core'
 import type {
 	AssetOptions,
 	MultipartOptions,
 	NodeCompressionOptions,
 	StaticOptions,
 } from './types.js'
-import type { Stats } from 'node:fs'
-import type { FileHandle } from 'node:fs/promises'
 import type { MiddlewareHandler } from '@orkestrel/server'
 import { DEFAULT_COMPRESSION_THRESHOLD, compressResponse } from '@src/core'
-import { open, realpath, stat } from 'node:fs/promises'
-import { join, relative, resolve } from 'node:path'
-import { brotliDecompressSync } from 'node:zlib'
-import {
-	computeBodyETag,
-	HTTPError,
-	matchesETag,
-	negotiateEncoding,
-	parseRange,
-} from '@orkestrel/server'
-import {
-	isArrayBuffer,
-	isFiniteNumber,
-	isFunction,
-	isObject,
-	isString,
-	isUint8Array,
-} from '@orkestrel/contract'
+import { realpath } from 'node:fs/promises'
+import { relative, resolve } from 'node:path'
+import { HTTPError } from '@orkestrel/server'
+import { attempt, isFiniteNumber, isFunction, isObject, isString } from '@orkestrel/contract'
 import {
 	DEFAULT_STATIC_DOTFILES,
 	DEFAULT_STATIC_FALLBACK_EXCLUDE,
@@ -35,18 +19,21 @@ import {
 } from './constants.js'
 import { isMultipartError } from './errors.js'
 import {
-	computeFileETag,
 	compressNodeBytes,
-	isContainedPath,
 	isDotfilePath,
-	lookupContentType,
-	resolveContainedRealPath,
+	resolveAssetKey,
+	readAssetRecord,
+	buildAssetResponse,
+	resolveStaticFile,
+	openStaticFile,
+	planStaticResponse,
 	resolveStaticFallbackPath,
 	resolveStaticPath,
 	streamFile,
 	unlinkStagedFiles,
 } from './helpers.js'
 import { parseMultipartRequest } from './parsers.js'
+import { MemoryAssetStore } from './stores/MemoryAssetStore.js'
 
 /**
  * Serves validated in-memory assets with identity/Brotli negotiation.
@@ -55,7 +42,8 @@ import { parseMultipartRequest } from './parsers.js'
  * Only `GET` and `HEAD` are served. `/` resolves to `index.html`. Every other
  * key is decoded once, must remain relative, and refuses empty, dot, climbing,
  * backslash, and dotfile segments before the source is read. Successful source
- * values are copied and cached by key. A Brotli value is decompressed once for
+ * values are copied and cached by key. Concurrent misses can compute a digest twice.
+ * A Brotli value is decompressed for
  * the identity representation; both representations share an ETag computed
  * from those identity bytes. Responses always vary on `Accept-Encoding`.
  * Range requests are intentionally served as full responses because an asset
@@ -85,81 +73,24 @@ import { parseMultipartRequest } from './parsers.js'
 export function createAssets<TState>(options: AssetOptions): MiddlewareHandler<TState> {
 	if (!isObject(options?.source) || !('read' in options.source) || !isFunction(options.source.read))
 		throw new TypeError('AssetOptions.source must implement AssetSourceInterface')
-	const identities = new Map<string, Uint8Array<ArrayBuffer>>()
-	const brotlis = new Map<string, Uint8Array<ArrayBuffer>>()
-	const tags = new Map<string, Promise<string>>()
+	if (
+		options.store !== undefined &&
+		(!isFunction(options.store.get) ||
+			!isFunction(options.store.set) ||
+			!isFunction(options.store.delete))
+	)
+		throw new TypeError('AssetOptions.store must implement AssetStoreInterface')
+	const store = options.store ?? new MemoryAssetStore()
 
 	return async (request, context, next) => {
 		if (context.method !== 'GET' && context.method !== 'HEAD') return next()
-		let pathname: string
-		try {
-			pathname = decodeURIComponent(context.url.pathname)
-		} catch {
-			return next()
-		}
-		const key = pathname === '/' ? DEFAULT_STATIC_INDEX : pathname.slice(1)
-		if (
-			key.length === 0 ||
-			key.includes('\\') ||
-			key
-				.split('/')
-				.some((segment) => segment.length === 0 || segment === '.' || segment === '..') ||
-			isDotfilePath(key)
-		)
-			return next()
-
-		let identity = identities.get(key)
-		let brotli = brotlis.get(key)
-		if (identity === undefined) {
-			const asset = options.source.read(key)
-			if (asset === undefined) return next()
-			if (!isObject(asset)) throw new TypeError('AssetSourceInterface.read must return an Asset')
-			const body = asset.body
-			const encoding = asset.encoding
-			if (
-				(!isArrayBuffer(body) && !isUint8Array(body)) ||
-				(encoding !== undefined && encoding !== 'br')
-			)
-				throw new TypeError('AssetSourceInterface.read must return an Asset')
-			const content = isArrayBuffer(body)
-				? Uint8Array.from(new Uint8Array(body))
-				: Uint8Array.from(body)
-			if (encoding === 'br') {
-				brotli = content
-				identity = Uint8Array.from(brotliDecompressSync(content))
-				brotlis.set(key, brotli)
-			} else {
-				identity = content
-			}
-			identities.set(key, identity)
-		}
-
-		let pending = tags.get(key)
-		if (pending === undefined) {
-			pending = computeBodyETag(identity)
-			tags.set(key, pending)
-		}
-		const etag = await pending
-		let body = identity
-		let encoding: 'br' | undefined
-		if (
-			brotli !== undefined &&
-			negotiateEncoding(request.headers.get('accept-encoding') ?? '', ['br']) === 'br'
-		) {
-			body = brotli
-			encoding = 'br'
-		}
-		const headers = new Headers({
-			'content-type': lookupContentType(key),
-			etag,
-			vary: 'accept-encoding',
-		})
-		if (encoding !== undefined) headers.set('content-encoding', encoding)
-		const cached = request.headers.get('if-none-match')
-		if (cached !== null && matchesETag(cached, etag))
-			return new Response(null, { status: 304, headers })
-		headers.set('content-length', String(body.byteLength))
-		return new Response(context.method === 'HEAD' ? undefined : body, { headers })
+		const key = resolveAssetKey(context.url.pathname)
+		if (key === undefined) return next()
+		const cached = await store.get(key)
+		const record = cached ?? (await readAssetRecord(options.source, key))
+		if (record === undefined) return next()
+		if (cached === undefined) await store.set(record)
+		return buildAssetResponse(request, context.method, record)
 	}
 }
 
@@ -169,7 +100,7 @@ export function createAssets<TState>(options: AssetOptions): MiddlewareHandler<T
  *
  * @remarks
  * Containment is enforced on canonical paths, not merely the lexically
- * resolved one: `options.root` is canonicalized once (memoized) and every
+ * resolved one: `options.root` is canonicalized per request and every
  * request's candidate path is re-canonicalized (`fs.realpath`) before it is
  * served, so a symlink whose target escapes `root` is refused (falls through
  * to `next()`) even though the lexical path resolved inside `root`. A
@@ -209,8 +140,6 @@ export function createStatic<TState>(options: StaticOptions): MiddlewareHandler<
 				? undefined
 				: { exclude: options.fallback.exclude ?? DEFAULT_STATIC_FALLBACK_EXCLUDE }
 
-	let canonicalRootPromise: Promise<string> | undefined
-
 	return async (request, context, next) => {
 		if (context.method !== 'GET' && context.method !== 'HEAD') return next()
 
@@ -223,164 +152,44 @@ export function createStatic<TState>(options: StaticOptions): MiddlewareHandler<
 			if (dotfiles === 'ignore') return next()
 		}
 
-		let resolvedPath = target
-		let fallbackNeeded = false
-		try {
-			if (canonicalRootPromise === undefined) canonicalRootPromise = realpath(root)
-			const [rootReal, targetReal] = await Promise.all([canonicalRootPromise, realpath(target)])
-			if (!isContainedPath(targetReal, rootReal)) return next()
-			resolvedPath = targetReal
-		} catch {
-			fallbackNeeded = true
+		const rootReal = await realpath(root).catch(() => undefined)
+		if (rootReal === undefined) return next()
+		const primary = await resolveStaticFile(target, rootReal, index)
+		const direct = primary === undefined ? undefined : await openStaticFile(primary)
+		const shellPath =
+			direct === undefined && fallback !== undefined
+				? resolveStaticFallbackPath(
+						root,
+						index,
+						fallback.exclude,
+						context.method,
+						context.url.pathname,
+						request.headers.get('accept') ?? '',
+					)
+				: undefined
+		const shellReal =
+			shellPath === undefined ? undefined : await resolveStaticFile(shellPath, rootReal, index)
+		const shell = shellReal === undefined ? undefined : await openStaticFile(shellReal)
+		const file = direct ?? shell
+		if (file === undefined) return next()
+		const plan = attempt(() =>
+			planStaticResponse(request, context.method, file.info, file.path, {
+				...(options.cache === undefined ? {} : { cache: options.cache }),
+				etag: useETag,
+			}),
+		)
+		if (!plan.success) {
+			await file.handle.close().catch(() => {})
+			throw plan.error
 		}
-
-		// Directory-detection only — routing decision, not the served file's
-		// facts. The bytes streamed and the headers computed for them come
-		// from a single `fstat` on a handle opened later in this function,
-		// closing the stat-to-stream TOCTOU (a file replaced between "check"
-		// and "serve" can no longer yield a 200 with stale headers over
-		// swapped bytes).
-		let directoryInfo: Stats | undefined
-		if (!fallbackNeeded) {
-			try {
-				directoryInfo = await stat(resolvedPath)
-			} catch {
-				fallbackNeeded = true
-			}
+		const streamed =
+			context.method === 'GET' && (plan.value.status === 200 || plan.value.status === 206)
+		if (!streamed) {
+			await file.handle.close()
+			return new Response(null, plan.value)
 		}
-
-		if (directoryInfo?.isDirectory()) {
-			resolvedPath = join(resolvedPath, index)
-			try {
-				if (canonicalRootPromise === undefined) canonicalRootPromise = realpath(root)
-				const rootReal = await canonicalRootPromise
-				const indexReal = await resolveContainedRealPath(resolvedPath, rootReal)
-				if (indexReal === undefined) fallbackNeeded = true
-				else resolvedPath = indexReal
-			} catch {
-				fallbackNeeded = true
-			}
-		}
-
-		let handle: FileHandle | undefined
-		let info: Stats | undefined
-		if (!fallbackNeeded) {
-			try {
-				handle = await open(resolvedPath, 'r')
-			} catch {
-				fallbackNeeded = true
-			}
-		}
-		if (handle !== undefined) {
-			try {
-				info = await handle.stat()
-			} catch {
-				await handle.close()
-				handle = undefined
-				fallbackNeeded = true
-			}
-		}
-		if (handle !== undefined && info !== undefined && !info.isFile()) {
-			await handle.close()
-			handle = undefined
-			info = undefined
-			fallbackNeeded = true
-		}
-
-		if (fallbackNeeded) {
-			const shellPath = resolveStaticFallbackPath(
-				root,
-				index,
-				fallback?.exclude ?? DEFAULT_STATIC_FALLBACK_EXCLUDE,
-				context.method,
-				context.url.pathname,
-				request.headers.get('accept') ?? '',
-			)
-			if (fallback === undefined || shellPath === undefined) return next()
-			let shellReal: string
-			try {
-				if (canonicalRootPromise === undefined) canonicalRootPromise = realpath(root)
-				const rootReal = await canonicalRootPromise
-				const candidate = await resolveContainedRealPath(shellPath, rootReal)
-				if (candidate === undefined) return next()
-				shellReal = candidate
-			} catch {
-				return next()
-			}
-			let shellHandle: FileHandle
-			try {
-				shellHandle = await open(shellReal, 'r')
-			} catch {
-				return next()
-			}
-			let shellInfo: Stats
-			try {
-				shellInfo = await shellHandle.stat()
-			} catch {
-				await shellHandle.close().catch(() => {})
-				return next()
-			}
-			if (!shellInfo.isFile()) {
-				await shellHandle.close().catch(() => {})
-				return next()
-			}
-			// The shell answers through the same response block the primary path
-			// uses, so `cache`, `etag`, conditional revalidation, `HEAD`, and
-			// ranges are computed from the shell handle's own `fstat` and cannot
-			// diverge between a served file and the shell served in its place.
-			resolvedPath = shellReal
-			handle = shellHandle
-			info = shellInfo
-		}
-
-		if (handle === undefined || info === undefined) return next()
-
-		let streaming = false
-		try {
-			const headers = new Headers({
-				'content-type': lookupContentType(resolvedPath),
-				'accept-ranges': 'bytes',
-			})
-			if (options.cache !== undefined) headers.set('cache-control', `max-age=${options.cache}`)
-
-			if (useETag) {
-				const etag = computeFileETag(info.size, info.mtimeMs)
-				headers.set('etag', etag)
-				const ifNoneMatch = request.headers.get('if-none-match')
-				if (ifNoneMatch !== null && matchesETag(ifNoneMatch, etag)) {
-					await handle.close()
-					return new Response(null, { status: 304, headers })
-				}
-			}
-
-			if (context.method === 'HEAD') {
-				await handle.close()
-				headers.set('content-length', String(info.size))
-				return new Response(null, { status: 200, headers })
-			}
-
-			const rangeHeader = request.headers.get('range')
-			const range = parseRange(rangeHeader === null ? undefined : rangeHeader, info.size)
-			if (range === undefined) {
-				headers.set('content-length', String(info.size))
-				const body = streamFile(handle)
-				streaming = true
-				return new Response(body, { status: 200, headers })
-			}
-			if (!range.satisfiable) {
-				await handle.close()
-				headers.set('content-range', `bytes */${info.size}`)
-				return new Response(null, { status: 416, headers })
-			}
-			headers.set('content-range', `bytes ${range.start}-${range.end}/${info.size}`)
-			headers.set('content-length', String(range.end - range.start + 1))
-			const body = streamFile(handle, { start: range.start, end: range.end })
-			streaming = true
-			return new Response(body, { status: 206, headers })
-		} catch (error) {
-			if (!streaming) await handle.close().catch(() => {})
-			throw error
-		}
+		const body = streamFile(file.handle, plan.value.range)
+		return new Response(body, plan.value)
 	}
 }
 
@@ -419,13 +228,13 @@ export function createMultipart<TState extends MultipartState>(
 	options: MultipartOptions = {},
 ): MiddlewareHandler<TState> {
 	return async (request, context, next) => {
-		let body: MultipartBody | undefined
-		try {
-			body = await parseMultipartRequest(request, options)
-		} catch (error) {
+		const [outcome] = await Promise.allSettled([parseMultipartRequest(request, options)])
+		if (outcome.status === 'rejected') {
+			const error: unknown = outcome.reason
 			if (isMultipartError(error)) throw new HTTPError(error.status, error.message, error.context)
 			throw error
 		}
+		const body = outcome.value
 		if (body === undefined) return next()
 		Object.assign(context.state, { multipart: body })
 		try {

@@ -9,7 +9,7 @@ import {
 	sessionColumns,
 } from '@src/core'
 import { describe, expect, it } from 'vitest'
-import { buildStore } from '../../../setup.js'
+import { buildStore, restoreMarkedSession, isAuthorizedSession } from '../../../setup.js'
 
 // ============================================================================
 //  @orkestrel/middleware — DatabaseSessionStore unit tests. Every scenario
@@ -21,16 +21,9 @@ import { buildStore } from '../../../setup.js'
 
 // A rebuild step distinguishable from `createRestoredSession`: it marks every
 // session it produces, so a store using its own step fails the following proof.
-const restore = (value: unknown): Session | undefined => {
-	const session = createRestoredSession(value)
-	session?.set('rebuilt', 'injected')
-	return session
-}
 
 // Stricter than `isSession`: also requires a specific state entry, so a
 // structurally-valid session that lacks it is still rejected.
-const isAuthorized = (value: unknown): value is Session =>
-	isSession(value) && value.state.get('authorized') === true
 
 describe('DatabaseSessionStore construction', () => {
 	it('accepts no options, a bare ttl, a bare lifetime, or both', () => {
@@ -167,7 +160,7 @@ describe('DatabaseSessionStore snapshot rebuild', () => {
 
 	it('rebuilds through the step it was constructed with, not one of its own', async () => {
 		const { table } = buildStore()
-		const store = new DatabaseSessionStore(table, isSession, restore)
+		const store = new DatabaseSessionStore(table, isSession, restoreMarkedSession)
 		await table.set({ id: 'a', session: { id: 'a', state: {} }, seen: 0, created: 0 })
 		const restored = await store.get('a', 0)
 		expect(restored?.state.get('rebuilt')).toBe('injected')
@@ -177,7 +170,7 @@ describe('DatabaseSessionStore snapshot rebuild', () => {
 describe('DatabaseSessionStore guard rejection', () => {
 	it('resolves undefined when the restored session fails the caller-supplied guard', async () => {
 		const { table } = buildStore()
-		const strict = new DatabaseSessionStore(table, isAuthorized, createRestoredSession)
+		const strict = new DatabaseSessionStore(table, isAuthorizedSession, createRestoredSession)
 		await strict.set(new Session('a'), 0)
 		expect(await strict.get('a', 0)).toBeUndefined()
 	})

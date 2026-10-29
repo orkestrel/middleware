@@ -7,9 +7,15 @@ import type {
 	SessionStoreInterface,
 	SessionTransportInterface,
 } from '@src/core'
-import { compose, readBody } from '@orkestrel/server'
+import { ContentTooLargeError, compose, readBody } from '@orkestrel/server'
 import { createDatabase, createMemoryDriver } from '@orkestrel/database'
-import { createDatabaseSessionStore, isSession, Session, sessionColumns } from '@src/core'
+import {
+	createDatabaseSessionStore,
+	createRestoredSession,
+	isSession,
+	Session,
+	sessionColumns,
+} from '@src/core'
 
 // ── Middleware test harness ──────────────────────────────────────────────────
 //
@@ -64,14 +70,14 @@ export function createTestContext<TState>(
 	state: TState,
 ): MiddlewareContext<TState> {
 	const url = new URL(request.url)
-	let cached: Promise<unknown> | undefined
+	const cached = new MiddlewareValue<Promise<unknown> | undefined>(undefined)
 	return {
 		url,
 		method: request.method,
 		state,
 		body() {
-			if (cached === undefined) cached = readBody(request, { limit: TEST_BODY_LIMIT })
-			return cached
+			if (cached.value === undefined) cached.value = readBody(request, { limit: TEST_BODY_LIMIT })
+			return cached.value
 		},
 	}
 }
@@ -227,14 +233,14 @@ export interface ManualClockInterface {
  * ```
  */
 export function createManualClock(start = 0): ManualClockInterface {
-	let now = start
+	const now = new MiddlewareValue(start)
 	return {
-		clock: () => now,
+		clock: () => now.value,
 		advance(ms) {
-			now += ms
+			now.value += ms
 		},
 		set(value) {
-			now = value
+			now.value = value
 		},
 	}
 }
@@ -367,4 +373,62 @@ export function buildStore(options?: SessionLimits): SessionStoreFixtureInterfac
 	})
 	const table = database.table('sessions')
 	return { table, store: createDatabaseSessionStore(table, isSession, options) }
+}
+
+/** Holds the callback state of one middleware fixture. */
+export class MiddlewareValue<T> {
+	#value: T
+
+	constructor(value: T) {
+		this.#value = value
+	}
+
+	get value(): T {
+		return this.#value
+	}
+
+	set value(value: T) {
+		this.#value = value
+	}
+}
+
+/** Restores a session and records use of the injected restore step. */
+export function restoreMarkedSession(value: unknown): Session | undefined {
+	const session = createRestoredSession(value)
+	session?.set('rebuilt', 'injected')
+	return session
+}
+
+/** Checks the authorization entry in addition to the session contract. */
+export function isAuthorizedSession(value: unknown): value is Session {
+	return isSession(value) && value.state.get('authorized') === true
+}
+
+/** Builds a context whose cached body rejects with the configured size error. */
+export function createOversizedContext(request: Request): MiddlewareContext<Record<string, never>> {
+	const cached = new MiddlewareValue<Promise<unknown> | undefined>(undefined)
+	return {
+		url: new URL(request.url),
+		method: request.method,
+		state: {},
+		body() {
+			cached.value ??= Promise.reject(new ContentTooLargeError(1024))
+			return cached.value
+		},
+	}
+}
+
+/** Records persistence calls while delegating to the real session store. */
+export function createCountedStore(
+	memory: SessionStoreInterface<SessionInterface>,
+	count: MiddlewareValue<number>,
+): SessionStoreInterface<SessionInterface> {
+	return {
+		get: (id, now) => memory.get(id, now),
+		set: (value, now) => {
+			count.value += 1
+			return memory.set(value, now)
+		},
+		delete: (id) => memory.delete(id),
+	}
 }

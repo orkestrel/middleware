@@ -1,3 +1,4 @@
+import type { BudgetInterface } from '@orkestrel/budget'
 import type {
 	Connection,
 	CookieOptions,
@@ -237,6 +238,8 @@ export interface BearerOptions {
  *   (no re-entrant reads/writes); mutations during eviction are unsupported.
  */
 export interface LimiterOptions<TState = unknown> {
+	/** Supplies an atomic per-key budget store; defaults to MemoryLimiterStore. */
+	readonly store?: LimiterStoreInterface
 	readonly max: number
 	readonly window: number
 	readonly capacity?: number
@@ -266,6 +269,42 @@ export interface BearerState {
  */
 export interface IdentifierState {
 	readonly identifier?: string
+}
+
+/** Describes the budget and duration used when a limiter window starts. */
+export interface LimiterLimits {
+	readonly max: number
+	readonly window: number
+}
+
+/** Reports an atomic admission decision and its window reset instant. */
+export interface LimiterResult {
+	readonly admitted: boolean
+	readonly resetAt: number
+}
+
+/** Holds the budget and reset instant of an in-memory limiter entry. */
+export interface LimiterEntry {
+	readonly budget: BudgetInterface<number>
+	readonly resetAt: number
+}
+
+/** Provides atomic per-key fixed-window admission. */
+export interface LimiterStoreInterface {
+	/**
+	 * Checks and consumes a budget without interleaving its admission decision.
+	 * @param key - The request identity key.
+	 * @param now - The caller's clock reading in milliseconds.
+	 * @param limits - The maximum and duration applied to a fresh window.
+	 * @returns The admission decision and reset instant.
+	 */
+	consume(key: string, now: number, limits: LimiterLimits): Promise<LimiterResult>
+}
+
+/** Configures the in-memory limiter's capacity and eviction observation. */
+export interface MemoryLimiterStoreOptions {
+	readonly capacity?: number
+	readonly evict?: (key: string) => void
 }
 
 /**
@@ -340,6 +379,10 @@ export interface SessionInterface {
  * carries the session's `state` over, and invalidates the old id.
  */
 export interface SessionControlInterface {
+	/** Reports whether destruction superseded regeneration. */
+	readonly destroyed: boolean
+	/** Exposes the latest regenerated session, when one exists. */
+	readonly successor: SessionInterface | undefined
 	/** Mints a fresh id, carries the session's `state` over, and invalidates the old id. */
 	regenerate(): void
 	/** Ends the session — deletes it from the store and clears its transport. */
