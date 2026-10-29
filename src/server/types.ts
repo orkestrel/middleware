@@ -2,6 +2,12 @@ import type { MultipartFile } from '@src/core'
 import type { Stats } from 'node:fs'
 import type { FileHandle } from 'node:fs/promises'
 
+/** Describes a canonical static path and whether it lies inside the serving root. */
+export interface StaticResolution {
+	readonly path: string
+	readonly contained: boolean
+}
+
 /** Describes an opened static file and the facts read from its handle. */
 export interface StaticFile {
 	readonly path: string

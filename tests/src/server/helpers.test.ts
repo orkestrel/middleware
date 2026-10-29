@@ -114,10 +114,19 @@ describe('static file stages', () => {
 			const path = join(directory.path, 'index.html')
 			await writeFile(path, 'hello')
 			const root = await realpath(directory.path)
-			expect(await resolveStaticFile(root, root, 'index.html')).toBe(await realpath(path))
-			expect(await resolveStaticFile(path, root, 'index.html')).toBe(await realpath(path))
+			expect(await resolveStaticFile(root, root, 'index.html')).toEqual({
+				path: await realpath(path),
+				contained: true,
+			})
+			expect(await resolveStaticFile(path, root, 'index.html')).toEqual({
+				path: await realpath(path),
+				contained: true,
+			})
 			expect(await resolveStaticFile(join(root, 'missing'), root, 'index.html')).toBeUndefined()
-			expect(await resolveStaticFile(root, join(root, 'child'), 'index.html')).toBeUndefined()
+			expect(await resolveStaticFile(root, join(root, 'child'), 'index.html')).toEqual({
+				path: root,
+				contained: false,
+			})
 		} finally {
 			await directory.destroy()
 		}

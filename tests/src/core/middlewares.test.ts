@@ -119,6 +119,19 @@ describe('createBoundary', () => {
 // ── createTelemetry ───────────────────────────────────────────────────────
 
 describe('createTelemetry', () => {
+	it('records status 500 and preserves a synchronous downstream error', async () => {
+		const entries: Array<{ readonly status: number }> = []
+		const error = new Error('synchronous downstream failure')
+		const telemetry = createTelemetry({ record: (entry) => entries.push(entry) })
+		const request = buildTestRequest('/')
+		await expect(
+			telemetry(request, createTestContext(request, {}), () => {
+				throw error
+			}),
+		).rejects.toBe(error)
+		expect(entries.map((entry) => entry.status)).toEqual([500])
+	})
+
 	it('records one entry per request with method/pathname/status/duration', async () => {
 		const entries: Array<{ method: string; pathname: string; status: number; duration: number }> =
 			[]

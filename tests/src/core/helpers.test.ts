@@ -9,7 +9,7 @@ import {
 	equalsConstantTime,
 	extractBearerToken,
 	extractFieldToken,
-	isResponseUnbufferable,
+	matchesUnbufferableResponse,
 	isCompressionNegotiated,
 	isPreflight,
 	matchesTrustedEntry,
@@ -219,22 +219,28 @@ describe('compressBytes', () => {
 })
 
 describe('isBufferingIneligible', () => {
+	it('keeps the buffering decision under the matchesUnbufferableResponse name', () => {
+		const response = new Response('body', { headers: { etag: '"asset"' } })
+		expect(matchesUnbufferableResponse('GET', response, 'etag')).toBe(true)
+		expect(matchesUnbufferableResponse('GET', response, 'content-encoding')).toBe(false)
+	})
+
 	it('is ineligible for a HEAD request', () => {
-		expect(isResponseUnbufferable('HEAD', new Response('body'), 'content-encoding')).toBe(true)
+		expect(matchesUnbufferableResponse('HEAD', new Response('body'), 'content-encoding')).toBe(true)
 	})
 
 	it('is ineligible for a 204 or 304 response', () => {
 		expect(
-			isResponseUnbufferable('GET', new Response(null, { status: 204 }), 'content-encoding'),
+			matchesUnbufferableResponse('GET', new Response(null, { status: 204 }), 'content-encoding'),
 		).toBe(true)
 		expect(
-			isResponseUnbufferable('GET', new Response(null, { status: 304 }), 'content-encoding'),
+			matchesUnbufferableResponse('GET', new Response(null, { status: 304 }), 'content-encoding'),
 		).toBe(true)
 	})
 
 	it('is ineligible for a bodyless response', () => {
 		expect(
-			isResponseUnbufferable('GET', new Response(null, { status: 200 }), 'content-encoding'),
+			matchesUnbufferableResponse('GET', new Response(null, { status: 200 }), 'content-encoding'),
 		).toBe(true)
 	})
 
@@ -242,12 +248,12 @@ describe('isBufferingIneligible', () => {
 		const response = new Response('data: x\n\n', {
 			headers: { 'content-type': 'text/event-stream' },
 		})
-		expect(isResponseUnbufferable('GET', response, 'content-encoding')).toBe(true)
+		expect(matchesUnbufferableResponse('GET', response, 'content-encoding')).toBe(true)
 	})
 
 	it('is ineligible when the skip header is already present', () => {
 		const response = new Response('body', { headers: { 'content-encoding': 'gzip' } })
-		expect(isResponseUnbufferable('GET', response, 'content-encoding')).toBe(true)
+		expect(matchesUnbufferableResponse('GET', response, 'content-encoding')).toBe(true)
 	})
 
 	it('is eligible for a plain buffered GET response', () => {
@@ -255,7 +261,7 @@ describe('isBufferingIneligible', () => {
 			status: 200,
 			headers: { 'content-type': 'text/plain' },
 		})
-		expect(isResponseUnbufferable('GET', response, 'content-encoding')).toBe(false)
+		expect(matchesUnbufferableResponse('GET', response, 'content-encoding')).toBe(false)
 	})
 })
 

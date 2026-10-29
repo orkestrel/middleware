@@ -277,16 +277,16 @@ export interface LimiterLimits {
 	readonly window: number
 }
 
-/** Reports an atomic admission decision and its window reset instant. */
+/** Reports an atomic admission decision and its window expiry instant. */
 export interface LimiterResult {
 	readonly admitted: boolean
-	readonly resetAt: number
+	readonly expiry: number
 }
 
-/** Holds the budget and reset instant of an in-memory limiter entry. */
+/** Holds the budget and expiry instant of an in-memory limiter entry. */
 export interface LimiterEntry {
 	readonly budget: BudgetInterface<number>
-	readonly resetAt: number
+	readonly expiry: number
 }
 
 /** Provides atomic per-key fixed-window admission. */

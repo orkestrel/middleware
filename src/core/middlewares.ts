@@ -84,7 +84,7 @@ import {
 	equalsConstantTime,
 	extractBearerToken,
 	extractFieldToken,
-	isResponseUnbufferable,
+	matchesUnbufferableResponse,
 	isPreflight,
 	rebuildResponse,
 	resolveForwardedFor,
@@ -173,7 +173,9 @@ export function createTelemetry<TState>(options: TelemetryOptions): MiddlewareHa
 	// The entry is built from `context` alone, so the first position is conformance-only.
 	return async (_request, context, next) => {
 		const start = Date.now()
-		const [outcome] = await Promise.allSettled([next()])
+		const [outcome] = await Promise.allSettled([
+			new Promise<Response>((resolve) => resolve(next())),
+		])
 		const duration = Date.now() - start
 		const status = outcome.status === 'fulfilled' ? outcome.value.status : 500
 		try {
@@ -483,7 +485,7 @@ export function createETag<TState>(options?: ETagOptions): MiddlewareHandler<TSt
 	return async (request, context, next) => {
 		const response = await next()
 		if (context.method !== 'GET' || response.status !== 200) return response
-		if (isResponseUnbufferable(context.method, response, 'etag')) return response
+		if (matchesUnbufferableResponse(context.method, response, 'etag')) return response
 		const buffer = await response.arrayBuffer()
 		const bytes = new Uint8Array(buffer)
 		const etag = await computeBodyETag(bytes, weak)
@@ -599,9 +601,9 @@ export function createLimiter<TState extends BearerState & ClientState & Connect
 		const result = await store.consume(key, now, limits)
 		if (!result.admitted) {
 			const headers = new Headers()
-			headers.set('retry-after', buildRetryAfter(result.resetAt, now))
+			headers.set('retry-after', buildRetryAfter(result.expiry, now))
 			if (policy) {
-				headers.set('ratelimit', buildRateLimitField(0, result.resetAt, now))
+				headers.set('ratelimit', buildRateLimitField(0, result.expiry, now))
 				headers.set('ratelimit-policy', buildRateLimitPolicyField(max, window))
 			}
 			return new Response(message, { status: 429, headers })

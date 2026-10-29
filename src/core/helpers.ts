@@ -74,7 +74,7 @@ export function extractFieldToken(body: unknown, field: string): string | undefi
  * Builds the `Retry-After` header value — whole seconds until a window reset,
  * floored at a minimum of `1`.
  *
- * @param resetAt - The window reset instant (same clock unit as `now`)
+ * @param expiry - The window reset instant (same clock unit as `now`)
  * @param now - The current instant
  * @returns The `Retry-After` value in whole seconds, minimum `1`
  *
@@ -83,8 +83,8 @@ export function extractFieldToken(body: unknown, field: string): string | undefi
  * buildRetryAfter(1_500, 1_000) // '1'
  * ```
  */
-export function buildRetryAfter(resetAt: number, now: number): string {
-	const seconds = Math.ceil((resetAt - now) / 1000)
+export function buildRetryAfter(expiry: number, now: number): string {
+	const seconds = Math.ceil((expiry - now) / 1000)
 	return String(Math.max(1, seconds))
 }
 
@@ -93,7 +93,7 @@ export function buildRetryAfter(resetAt: number, now: number): string {
  * `createLimiter`'s `policy` option is `true`.
  *
  * @param remaining - The requests still admitted this window
- * @param resetAt - The window reset instant (same clock unit as `now`)
+ * @param expiry - The window reset instant (same clock unit as `now`)
  * @param now - The current instant
  * @returns The `RateLimit` header value
  *
@@ -102,8 +102,8 @@ export function buildRetryAfter(resetAt: number, now: number): string {
  * buildRateLimitField(4, 1_500, 1_000) // '"default";r=4;t=1'
  * ```
  */
-export function buildRateLimitField(remaining: number, resetAt: number, now: number): string {
-	const seconds = Math.max(1, Math.ceil((resetAt - now) / 1000))
+export function buildRateLimitField(remaining: number, expiry: number, now: number): string {
+	const seconds = Math.max(1, Math.ceil((expiry - now) / 1000))
 	return `"default";r=${remaining};t=${seconds}`
 }
 
@@ -308,10 +308,10 @@ export async function compressBytes(
  *
  * @example
  * ```ts
- * isResponseUnbufferable('GET', new Response(null, { status: 204 }), 'content-encoding') // true
+ * matchesUnbufferableResponse('GET', new Response(null, { status: 204 }), 'content-encoding') // true
  * ```
  */
-export function isResponseUnbufferable(
+export function matchesUnbufferableResponse(
 	method: string,
 	response: Response,
 	skipHeader: string,
@@ -404,7 +404,7 @@ export function rebuildResponse(
  * compression over a caller-supplied set of feature-detected codings.
  *
  * @remarks
- * Decision order: {@link isResponseUnbufferable} → `options.filter` → stamp
+ * Decision order: {@link matchesUnbufferableResponse} → `options.filter` → stamp
  * `Vary: Accept-Encoding` (every negotiation-eligible response carries it,
  * even when a later skip declines to compress) → `negotiateEncoding` over
  * `options.encodings` → {@link isCompressionNegotiated} → `isCompressibleType`
@@ -437,7 +437,7 @@ export async function compressResponse(
 	response: Response,
 	options: CompressResponseOptions,
 ): Promise<Response> {
-	if (isResponseUnbufferable(context.method, response, 'content-encoding')) return response
+	if (matchesUnbufferableResponse(context.method, response, 'content-encoding')) return response
 	if (options.filter !== undefined && !options.filter(request, response)) return response
 	response.headers.set(
 		'vary',

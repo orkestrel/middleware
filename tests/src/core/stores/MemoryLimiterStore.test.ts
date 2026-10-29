@@ -4,30 +4,38 @@ import { describe, expect, it } from 'vitest'
 import { buildTestRequest, createTestContext } from '../../../setup.js'
 
 describe('MemoryLimiterStore', () => {
+	it('reports the same window instant as expiry across denial and renewal', async () => {
+		const store = new MemoryLimiterStore()
+		const limits = { max: 1, window: 10 }
+		expect(await store.consume('key', 5, limits)).toEqual({ admitted: true, expiry: 15 })
+		expect(await store.consume('key', 14, limits)).toEqual({ admitted: false, expiry: 15 })
+		expect(await store.consume('key', 15, limits)).toEqual({ admitted: true, expiry: 25 })
+	})
+
 	it('admits exactly the maximum under concurrent consumption', async () => {
 		const store = createMemoryLimiterStore()
 		const results = await Promise.all(
 			Array.from({ length: 20 }, () => store.consume('key', 100, { max: 3, window: 50 })),
 		)
 		expect(results.filter((result) => result.admitted)).toHaveLength(3)
-		expect(results.every((result) => result.resetAt === 150)).toBe(true)
+		expect(results.every((result) => result.expiry === 150)).toBe(true)
 	})
 
 	it('retains active limits and takes the current maximum when a window resets', async () => {
 		const store = new MemoryLimiterStore()
 		expect(await store.consume('key', 0, { max: 1, window: 10 })).toEqual({
 			admitted: true,
-			resetAt: 10,
+			expiry: 10,
 		})
 		expect(await store.consume('key', 9, { max: 3, window: 20 })).toEqual({
 			admitted: false,
-			resetAt: 10,
+			expiry: 10,
 		})
 		const results = await Promise.all(
 			Array.from({ length: 4 }, () => store.consume('key', 10, { max: 3, window: 20 })),
 		)
 		expect(results.map((result) => result.admitted)).toEqual([true, true, true, false])
-		expect(results.every((result) => result.resetAt === 30)).toBe(true)
+		expect(results.every((result) => result.expiry === 30)).toBe(true)
 	})
 
 	it('evicts the least recently consumed key and isolates eviction throws', async () => {

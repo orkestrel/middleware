@@ -3,6 +3,7 @@ import type { SessionInterface } from '@src/core'
 import type { MultipartState } from '@src/core'
 import { MiddlewareValue } from '../../setup.js'
 import { join } from 'node:path'
+import { symlink } from 'node:fs/promises'
 import http from 'node:http'
 import { brotliCompressSync } from 'node:zlib'
 import { describe, expect, it } from 'vitest'
@@ -261,6 +262,48 @@ describe('createAssets', () => {
 // ── createStatic ─────────────────────────────────────────────────────────────
 
 describe('createStatic', () => {
+	it('refuses an outside canonical path before trying the SPA fallback', async () => {
+		const root = createScratch({ files: { 'index.html': 'spa shell' } })
+		const outside = createScratch({ files: { 'index.html': 'outside secret' } })
+		try {
+			await symlink(outside.path, join(root.path, 'outside'), 'junction')
+			const handler = createStatic({ root: root.path, fallback: true })
+			const request = buildTestRequest('/outside', { headers: { accept: 'text/html' } })
+			const response = await handler(
+				request,
+				createTestContext(request, {}),
+				async () => new Response('miss', { status: 404 }),
+			)
+			expect(response.status).toBe(404)
+			expect(await response.text()).toBe('miss')
+		} finally {
+			root.destroy()
+			outside.destroy()
+		}
+	})
+
+	it('serves a file when the method getter throws on its third read', async () => {
+		const root = createScratch({ files: { 'index.html': 'static body' } })
+		try {
+			const handler = createStatic({ root: root.path })
+			const request = buildTestRequest('/index.html')
+			const context = createTestContext(request, {})
+			const reads = new MiddlewareValue(0)
+			Object.defineProperty(context, 'method', {
+				get() {
+					reads.value += 1
+					if (reads.value === 3) throw new Error('third method read')
+					return 'GET'
+				},
+			})
+			const response = await handler(request, context, async () => new Response('miss'))
+			expect(response.status).toBe(200)
+			expect(await response.text()).toBe('static body')
+		} finally {
+			root.destroy()
+		}
+	})
+
 	it('serves a file with the correct MIME and a cache header', async () => {
 		const fixture = buildStaticFixture()
 		try {

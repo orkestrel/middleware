@@ -4,6 +4,7 @@ import type {
 	AssetSourceInterface,
 	ByteRange,
 	StaticFile,
+	StaticResolution,
 	StaticPlan,
 	StaticOptions,
 	MultipartLimits,
@@ -655,18 +656,22 @@ export async function moveUploadedFile(
  * @param target - The requested absolute path.
  * @param rootReal - The canonical serving root.
  * @param index - The index filename.
- * @returns The contained file path, or undefined for an unavailable path.
+ * @returns The canonical path and containment decision, or undefined for an unavailable path.
  */
 export async function resolveStaticFile(
 	target: string,
 	rootReal: string,
 	index: string,
-): Promise<string | undefined> {
-	const path = await resolveContainedRealPath(target, rootReal)
+): Promise<StaticResolution | undefined> {
+	const path = await realpath(target).catch(() => undefined)
 	if (path === undefined) return undefined
+	if (!isContainedPath(path, rootReal)) return { path, contained: false }
 	const info = await stat(path).catch(() => undefined)
 	if (info === undefined) return undefined
-	return info.isDirectory() ? resolveContainedRealPath(join(path, index), rootReal) : path
+	const file = info.isDirectory()
+		? await resolveContainedRealPath(join(path, index), rootReal)
+		: path
+	return file === undefined ? undefined : { path: file, contained: true }
 }
 
 /**

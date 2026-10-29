@@ -10,7 +10,7 @@ import { DEFAULT_COMPRESSION_THRESHOLD, compressResponse } from '@src/core'
 import { realpath } from 'node:fs/promises'
 import { relative, resolve } from 'node:path'
 import { HTTPError } from '@orkestrel/server'
-import { attempt, isFiniteNumber, isFunction, isObject, isString } from '@orkestrel/contract'
+import { isFiniteNumber, isFunction, isObject, isString } from '@orkestrel/contract'
 import {
 	DEFAULT_STATIC_DOTFILES,
 	DEFAULT_STATIC_FALLBACK_EXCLUDE,
@@ -141,7 +141,8 @@ export function createStatic<TState>(options: StaticOptions): MiddlewareHandler<
 				: { exclude: options.fallback.exclude ?? DEFAULT_STATIC_FALLBACK_EXCLUDE }
 
 	return async (request, context, next) => {
-		if (context.method !== 'GET' && context.method !== 'HEAD') return next()
+		const method = context.method
+		if (method !== 'GET' && method !== 'HEAD') return next()
 
 		const target = resolveStaticPath(root, options.prefix, context.url.pathname)
 		if (target === undefined) return next()
@@ -155,41 +156,43 @@ export function createStatic<TState>(options: StaticOptions): MiddlewareHandler<
 		const rootReal = await realpath(root).catch(() => undefined)
 		if (rootReal === undefined) return next()
 		const primary = await resolveStaticFile(target, rootReal, index)
-		const direct = primary === undefined ? undefined : await openStaticFile(primary)
+		if (primary !== undefined && !primary.contained) return next()
+		const direct = primary === undefined ? undefined : await openStaticFile(primary.path)
 		const shellPath =
 			direct === undefined && fallback !== undefined
 				? resolveStaticFallbackPath(
 						root,
 						index,
 						fallback.exclude,
-						context.method,
+						method,
 						context.url.pathname,
 						request.headers.get('accept') ?? '',
 					)
 				: undefined
 		const shellReal =
 			shellPath === undefined ? undefined : await resolveStaticFile(shellPath, rootReal, index)
-		const shell = shellReal === undefined ? undefined : await openStaticFile(shellReal)
+		const shell =
+			shellReal === undefined || !shellReal.contained
+				? undefined
+				: await openStaticFile(shellReal.path)
 		const file = direct ?? shell
 		if (file === undefined) return next()
-		const plan = attempt(() =>
-			planStaticResponse(request, context.method, file.info, file.path, {
+		try {
+			const plan = planStaticResponse(request, method, file.info, file.path, {
 				...(options.cache === undefined ? {} : { cache: options.cache }),
 				etag: useETag,
-			}),
-		)
-		if (!plan.success) {
+			})
+			const streamed = method === 'GET' && (plan.status === 200 || plan.status === 206)
+			if (!streamed) {
+				await file.handle.close()
+				return new Response(null, plan)
+			}
+			const body = streamFile(file.handle, plan.range)
+			return new Response(body, plan)
+		} catch (error) {
 			await file.handle.close().catch(() => {})
-			throw plan.error
+			throw error
 		}
-		const streamed =
-			context.method === 'GET' && (plan.value.status === 200 || plan.value.status === 206)
-		if (!streamed) {
-			await file.handle.close()
-			return new Response(null, plan.value)
-		}
-		const body = streamFile(file.handle, plan.value.range)
-		return new Response(body, plan.value)
 	}
 }
 

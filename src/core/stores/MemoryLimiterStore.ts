@@ -44,16 +44,16 @@ export class MemoryLimiterStore implements LimiterStoreInterface {
 			}
 		}
 		const entry =
-			current === undefined || now >= current.resetAt
+			current === undefined || now >= current.expiry
 				? {
 						budget: createBudget<number>({ max: limits.max, consumer: Number }),
-						resetAt: now + limits.window,
+						expiry: now + limits.window,
 					}
 				: current
 		this.#entries.delete(key)
 		this.#entries.set(key, entry)
 		const admitted = !entry.budget.exhausted
 		if (admitted) entry.budget.consume(1)
-		return { admitted, resetAt: entry.resetAt }
+		return { admitted, expiry: entry.expiry }
 	}
 }
