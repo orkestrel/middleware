@@ -45,7 +45,7 @@ const handle = compose<State>([boundary, security], async (_request, context) =>
 
 ### Middlewares — core
 
-| API                 | Kind     | Summary                                                                                                                                                                                                              |
+| Name                | Kind     | Summary                                                                                                                                                                                                              |
 | ------------------- | -------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `createBoundary`    | function | Creates the outermost error-rendering battery — catches a downstream throw and renders it as a `Response`.                                                                                                           |
 | `createTelemetry`   | function | Creates the access-log/timing seam — records one `TelemetryEntry` per request after the response settles.                                                                                                            |
@@ -65,7 +65,7 @@ const handle = compose<State>([boundary, security], async (_request, context) =>
 
 ### Middlewares — node
 
-| API                 | Kind     | Summary                                                                                                                                                                                                                                                                                                                                                                                      |
+| Name                | Kind     | Summary                                                                                                                                                                                                                                                                                                                                                                                      |
 | ------------------- | -------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `createAssets`      | function | Serves validated in-memory assets with identity/Brotli negotiation.                                                                                                                                                                                                                                                                                                                          |
 | `createStatic`      | function | Serves static files from `options.root` over `node:fs` — the node-bound static-file battery, answering conditional, ranged, and SPA-fallback requests.                                                                                                                                                                                                                                       |
@@ -76,7 +76,7 @@ const handle = compose<State>([boundary, security], async (_request, context) =>
 
 A `Shape` cell holds an interface's data members as bare names in braces, `?` marking an optional member and `plus` introducing its call-signature members, and a type alias's own type literal with a union's arms escaped as `\|`. An extended interface's name comes before `plus`, with the members it adds after.
 
-| Type                        | Kind      | Shape                                                                                          | Summary                                                                                                                                                                                                                                                                                                 |
+| Name                        | Kind      | Shape                                                                                          | Summary                                                                                                                                                                                                                                                                                                 |
 | --------------------------- | --------- | ---------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `BoundaryOptions`           | interface | `{ expose?, report? }`                                                                         | Configures `createBoundary` — the outermost error-rendering battery.                                                                                                                                                                                                                                    |
 | `TelemetryEntry`            | interface | `{ method, pathname, status, duration }`                                                       | Represents one access-log-style entry `createTelemetry` records after a response settles — the access-log/timing seam's payload shape.                                                                                                                                                                  |
@@ -133,7 +133,7 @@ A `Shape` cell holds an interface's data members as bare names in braces, `?` ma
 
 ### Store and response types
 
-| Type                        | Kind      | Shape                             | Summary                                                                        |
+| Name                        | Kind      | Shape                             | Summary                                                                        |
 | --------------------------- | --------- | --------------------------------- | ------------------------------------------------------------------------------ |
 | `StaticFile`                | interface | `{ path, handle, info }`          | Describes an opened static file and the facts read from its handle.            |
 | `StaticResolution`          | interface | `{ path, contained }`             | Describes a canonical static path and whether it lies inside the serving root. |
@@ -148,7 +148,7 @@ A `Shape` cell holds an interface's data members as bare names in braces, `?` ma
 
 ### Request control and stores
 
-| API                        | Kind     | Summary                                                                             |
+| Name                       | Kind     | Summary                                                                             |
 | -------------------------- | -------- | ----------------------------------------------------------------------------------- |
 | `SessionControl`           | class    | Records one request's session regeneration or destruction intent.                   |
 | `MemoryLimiterStore`       | class    | Stores fixed-window budgets with atomic admission and bounded LRU retention.        |
@@ -168,7 +168,7 @@ A `Shape` cell holds an interface's data members as bare names in braces, `?` ma
 
 A `Shape` cell holds the constant's declared type.
 
-| API                               | Kind  | Shape                                          | Summary                                                                                                                                                                                                                                            |
+| Name                              | Kind  | Shape                                          | Summary                                                                                                                                                                                                                                            |
 | --------------------------------- | ----- | ---------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `DEFAULT_COMPRESSION_THRESHOLD`   | const | `number`                                       | Holds `1024`, the default minimum buffered body size in bytes `createCompression` will compress.                                                                                                                                                   |
 | `DEFAULT_COMPRESSION_ENCODINGS`   | const | `readonly Encoding[]`                          | Lists `['gzip', 'deflate']`, the default content-codings `createCompression` offers in preference order — intersected at construction with what the runtime's `CompressionStream` actually supports.                                               |
@@ -217,13 +217,13 @@ A `Shape` cell holds the constant's declared type.
 
 A `Shape` cell holds the constant's declared type.
 
-| API              | Kind  | Shape                            | Summary                                                                                                                                                                                                                     |
+| Name             | Kind  | Shape                            | Summary                                                                                                                                                                                                                     |
 | ---------------- | ----- | -------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `sessionColumns` | const | `{ id, session, seen, created }` | Holds the `@orkestrel/database` column shape for a `SessionRow` table. Pass it as-is to `createDatabase({ tables: { sessions: sessionColumns } })` so an app declaring a durable session table never hand-writes the shape. |
 
 ### Helpers — core
 
-| API                           | Kind     | Summary                                                                                                                                                                                                                                                                                                                                                           |
+| Name                          | Kind     | Summary                                                                                                                                                                                                                                                                                                                                                           |
 | ----------------------------- | -------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `resolveKey`                  | function | Derives `createLimiter`'s default rate-limit bucket key from a request's resolved identity facts.                                                                                                                                                                                                                                                                 |
 | `resolveOptInHeader`          | function | Resolves an opt-in, value-bearing security header — `string \| boolean` (off by default, `true` uses the secure default), the shape `createSecurity`'s `coep`/`hsts` options use, distinct from the plain value-or-`false` shape `resolveSecurityHeader` (the peer substrate) handles.                                                                            |
@@ -252,7 +252,7 @@ Each guard in the following table is total: it accepts any input, returns `false
 
 In a guard table a `Shape` cell holds the type the guard narrows to.
 
-| API                | Kind     | Shape                     | Summary                                                                                                                                                                                                                                                                                                                                                                       |
+| Name               | Kind     | Shape                     | Summary                                                                                                                                                                                                                                                                                                                                                                       |
 | ------------------ | -------- | ------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `isSession`        | function | `SessionInterface`        | Determines whether a value implements `SessionInterface` — a total structural guard: an `id` string, a `state` `Map`, and the `set`, `delete`, and `clear` mutators. Prototype-agnostic — accepts a plain object, a null-prototype object, and a class instance (a real `Session`), because a restored or stored session is routinely a class instance rather than a literal. |
 | `isSessionControl` | function | `SessionControlInterface` | Determines whether a value implements `SessionControlInterface` — a total structural guard: callable `regenerate` and `destroy`.                                                                                                                                                                                                                                              |
@@ -261,7 +261,7 @@ In a guard table a `Shape` cell holds the type the guard narrows to.
 
 ### Helpers — node
 
-| API                         | Kind     | Summary                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                     |
+| Name                        | Kind     | Summary                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                     |
 | --------------------------- | -------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `resolveStaticPath`         | function | Resolves a request pathname to an on-disk path under `root`, or `undefined` when it cannot — the traversal guard, whose algorithm and order are exact: strip `prefix` on a segment boundary → `decodeURIComponent` (a malformed escape refuses, never throws) → reject a NUL byte → strip the leading path separator first (so a leading `..` survives `normalize` as a genuine climbing segment) → `normalize` → refuse any Windows reserved-device-name segment (`isReservedDeviceName`) → `resolve` and require the result under `root`. |
 | `isUnderPath`               | function | Checks whether `pathname` is `prefix` itself or lies under it on a segment boundary — the shared under-path test `resolveStaticPath`'s prefix strip and `createStatic`'s SPA-fallback `exclude` both apply, so `exclude: '/api'` matches `/api` and `/api/x` but never `/apifoo`.                                                                                                                                                                                                                                                           |
@@ -287,13 +287,13 @@ In a guard table a `Shape` cell holds the type the guard narrows to.
 
 ### Parsers — node
 
-| API                     | Kind     | Summary                                                                                                                          |
+| Name                    | Kind     | Summary                                                                                                                          |
 | ----------------------- | -------- | -------------------------------------------------------------------------------------------------------------------------------- |
 | `parseMultipartRequest` | function | Stream-parses a `multipart/form-data` request into its files and fields — the mid-stream state machine `createMultipart` drives. |
 
 ### Classes
 
-| API                    | Kind  | Summary                                                                                                                                                                                                                                                                                     |
+| Name                   | Kind  | Summary                                                                                                                                                                                                                                                                                     |
 | ---------------------- | ----- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `Session`              | class | Represents a server-managed session's default entity — the `create` option's default value for `createSession`. It ships without a bare `create*` factory of its own, because the name `createSession` belongs to the battery; `createRestoredSession` rebuilds one from a stored snapshot. |
 | `MemorySessionStore`   | class | Implements the default in-process `SessionStoreInterface` — a `Map`-backed store enforcing both an idle timeout and an absolute lifetime, with lazy (read-time) eviction, a bounded capacity, and no background timers.                                                                     |
@@ -307,7 +307,7 @@ omission is asserted rather than assumed, and adding it to the barrel would turn
 
 ### Factories
 
-| API                          | Kind     | Summary                                                                                                                                                                                                     |
+| Name                         | Kind     | Summary                                                                                                                                                                                                     |
 | ---------------------------- | -------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `createCookieTransport`      | function | Creates a signed-cookie `SessionTransportInterface` — the session id travels as a `signToken`-signed cookie value.                                                                                          |
 | `createHeaderTransport`      | function | Creates a bare-header `SessionTransportInterface` — the session id travels verbatim in a request/response header.                                                                                           |
@@ -317,7 +317,7 @@ omission is asserted rather than assumed, and adding it to the barrel would turn
 
 ### Errors
 
-| API                | Kind     | Summary                                                                                                                                                                                                                   |
+| Name               | Kind     | Summary                                                                                                                                                                                                                   |
 | ------------------ | -------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `MultipartError`   | class    | Represents an error `createMultipart` throws when a streamed multipart request fails a mid-stream limit, is structurally malformed, or has a file whose sniffed bytes are rejected by the configured `allowed` MIME list. |
 | `isMultipartError` | function | Narrows an unknown caught value to a `MultipartError`.                                                                                                                                                                    |
