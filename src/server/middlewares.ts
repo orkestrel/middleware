@@ -252,9 +252,8 @@ export function createMultipart<TState extends MultipartState>(
 /**
  * Compresses response bodies through `node:zlib`, guaranteed on any Node runtime rather
  * than dependent on the WHATWG `CompressionStream` global. This battery is the
- * node-bound sibling of the core face's feature-detected `createCompression`, and it
- * ships from a separate package entry point (`@orkestrel/middleware/server`) so the
- * shared name is unambiguous per consumer import path.
+ * node-bound sibling of the core face's feature-detected `createCompression`, and both
+ * compose the same `compressResponse` skeleton.
  *
  * @remarks
  * Peer-type limitation, the same one the core face carries: the shipped
@@ -272,12 +271,12 @@ export function createMultipart<TState extends MultipartState>(
  *
  * @example
  * ```ts
- * import { createCompression } from '@orkestrel/middleware/server'
+ * import { createNodeCompression } from '@orkestrel/middleware/server'
  *
- * const compress = createCompression({ threshold: 512 })
+ * const compress = createNodeCompression({ threshold: 512 })
  * ```
  */
-export function createCompression<TState>(
+export function createNodeCompression<TState>(
 	options?: NodeCompressionOptions,
 ): MiddlewareHandler<TState> {
 	if (options?.threshold !== undefined && !isFiniteNumber(options.threshold))

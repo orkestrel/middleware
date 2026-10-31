@@ -31,7 +31,7 @@ export const DEFAULT_STATIC_FALLBACK_EXCLUDE = '/api'
 export const DEFAULT_STATIC_DOTFILES: NonNullable<StaticOptions['dotfiles']> = 'ignore'
 
 /**
- * Lists `['gzip', 'deflate']`, the content-codings the node face's `createCompression`
+ * Lists `['gzip', 'deflate']`, the content-codings `createNodeCompression`
  * offers — what `node:zlib` guarantees on every Node runtime, so this face never
  * feature-detects.
  */

@@ -24,7 +24,7 @@ import {
 } from '@src/core'
 import {
 	createAssets,
-	createCompression,
+	createNodeCompression,
 	createMultipart,
 	createStatic,
 	createUploadedFile,
@@ -1155,11 +1155,11 @@ describe('createMultipart', () => {
 	})
 })
 
-// ── createCompression (node face) ────────────────────────────────────────────
+// ── createNodeCompression (node face) ────────────────────────────────────────────
 
-describe('createCompression (node face)', () => {
+describe('createNodeCompression (node face)', () => {
 	it('compresses a large compressible response with gzip', async () => {
-		const handler = createCompression({ threshold: 10 })
+		const handler = createNodeCompression({ threshold: 10 })
 		const body = 'x'.repeat(5000)
 		const request = new Request('http://test.local/', { headers: { 'accept-encoding': 'gzip' } })
 		const response = await handler(
@@ -1172,7 +1172,7 @@ describe('createCompression (node face)', () => {
 	})
 
 	it('compresses with deflate when the client only sends Accept-Encoding: deflate, and it decodes correctly', async () => {
-		const handler = createCompression({ threshold: 10 })
+		const handler = createNodeCompression({ threshold: 10 })
 		const body = 'y'.repeat(5000)
 		const request = new Request('http://test.local/', { headers: { 'accept-encoding': 'deflate' } })
 		const response = await handler(
@@ -1191,7 +1191,7 @@ describe('createCompression (node face)', () => {
 		// The node face's `Encoding` union (peer-typed) is `'gzip' | 'deflate' |
 		// 'identity'` — no `'br'` — so this battery never negotiates brotli
 		// regardless of what the client sends. Documented, not silently skipped.
-		const handler = createCompression({ threshold: 10 })
+		const handler = createNodeCompression({ threshold: 10 })
 		const request = new Request('http://test.local/', { headers: { 'accept-encoding': 'br' } })
 		const response = await handler(
 			request,
@@ -1202,7 +1202,7 @@ describe('createCompression (node face)', () => {
 	})
 
 	it('skips below threshold', async () => {
-		const handler = createCompression({ threshold: 10_000 })
+		const handler = createNodeCompression({ threshold: 10_000 })
 		const request = new Request('http://test.local/', { headers: { 'accept-encoding': 'gzip' } })
 		const response = await handler(
 			request,
@@ -1210,6 +1210,13 @@ describe('createCompression (node face)', () => {
 			async () => new Response('small', { headers: { 'content-type': 'text/plain' } }),
 		)
 		expect(response.headers.get('content-encoding')).toBeNull()
+	})
+
+	it('refuses a threshold that is not a finite number', () => {
+		expect(() => createNodeCompression({ threshold: Number.NaN })).toThrow(
+			'NodeCompressionOptions.threshold must be a finite number when provided',
+		)
+		expect(() => createNodeCompression({ threshold: Number.POSITIVE_INFINITY })).toThrow(TypeError)
 	})
 })
 
@@ -1263,7 +1270,7 @@ describe('capstone: real socket + Dispatcher + canonical onion', () => {
 
 		const onion = [
 			createTelemetry<CapstoneState>({ record: (entry) => telemetryEntries.push(entry) }),
-			createCompression<CapstoneState>({ threshold: 100 }),
+			createNodeCompression<CapstoneState>({ threshold: 100 }),
 			createBoundary<CapstoneState>({ expose: false }),
 			createSecurity<CapstoneState>(),
 			createCors<CapstoneState>({ origin: ['https://app.example'] }),

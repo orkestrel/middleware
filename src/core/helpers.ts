@@ -400,7 +400,7 @@ export function rebuildResponse(
 
 /**
  * Runs the shared negotiate → skip → threshold → compress → header-set skeleton
- * both faces' `createCompression` batteries compose — response-body
+ * `createCompression` and `createNodeCompression` compose — response-body
  * compression over a caller-supplied set of feature-detected codings.
  *
  * @remarks

@@ -79,6 +79,16 @@ describe('asset stages', () => {
 		).rejects.toThrow(/unexpected end|decompress/i)
 	})
 
+	it('refuses a source that returns a body outside the AssetRepresentation shape', async () => {
+		const malformed = new Proxy(
+			{ body: new Uint8Array([0]) },
+			{ get: (target, key) => (key === 'body' ? 'text' : Reflect.get(target, key)) },
+		)
+		await expect(readAssetRecord({ read: () => malformed }, 'a.txt')).rejects.toThrow(
+			'AssetSourceInterface.read must return an AssetRepresentation',
+		)
+	})
+
 	it('builds negotiated HEAD and conditional responses from a record', async () => {
 		const record = await readAssetRecord(
 			{ read: () => ({ body: brotliCompressSync('asset'), encoding: 'br' }) },

@@ -769,14 +769,15 @@ export async function readAssetRecord(
 ): Promise<AssetRecord | undefined> {
 	const asset = source.read(key)
 	if (asset === undefined) return undefined
-	if (!isObject(asset)) throw new TypeError('AssetSourceInterface.read must return an Asset')
+	if (!isObject(asset))
+		throw new TypeError('AssetSourceInterface.read must return an AssetRepresentation')
 	const body = asset.body
 	const encoding = asset.encoding
 	if (
 		(!isArrayBuffer(body) && !isUint8Array(body)) ||
 		(encoding !== undefined && encoding !== 'br')
 	)
-		throw new TypeError('AssetSourceInterface.read must return an Asset')
+		throw new TypeError('AssetSourceInterface.read must return an AssetRepresentation')
 	const content = isArrayBuffer(body)
 		? Uint8Array.from(new Uint8Array(body))
 		: Uint8Array.from(body)

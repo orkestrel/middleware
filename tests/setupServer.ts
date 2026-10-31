@@ -1,6 +1,6 @@
 import type { FileHandle } from 'node:fs/promises'
 import type { ScratchInterface } from '@orkestrel/test/server'
-import type { Asset, AssetSourceInterface } from '@src/server'
+import type { AssetRepresentation, AssetSourceInterface } from '@src/server'
 import type { ConnectionState, SessionState } from '@src/core'
 import { attempt } from '@orkestrel/contract'
 import { MiddlewareValue } from './setup.js'
@@ -93,8 +93,8 @@ export interface AssetSourceFixtureInterface {
  * @returns The source and a snapshotting record of keys passed to `read`
  */
 export function createAssetSource(
-	assets: ReadonlyMap<string, Asset>,
-	fallback?: Asset,
+	assets: ReadonlyMap<string, AssetRepresentation>,
+	fallback?: AssetRepresentation,
 ): AssetSourceFixtureInterface {
 	const paths: string[] = []
 	return {

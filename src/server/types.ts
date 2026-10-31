@@ -30,7 +30,7 @@ export interface StaticPlan {
  * - `encoding` — `'br'` when `body` is Brotli-compressed. Omission means the
  *   bytes are the identity representation.
  */
-export interface Asset {
+export interface AssetRepresentation {
 	readonly body: ArrayBuffer | Uint8Array
 	readonly encoding?: 'br'
 }
@@ -51,7 +51,7 @@ export interface AssetSourceInterface {
 	 * @param path - The validated relative asset path
 	 * @returns The asset, or `undefined` when the path is absent
 	 */
-	read(path: string): Asset | undefined
+	read(path: string): AssetRepresentation | undefined
 }
 
 /**
@@ -268,8 +268,7 @@ export interface ByteRange {
 }
 
 /**
- * Configures the node face's `createCompression` — `node:zlib`-backed
- * response compression.
+ * Configures `createNodeCompression` — `node:zlib`-backed response compression.
  *
  * @remarks
  * - `threshold` — the minimum buffered body size (bytes) worth compressing;
@@ -278,7 +277,7 @@ export interface ByteRange {
  *   compression is attempted; defaults to always-allow. The offered codings
  *   are fixed to {@link NODE_COMPRESSION_ENCODINGS} and are not configurable
  *   (see the peer `Encoding` type limitation documented on
- *   `createCompression`).
+ *   `createNodeCompression`).
  */
 export interface NodeCompressionOptions {
 	readonly threshold?: number

@@ -75,7 +75,7 @@ export interface CompressionOptions {
 /**
  * Describes the already-resolved settings `compressResponse` runs its shared
  * negotiate → skip → threshold → compress skeleton against — the shape each
- * face's `createCompression` builds from its own option bag.
+ * of `createCompression` and `createNodeCompression` builds from its own option bag.
  *
  * @remarks
  * - `threshold` — the minimum body size (bytes) worth compressing.

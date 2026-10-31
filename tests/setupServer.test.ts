@@ -1,4 +1,4 @@
-import type { Asset } from '@src/server'
+import type { AssetRepresentation } from '@src/server'
 import {
 	createReadStream,
 	existsSync,
@@ -50,8 +50,8 @@ describe('PNG_MAGIC and JPEG_MAGIC', () => {
 
 describe('createAssetSource', () => {
 	it('reads a mapped asset, answers an absent key with the fallback, and records each request', () => {
-		const page: Asset = { body: Uint8Array.from([1, 2, 3]) }
-		const compressed: Asset = { body: Uint8Array.from([9]), encoding: 'br' }
+		const page: AssetRepresentation = { body: Uint8Array.from([1, 2, 3]) }
+		const compressed: AssetRepresentation = { body: Uint8Array.from([9]), encoding: 'br' }
 		const fixture = createAssetSource(new Map([['index.html', page]]), compressed)
 
 		expect(fixture.source.read('index.html')).toBe(page)
