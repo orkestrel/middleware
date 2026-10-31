@@ -58,11 +58,11 @@ Cross-face and substrate usage appear under [Patterns](#patterns).
 
 ### Factories
 
-| Name               | Kind     | Signature                                                             | Summary                                                                                                                                      |
-| ------------------ | -------- | --------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------- |
-| `createNegotiator` | function | `() => NegotiatorInterface`                                           | Creates a `NegotiatorInterface` — the reusable content-negotiation machine over the weighted `Accept` family.                                |
-| `createServer`     | function | `<TState>(options: ServerOptions<TState>) => ServerInterface<TState>` | Creates a `ServerInterface` — the node face's HTTP server facade over a consumed `@orkestrel/router` dispatcher.                             |
-| `createStream`     | function | `(options?: StreamOptions) => StreamInterface`                        | Creates a `StreamInterface` — a generic Server-Sent-Events stream whose `response` is a fetch-standard streaming `Response` a route returns. |
+| Name               | Kind     | Signature                                                             | Summary                                                                                                                                          |
+| ------------------ | -------- | --------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `createNegotiator` | function | `() => NegotiatorInterface`                                           | Creates a `NegotiatorInterface` — the reusable content-negotiation machine over the weighted `Accept` family.                                    |
+| `createServer`     | function | `<TState>(options: ServerOptions<TState>) => ServerInterface<TState>` | Creates a `ServerInterface` — the node face's HTTP server facade over a consumed `@orkestrel/router` dispatcher.                                 |
+| `createStream`     | function | `(options?: StreamOptions) => SSEStreamInterface`                     | Creates an `SSEStreamInterface` — a generic Server-Sent-Events stream whose `response` is a fetch-standard streaming `Response` a route returns. |
 
 ### Startup ownership
 
@@ -76,8 +76,6 @@ before cancellation, pending-listener settlement precedes forced close, and sign
 cleanup finish before the start event is emitted.
 
 ### Constants
-
-A `Shape` cell holds the constant's declared type.
 
 | Name                         | Kind  | Signature                          | Summary                                                                                                                                                                                                                            |
 | ---------------------------- | ----- | ---------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -148,11 +146,9 @@ A `Shape` cell holds the constant's declared type.
 | `ServerError`          | class | `new (code: ServerErrorCode, message: string, context?: Readonly<Record<string, unknown>>) => ServerError` | Represents the error this package raises when a caller programmed a call the entity refuses, carrying `'STATUS'` or `'NEXT'` as its code.                                                                    |
 | `Negotiator`           | class | `new () => NegotiatorInterface`                                                                            | Represents the content-negotiation machine over the weighted `Accept` family — a reusable, cross-middleware entity rather than a middleware. Implements exactly `NegotiatorInterface`.                       |
 | `Server`               | class | `new <TState>(options: ServerOptions<TState>) => ServerInterface<TState>`                                  | Represents the HTTP server facade — an observable `node:http` lifecycle composing this module's own middleware onion around a consumed `@orkestrel/router` dispatcher. Implements exactly `ServerInterface`. |
-| `Stream`               | class | `new (options?: StreamOptions) => StreamInterface`                                                         | Represents the Server-Sent-Events handle over an open, fetch-standard streaming `Response`. Implements exactly `StreamInterface`.                                                                            |
+| `Stream`               | class | `new (options?: StreamOptions) => SSEStreamInterface`                                                      | Represents the Server-Sent-Events handle over an open, fetch-standard streaming `Response`. Implements exactly `SSEStreamInterface`.                                                                         |
 
 ### Types
-
-A `Shape` cell holds an interface's data members as bare names in braces, `?` marking an optional member and `plus` introducing its call-signature members, and a type alias's own type literal with a union's arms escaped as `\|`.
 
 | Name                      | Kind      | Signature                                                                                                                                                                                                                                                                                                                                                                                               | Summary                                                                                                                                                                                                      |
 | ------------------------- | --------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
@@ -169,8 +165,8 @@ A `Shape` cell holds an interface's data members as bare names in braces, `?` ma
 | `FormatHandlerMap`        | type      | `Readonly<Record<string, (request: Request, context: MiddlewareContext<TState>) => Response \| Promise<Response>>>`                                                                                                                                                                                                                                                                                     | Represents a map of media type → handler for `NegotiatorInterface.format` — the content-negotiation dispatch table.                                                                                          |
 | `NegotiatorInterface`     | interface | `{ negotiate(), encoding(), language(), format() }`                                                                                                                                                                                                                                                                                                                                                     | Represents content negotiation over the weighted `Accept` family — a reusable, cross-middleware machine (not itself a middleware).                                                                           |
 | `SSEMessage`              | interface | `{ data, event?, id?, retry? }`                                                                                                                                                                                                                                                                                                                                                                         | Represents one Server-Sent Event to serialize to the wire.                                                                                                                                                   |
-| `StreamOptions`           | interface | `{ status?, headers? }`                                                                                                                                                                                                                                                                                                                                                                                 | Options for a `StreamInterface` — how `createStream` opens the streaming response.                                                                                                                           |
-| `StreamInterface`         | interface | `{ response, closed, write(), comment(), drain(), end() }`                                                                                                                                                                                                                                                                                                                                              | Represents a handle to write Server-Sent Events to an open, fetch-standard streaming `Response` — the generic streaming surface `createStream` returns over a `ReadableStream`.                              |
+| `StreamOptions`           | interface | `{ status?, headers? }`                                                                                                                                                                                                                                                                                                                                                                                 | Options for an `SSEStreamInterface` — how `createStream` opens the streaming response.                                                                                                                       |
+| `SSEStreamInterface`      | interface | `{ response, closed, write(), comment(), drain(), end() }`                                                                                                                                                                                                                                                                                                                                              | Represents a handle to write Server-Sent Events to an open, fetch-standard streaming `Response` — the generic streaming surface `createStream` returns over a `ReadableStream`.                              |
 | `RangeSpec`               | type      | `{ readonly satisfiable: true; readonly start: number; readonly end: number; } \| { readonly satisfiable: false; }`                                                                                                                                                                                                                                                                                     | Represents the parsed outcome of an HTTP `Range` request header.                                                                                                                                             |
 | `BodyOptions`             | interface | `{ limit?, decompression? }`                                                                                                                                                                                                                                                                                                                                                                            | Options for `readBody` — how the shared body-collection pipeline caps and decompresses a request body.                                                                                                       |
 | `ServerStatus`            | type      | `'idle' \| 'starting' \| 'listening' \| 'stopping' \| 'stopped'`                                                                                                                                                                                                                                                                                                                                        | Represents the `Server`'s lifecycle state.                                                                                                                                                                   |
@@ -201,7 +197,7 @@ The error guards and request readers expose these primitives.
 
 ## Methods
 
-The public methods of `NegotiatorInterface`, `StreamInterface`, and
+The public methods of `NegotiatorInterface`, `SSEStreamInterface`, and
 `ServerInterface` — every call-signature member listed (their `readonly` data
 members stay Surface rows). `Negotiator`, `Server`, and `Stream` implement
 their interfaces exactly, so their tables also double as each class's
@@ -226,7 +222,7 @@ coding, because an absent `Accept-Encoding` makes identity the correct answer;
 | `language`  | `string \| undefined`   | Picks the best `available` language for an `Accept-Language` header — `negotiate` with a language-prefix match (`en` accepts `en-US`) and a bare `*` wildcard.                               |
 | `format`    | `Promise<Response>`     | Dispatches to the handler whose media type the client most prefers — reads the request `Accept`, negotiates against `handlers`' keys, and invokes the winner; `406` when none is acceptable. |
 
-#### `StreamInterface`
+#### `SSEStreamInterface`
 
 `write` always accepts an event while open and returns whether the local
 `ReadableStream` queue still has positive desired size afterward. A producer
@@ -274,7 +270,7 @@ These invariants hold across `src/server` ↔ `server.md`.
    source directory, and every export appears as a Surface row — exhaustive,
    both directions.
 2. **Doc ↔ source method bijection.** The `## Methods` tables list exactly
-   `NegotiatorInterface`'s, `StreamInterface`'s, and `ServerInterface`'s public
+   `NegotiatorInterface`'s, `SSEStreamInterface`'s, and `ServerInterface`'s public
    methods — exhaustive, both directions — and `Negotiator` / `Stream` /
    `Server` expose the same public methods, no more.
 3. **Status machine + bound address + restart-fresh-abort.**
@@ -484,7 +480,7 @@ These invariants hold across `src/server` ↔ `server.md`.
     Object and callable contexts are accepted. Subclass names are unrestricted. Transparent
     proxies, unbranded look-alikes, and branded plain objects are rejected.
 19. **SSE producers can cooperate with real process-local transport
-    backpressure.** `StreamInterface.write` returns `true` only while the
+    backpressure.** `SSEStreamInterface.write` returns `true` only while the
     underlying `ReadableStream` controller retains positive desired size after
     accepting the event. A `false` result tells a cooperative producer to await
     `drain()`; that promise parks without polling until a consumer pull restores
@@ -592,10 +588,10 @@ handle afterwards; a `write` that reports `false` is backpressure `drain`
 waits out.
 
 ```ts
-import type { StreamInterface } from '@orkestrel/server'
+import type { SSEStreamInterface } from '@orkestrel/server'
 import { createStream } from '@orkestrel/server'
 
-async function pumpStream(stream: StreamInterface): Promise<void> {
+async function pumpStream(stream: SSEStreamInterface): Promise<void> {
 	if (!stream.write({ event: 'token', data: 'hello' })) await stream.drain()
 	stream.comment('keep-alive')
 	stream.end()
@@ -774,7 +770,7 @@ new TextDecoder().decode(body) // 'hi' — capped decompression, the zip-bomb de
 ## Tests
 
 - [`tests/guides.test.ts`](../tests/guides.test.ts) — the `## Surface` ↔ `src/server`
-  bijection (value and type exports), the `NegotiatorInterface` / `StreamInterface` /
+  bijection (value and type exports), the `NegotiatorInterface` / `SSEStreamInterface` /
   `ServerInterface` ↔ implementing-class method bijections, and the equality gate:
   every `Summary` cell against its declaration's description paragraph, the titled
   `Substrate direct use — tokens, cookies, negotiation` fence against the `@example`
