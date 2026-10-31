@@ -74,8 +74,6 @@ const handle = compose<State>([boundary, security], async (_request, context) =>
 
 ### Types
 
-A `Shape` cell holds an interface's data members as bare names in braces, `?` marking an optional member and `plus` introducing its call-signature members, and a type alias's own type literal with a union's arms escaped as `\|`. An extended interface's name comes before `plus`, with the members it adds after.
-
 | Name                        | Kind      | Signature                                                                                      | Summary                                                                                                                                                                                                                                                                                                 |
 | --------------------------- | --------- | ---------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `BoundaryOptions`           | interface | `{ expose?, report? }`                                                                         | Configures `createBoundary` — the outermost error-rendering battery.                                                                                                                                                                                                                                    |
@@ -166,8 +164,6 @@ A `Shape` cell holds an interface's data members as bare names in braces, `?` ma
 
 ### Constants
 
-A `Shape` cell holds the constant's declared type.
-
 | Name                              | Kind  | Signature                                                                                              | Summary                                                                                                                                                                                                                                            |
 | --------------------------------- | ----- | ------------------------------------------------------------------------------------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `DEFAULT_COMPRESSION_THRESHOLD`   | const | `1024`                                                                                                 | Holds `1024`, the default minimum buffered body size in bytes `createCompression` will compress.                                                                                                                                                   |
@@ -215,8 +211,6 @@ A `Shape` cell holds the constant's declared type.
 
 ### Shapers
 
-A `Shape` cell holds the constant's declared type.
-
 | Name             | Kind  | Signature                                                                                                                                                                                                   | Summary                                                                                                                                                                                                                     |
 | ---------------- | ----- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `sessionColumns` | const | `{ id: import("@orkestrel/contract").StringShape; session: import("@orkestrel/contract").JSONShape; seen: import("@orkestrel/contract").NumberShape; created: import("@orkestrel/contract").NumberShape; }` | Holds the `@orkestrel/database` column shape for a `SessionRow` table. Pass it as-is to `createDatabase({ tables: { sessions: sessionColumns } })` so an app declaring a durable session table never hand-writes the shape. |
@@ -249,8 +243,6 @@ A `Shape` cell holds the constant's declared type.
 ### Validators — core
 
 Each guard in the following table is total: it accepts any input, returns `false` off-shape, and never throws.
-
-In a guard table a `Shape` cell holds the type the guard narrows to.
 
 | Name               | Kind     | Signature                                              | Summary                                                                                                                                                                                                                                                                                                                                                                       |
 | ------------------ | -------- | ------------------------------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
