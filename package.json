@@ -87,20 +87,20 @@
 		"test:setup": "vitest run --config vite.config.ts --no-cache --reporter=dot --project setup"
 	},
 	"dependencies": {
-		"@orkestrel/abort": "^0.0.14",
-		"@orkestrel/budget": "^0.0.15",
-		"@orkestrel/contract": "^0.0.20",
-		"@orkestrel/timeout": "^0.0.14"
+		"@orkestrel/abort": "^0.0.15",
+		"@orkestrel/budget": "^0.0.16",
+		"@orkestrel/contract": "^0.0.21",
+		"@orkestrel/timeout": "^0.0.15"
 	},
 	"devDependencies": {
 		"@microsoft/api-extractor": "^7.60.1",
-		"@orkestrel/database": "^0.0.19",
-		"@orkestrel/guide": "^0.0.28",
+		"@orkestrel/database": "^0.0.20",
+		"@orkestrel/guide": "^0.0.29",
 		"@orkestrel/probe": "^0.0.26",
-		"@orkestrel/router": "^0.0.18",
-		"@orkestrel/scaffold": "^0.0.118",
-		"@orkestrel/server": "^0.0.24",
-		"@orkestrel/test": "^0.0.31",
+		"@orkestrel/router": "^0.0.19",
+		"@orkestrel/scaffold": "^0.0.120",
+		"@orkestrel/server": "^0.0.25",
+		"@orkestrel/test": "^0.0.32",
 		"@types/node": "^24.19.2",
 		"oxfmt": "^0.75.0",
 		"oxlint": "^1.90.0",
@@ -109,8 +109,8 @@
 		"vitest": "^5.0.5"
 	},
 	"peerDependencies": {
-		"@orkestrel/database": "^0.0.19",
-		"@orkestrel/server": "^0.0.24"
+		"@orkestrel/database": "^0.0.20",
+		"@orkestrel/server": "^0.0.25"
 	},
 	"peerDependenciesMeta": {
 		"@orkestrel/database": {
