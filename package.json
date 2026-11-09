@@ -94,22 +94,22 @@
 	},
 	"devDependencies": {
 		"@microsoft/api-extractor": "^7.60.1",
-		"@orkestrel/database": "^0.0.21",
+		"@orkestrel/database": "^0.0.22",
 		"@orkestrel/guide": "^0.0.30",
 		"@orkestrel/probe": "^0.0.29",
 		"@orkestrel/router": "^0.0.20",
-		"@orkestrel/scaffold": "^0.0.125",
+		"@orkestrel/scaffold": "^0.0.126",
 		"@orkestrel/server": "^0.0.26",
 		"@orkestrel/test": "^0.0.33",
 		"@types/node": "^24.19.2",
-		"oxfmt": "^0.77.0",
-		"oxlint": "^1.92.0",
+		"oxfmt": "^0.78.0",
+		"oxlint": "^1.93.0",
 		"typescript": "^7.0.2",
-		"vite": "^8.3.6",
+		"vite": "^8.3.7",
 		"vitest": "^5.1.0"
 	},
 	"peerDependencies": {
-		"@orkestrel/database": "^0.0.21",
+		"@orkestrel/database": "^0.0.22",
 		"@orkestrel/server": "^0.0.26"
 	},
 	"peerDependenciesMeta": {
