@@ -77,6 +77,12 @@ export const DEFAULT_BEARER_HEADER = 'authorization'
 /** Names `'Bearer'`, the default scheme prefix `createBearer` strips before verification. */
 export const DEFAULT_BEARER_SCHEME = 'Bearer'
 
+/** Matches an RFC 9110 `token`, the form a challenge scheme and an auth-param name take. */
+export const CHALLENGE_TOKEN = Object.freeze(/^[!#$%&'*+\-.^_`|~0-9A-Za-z]+$/u)
+
+/** Matches the characters RFC 6750 § 3 admits in a quoted auth-param value: `%x20-21 / %x23-5B / %x5D-7E`. */
+export const CHALLENGE_VALUE = Object.freeze(/^[\x20\x21\x23-\x5B\x5D-\x7E]*$/u)
+
 /** Holds `10_000`, the default maximum number of distinct rate-limit keys `createLimiter` tracks before LRU eviction. */
 export const DEFAULT_LIMITER_CAPACITY = 10_000
 

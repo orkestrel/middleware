@@ -88,6 +88,7 @@ import {
 	isPreflight,
 	rebuildResponse,
 	resolveForwardedFor,
+	renderChallenge,
 	resolveKey,
 	resolveOptInHeader,
 } from './helpers.js'
@@ -503,40 +504,56 @@ export function createETag<TState>(options?: ETagOptions): MiddlewareHandler<TSt
 }
 
 /**
- * Creates the bearer-token authentication battery — reads the token from its header and
- * verifies it with `verifyToken`.
+ * Creates the bearer-token authentication battery — reads the token from its header, resolves its
+ * credential through `verify`, and answers each `401` with a `WWW-Authenticate` challenge.
  *
  * @typeParam TState - The consumer's opaque per-request state type, must carry {@link BearerState}
+ * @typeParam TCredential - The credential `verify` resolves; default `string`
  * @param options - See {@link BearerOptions}
  * @returns A `MiddlewareHandler<TState>`
- * @throws {TypeError} When any option is malformed
- * @throws {HTTPError} `401` when the token is missing, invalid, or expired
+ * @throws {TypeError} Thrown when any option is malformed, or when `challenge` names `error` in any case
  *
  * @example
  * ```ts
- * const bearer = createBearer({ secret: 'shh' })
+ * const bearer = createBearer({ verify: (token) => verifyToken(token, 'shh') })
  * ```
  */
-export function createBearer<TState extends BearerState>(
-	options: BearerOptions,
+export function createBearer<TState extends BearerState<TCredential>, TCredential = string>(
+	options: BearerOptions<TCredential>,
 ): MiddlewareHandler<TState> {
-	if (!isString(options.secret) && (!isArray(options.secret) || !options.secret.every(isString)))
-		throw new TypeError('BearerOptions.secret must be a string or string array')
+	if (!isFunction(options.verify)) throw new TypeError('BearerOptions.verify must be a function')
 	if (options.header !== undefined && !isString(options.header))
 		throw new TypeError('BearerOptions.header must be a string when provided')
 	if (options.scheme !== undefined && !isString(options.scheme))
 		throw new TypeError('BearerOptions.scheme must be a string when provided')
-	const secret = options.secret
+	if (
+		options.challenge !== undefined &&
+		(!isRecord(options.challenge) || !Object.values(options.challenge).every(isString))
+	)
+		throw new TypeError('BearerOptions.challenge must be a record of string values when provided')
+	if (Object.keys(options.challenge ?? {}).some((name) => name.toLowerCase() === 'error'))
+		throw new TypeError('BearerOptions.challenge must not name error; the battery owns it')
+	const verify = options.verify
 	const header = (options.header ?? DEFAULT_BEARER_HEADER).toLowerCase()
 	const scheme = options.scheme ?? DEFAULT_BEARER_SCHEME
+	const name = scheme === '' ? DEFAULT_BEARER_SCHEME : scheme
+	const missing = renderChallenge(name, options.challenge)
+	const invalid = renderChallenge(name, { ...options.challenge, error: 'invalid_token' })
 	return async (request, context, next) => {
 		const raw = request.headers.get(header)
-		if (raw === null) throw new HTTPError(401, 'missing token')
-		const candidate = extractBearerToken(raw, scheme)
-		if (candidate === undefined) throw new HTTPError(401, 'missing token')
-		const verified = await verifyToken(candidate, secret)
-		if (verified === undefined) throw new HTTPError(401, 'invalid token')
-		Object.assign(context.state, { token: verified })
+		const token = raw === null ? undefined : extractBearerToken(raw, scheme)
+		if (token === undefined || token === '')
+			return new Response('missing token', {
+				status: 401,
+				headers: { 'www-authenticate': missing },
+			})
+		const credential = await verify(token, request)
+		if (credential === undefined)
+			return new Response('invalid token', {
+				status: 401,
+				headers: { 'www-authenticate': invalid },
+			})
+		Object.assign(context.state, { token: credential })
 		return next()
 	}
 }
@@ -558,7 +575,7 @@ export function createBearer<TState extends BearerState>(
  * const limiter = createLimiter({ max: 100, window: 60_000 })
  * ```
  */
-export function createLimiter<TState extends BearerState & ClientState & ConnectionState>(
+export function createLimiter<TState extends BearerState<unknown> & ClientState & ConnectionState>(
 	options: LimiterOptions<TState>,
 ): MiddlewareHandler<TState> {
 	if (!isInteger(options.max) || options.max <= 0)
@@ -827,7 +844,7 @@ export function createCSRF<TState extends CSRFState & SessionState & ConnectionS
  *
  * @example
  * ```ts
- * const scoped = only('/admin', createBearer({ secret }))
+ * const scoped = only('/admin', createBearer({ verify: (token) => verifyToken(token, secret) }))
  * ```
  */
 export function only<TState>(

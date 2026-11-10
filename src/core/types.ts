@@ -198,22 +198,33 @@ export interface ETagOptions {
 	readonly weak?: boolean
 }
 
+/** Verifies a presented bearer token and resolves its credential, or `undefined` to refuse it. */
+export type BearerVerifyFunction<TCredential> = (
+	token: string,
+	request: Request,
+) => TCredential | undefined | Promise<TCredential | undefined>
+
 /**
  * Configures `createBearer` — bearer-token authentication.
  *
+ * @typeParam TCredential - The credential `verify` resolves and `createBearer` stashes on {@link BearerState.token}
  * @remarks
- * - `secret` — the {@link TokenSecret} `verifyToken` checks the extracted
- *   token against (rotation-aware).
+ * - `verify` — resolves the credential for a presented token, or `undefined`
+ *   to refuse it; a throw propagates unchanged.
  * - `header` — the header the token is read from; defaults to
  *   {@link DEFAULT_BEARER_HEADER}.
  * - `scheme` — the scheme prefix stripped before verification
  *   (case-insensitive); defaults to {@link DEFAULT_BEARER_SCHEME}. An empty
  *   string means the whole header value is the raw token.
+ * - `challenge` — the auth-params every `WWW-Authenticate` challenge carries,
+ *   mirroring the RFC 6750 § 3 names (`realm`, `scope`) and RFC 9728 § 5.1's
+ *   `resource_metadata`; the battery owns `error`.
  */
-export interface BearerOptions {
-	readonly secret: TokenSecret
+export interface BearerOptions<TCredential = string> {
+	readonly verify: BearerVerifyFunction<TCredential>
 	readonly header?: string
 	readonly scheme?: string
+	readonly challenge?: Readonly<Record<string, string>>
 }
 
 /**
@@ -254,13 +265,14 @@ export interface LimiterOptions<TState = unknown> {
  * Describes the bearer-authentication state slice `createBearer` stashes on
  * `context.state` once a token verifies.
  *
+ * @typeParam TCredential - The credential `createBearer`'s `verify` resolves
  * @remarks
  * `token` is an optional readonly state contract: absent until
  * `createBearer` runs, then installed on the request-owned state object. A
  * consumer intersects only the slices it mounts into its own `TState`.
  */
-export interface BearerState {
-	readonly token?: string
+export interface BearerState<TCredential = string> {
+	readonly token?: TCredential
 }
 
 /**

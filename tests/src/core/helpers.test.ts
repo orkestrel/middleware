@@ -14,6 +14,7 @@ import {
 	isPreflight,
 	matchesTrustedEntry,
 	rebuildResponse,
+	renderChallenge,
 	resolveForwardedFor,
 	resolveKey,
 	Session,
@@ -77,6 +78,88 @@ describe('resolveKey', () => {
 
 	it('collapses an IPv6 client IP to its /64 network through computeClientKey', () => {
 		expect(resolveKey({ client: { ip: '2001:db8::1' } })).toBe('ip:2001:db8:0:0::/64')
+	})
+
+	it('keys a string credential as token:<value>', () => {
+		expect(resolveKey({ token: 'user-1' })).toBe('token:user-1')
+	})
+
+	it('falls an object credential through to the client address', () => {
+		expect(
+			resolveKey({
+				token: { subject: 'user-1' },
+				client: { ip: '203.0.113.7' },
+				connection: { ip: '10.0.0.1', encrypted: false },
+			}),
+		).toBe('ip:203.0.113.7')
+	})
+
+	it('falls an object credential with no address through to ip:unknown', () => {
+		expect(resolveKey({ token: { subject: 'user-1' } })).toBe('ip:unknown')
+	})
+})
+
+describe('renderChallenge', () => {
+	it('renders the scheme alone when no parameter is given', () => {
+		expect(renderChallenge('Bearer')).toBe('Bearer')
+		expect(renderChallenge('Bearer', {})).toBe('Bearer')
+	})
+
+	it('renders one parameter as a quoted auth-param', () => {
+		expect(renderChallenge('Bearer', { realm: 'taverna' })).toBe('Bearer realm="taverna"')
+	})
+
+	it('renders several parameters in the record key order', () => {
+		expect(renderChallenge('Bearer', { scope: 'read write', realm: 'taverna' })).toBe(
+			'Bearer scope="read write", realm="taverna"',
+		)
+	})
+
+	it('renders resource_metadata with an https: URL', () => {
+		expect(
+			renderChallenge('Bearer', {
+				resource_metadata: 'https://api.example/.well-known/oauth-protected-resource',
+			}),
+		).toBe('Bearer resource_metadata="https://api.example/.well-known/oauth-protected-resource"')
+	})
+
+	it('admits the boundary characters of the RFC 6750 § 3 value set', () => {
+		expect(renderChallenge('Bearer', { realm: ' !#[]~' })).toBe('Bearer realm=" !#[]~"')
+		expect(renderChallenge('Bearer', { realm: '' })).toBe('Bearer realm=""')
+	})
+
+	it('refuses a value holding a character outside the value set, naming the value', () => {
+		const values = ['a"b', 'a\\b', 'a\rb', 'a\nb', 'a\tb', 'a\u0000b', 'a\u007fb', 'café']
+		for (const value of values) {
+			expect(() => renderChallenge('Bearer', { realm: value })).toThrow(TypeError)
+			expect(() => renderChallenge('Bearer', { realm: value })).toThrow(JSON.stringify(value))
+		}
+	})
+
+	it('refuses a parameter name that is not a token, naming the name', () => {
+		const names = ['', 'two words', 'a=b', 'a"b', 'café']
+		for (const name of names) {
+			expect(() => renderChallenge('Bearer', { [name]: 'x' })).toThrow(TypeError)
+			expect(() => renderChallenge('Bearer', { [name]: 'x' })).toThrow(JSON.stringify(name))
+		}
+	})
+
+	it('refuses a scheme that is not a token, naming the scheme', () => {
+		for (const scheme of ['', 'Bad Scheme', 'Bearer,']) {
+			expect(() => renderChallenge(scheme)).toThrow(TypeError)
+			expect(() => renderChallenge(scheme)).toThrow(JSON.stringify(scheme))
+		}
+	})
+
+	it('refuses two parameter names that match ignoring case, naming the later one', () => {
+		expect(() => renderChallenge('Bearer', { realm: 'a', Realm: 'b' })).toThrow(TypeError)
+		expect(() => renderChallenge('Bearer', { realm: 'a', Realm: 'b' })).toThrow('"Realm"')
+	})
+
+	it('caps a long refused value in the message instead of echoing it whole', () => {
+		const value = 'a"'.repeat(50_000)
+		// The 100,000-character value previews clipped with a closing ellipsis.
+		expect(() => renderChallenge('Bearer', { realm: value })).toThrow(/^(?=[^]*…)[^]{1,300}$/u)
 	})
 })
 

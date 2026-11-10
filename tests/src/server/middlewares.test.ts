@@ -1,5 +1,5 @@
 import type { CapstoneState } from '../../setupServer.js'
-import type { SessionInterface } from '@src/core'
+import type { BearerState, ClientState, ConnectionState, SessionInterface } from '@src/core'
 import type { MultipartState } from '@src/core'
 import { MiddlewareValue } from '../../setup.js'
 import { join } from 'node:path'
@@ -7,6 +7,7 @@ import { symlink } from 'node:fs/promises'
 import http from 'node:http'
 import { brotliCompressSync } from 'node:zlib'
 import { describe, expect, it } from 'vitest'
+import { createRecorder } from '@orkestrel/test'
 import { createLoopback, createScratch } from '@orkestrel/test/server'
 import {
 	createBearer,
@@ -21,6 +22,7 @@ import {
 	createSession,
 	createTelemetry,
 	isMultipartBody,
+	MemoryLimiterStore,
 } from '@src/core'
 import {
 	createAssets,
@@ -30,7 +32,7 @@ import {
 	createUploadedFile,
 	moveUploadedFile,
 } from '@src/server'
-import { compose, HTTPError, signToken } from '@orkestrel/server'
+import { compose, HTTPError, signToken, verifyToken } from '@orkestrel/server'
 import { createDispatcher } from '@orkestrel/router'
 import { buildRequest as buildRouterRequest, sendResponse } from '@orkestrel/router/server'
 import {
@@ -1276,7 +1278,7 @@ describe('capstone: real socket + Dispatcher + canonical onion', () => {
 			createCors<CapstoneState>({ origin: ['https://app.example'] }),
 			createForwarded<CapstoneState>({ proxies: 1 }),
 			createETag<CapstoneState>(),
-			createBearer<CapstoneState>({ secret }),
+			createBearer<CapstoneState>({ verify: (token) => verifyToken(token, secret) }),
 			createLimiter<CapstoneState>({ max: 3, window: 60_000 }),
 			createSession<SessionInterface, CapstoneState>({
 				transport: createCookieTransport({ secret }),
@@ -1362,6 +1364,48 @@ describe('capstone: real socket + Dispatcher + canonical onion', () => {
 			})
 			expect(limited.status).toBe(429)
 			expect(limited.headers.get('retry-after')).toBeDefined()
+		} finally {
+			await handle.destroy()
+		}
+	})
+
+	it('a limiter behind a bearer that stashes an object credential keys by client address', async () => {
+		type Principal = { readonly subject: string }
+		type PrincipalState = BearerState<Principal> & ClientState & ConnectionState
+		const keys = createRecorder<[string]>()
+		const memory = new MemoryLimiterStore()
+		const bearer = createBearer<PrincipalState, Principal>({
+			verify: (token) => ({ subject: token }),
+		})
+		const limiter = createLimiter<PrincipalState>({
+			max: 1,
+			window: 60_000,
+			store: {
+				consume: (key, now, limits) => {
+					keys.handler(key)
+					return memory.consume(key, now, limits)
+				},
+			},
+		})
+		const composed = compose<PrincipalState>(
+			[bearer, limiter],
+			async () => new Response('admitted'),
+		)
+		const server = http.createServer(async (message, response) => {
+			const request = buildRouterRequest(message)
+			const ip = message.socket.remoteAddress
+			const state: PrincipalState = {
+				connection: { ...(ip !== undefined ? { ip } : {}), encrypted: false },
+			}
+			await sendResponse(await composed(request, createTestContext(request, state)), response)
+		})
+		const handle = await createLoopback(server)
+		try {
+			const first = await fetch(handle.url, { headers: { authorization: 'Bearer alice' } })
+			const second = await fetch(handle.url, { headers: { authorization: 'Bearer bob' } })
+			expect(first.status).toBe(200)
+			expect(second.status).toBe(429)
+			expect(keys.calls.map(([key]) => key)).toEqual(['ip:127.0.0.1', 'ip:127.0.0.1'])
 		} finally {
 			await handle.destroy()
 		}

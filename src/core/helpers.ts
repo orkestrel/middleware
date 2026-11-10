@@ -11,13 +11,14 @@ import type {
 	SessionSnapshot,
 } from './types.js'
 import type { Encoding, MiddlewareContext } from '@orkestrel/server'
-import { isFiniteNumber, isInteger, isRecord, isString } from '@orkestrel/contract'
+import { isFiniteNumber, isInteger, isRecord, isString, preview } from '@orkestrel/contract'
 import {
 	computeClientKey,
 	isCompressibleType,
 	mergeVary,
 	negotiateEncoding,
 } from '@orkestrel/server'
+import { CHALLENGE_TOKEN, CHALLENGE_VALUE } from './constants.js'
 
 /**
  * Derives `createLimiter`'s default rate-limit bucket key from a request's
@@ -25,7 +26,8 @@ import {
  *
  * @remarks
  * Prefers a verified bearer token ({@link BearerState.token}) as
- * `token:<value>`; else a resolved client IP ({@link ClientState.client.ip},
+ * `token:<value>` only when it is a string, so an object credential falls
+ * through; else a resolved client IP ({@link ClientState.client.ip},
  * set when `createForwarded` is mounted) or the raw socket peer
  * ({@link ConnectionState.connection.ip}) collapsed through `computeClientKey`
  * (IPv6 to its `/64` network) as `ip:<key>`; else the literal `ip:unknown`.
@@ -41,8 +43,8 @@ import {
  * resolveKey({ client: { ip: '2001:db8::1' } }) // 'ip:2001:db8:0:0::/64'
  * ```
  */
-export function resolveKey(state: BearerState & ClientState & ConnectionState): string {
-	if (state.token !== undefined) return `token:${state.token}`
+export function resolveKey(state: BearerState<unknown> & ClientState & ConnectionState): string {
+	if (isString(state.token)) return `token:${state.token}`
 	const ip = state.client?.ip ?? state.connection?.ip
 	if (ip !== undefined) return `ip:${computeClientKey(ip)}`
 	return 'ip:unknown'
@@ -58,6 +60,47 @@ export function extractBearerToken(raw: string, scheme: string): string | undefi
 	if (scheme === '') return raw
 	const prefix = `${scheme.toLowerCase()} `
 	return raw.toLowerCase().startsWith(prefix) ? raw.slice(prefix.length) : undefined
+}
+
+/**
+ * Renders a `WWW-Authenticate` challenge as the scheme alone, or the scheme followed by
+ * quoted auth-params in the record's own key order.
+ *
+ * @remarks
+ * Refuses a malformed piece instead of escaping or stripping it, so the header a
+ * caller reads is the header it configured.
+ *
+ * @param scheme - The authentication scheme, an RFC 9110 `token`
+ * @param parameters - The auth-params, each name an RFC 9110 `token` and each value limited to the RFC 6750 § 3 character set
+ * @returns The challenge header value
+ * @throws {TypeError} Thrown when the scheme or a parameter name is not a `token`, when two names match ignoring case, or when a value holds a character outside `%x20-21 / %x23-5B / %x5D-7E`; the message names the offending piece through `preview`, JSON-encoded and capped
+ *
+ * @example
+ * ```ts
+ * renderChallenge('Bearer', { realm: 'taverna' }) // 'Bearer realm="taverna"'
+ * ```
+ */
+export function renderChallenge(
+	scheme: string,
+	parameters?: Readonly<Record<string, string>>,
+): string {
+	if (!CHALLENGE_TOKEN.test(scheme))
+		throw new TypeError(`challenge scheme ${preview(scheme)} must be an RFC 9110 token`)
+	const entries = Object.entries(parameters ?? {})
+	const rendered = entries.map(([name, value], index) => {
+		if (!CHALLENGE_TOKEN.test(name))
+			throw new TypeError(`challenge parameter name ${preview(name)} must be an RFC 9110 token`)
+		if (entries.findIndex(([other]) => other.toLowerCase() === name.toLowerCase()) !== index)
+			throw new TypeError(
+				`challenge parameter name ${preview(name)} repeats an earlier name ignoring case`,
+			)
+		if (!isString(value) || !CHALLENGE_VALUE.test(value))
+			throw new TypeError(
+				`challenge parameter ${preview(name)} value ${preview(value)} must hold only the RFC 6750 § 3 characters %x20-21, %x23-5B, and %x5D-7E`,
+			)
+		return `${name}="${value}"`
+	})
+	return rendered.length === 0 ? scheme : `${scheme} ${rendered.join(', ')}`
 }
 
 /**

@@ -1,5 +1,6 @@
 import { MiddlewareValue, createOversizedContext, createCountedStore } from '../../setup.js'
 import type {
+	BearerOptions,
 	BearerState,
 	BodyState,
 	ClientState,
@@ -30,12 +31,13 @@ import {
 	except,
 	only,
 } from '@src/core'
-import { ContentTooLargeError, HTTPError, signToken } from '@orkestrel/server'
+import { ContentTooLargeError, HTTPError, signToken, verifyToken } from '@orkestrel/server'
 import {
 	buildTestRequest,
 	compressibleBody,
 	createEchoTerminal,
 	createManualClock,
+	createRecordingNext,
 	createRecordingTerminal,
 	buildSession,
 	createTestContext,
@@ -850,9 +852,158 @@ describe('createETag', () => {
 // ── createBearer ──────────────────────────────────────────────────────────
 
 describe('createBearer', () => {
-	it('a valid token is stashed on state and the chain continues', async () => {
+	it('a request with no Authorization header answers a 401 challenge and the handler never runs', async () => {
+		const bearer = createBearer<BearerState>({
+			verify: () => 'user-1',
+			challenge: { realm: 'taverna' },
+		})
+		const next = createRecordingNext()
+		const request = buildTestRequest('/')
+		const response = await bearer(request, createTestContext(request, {}), next.next)
+		expect(response.status).toBe(401)
+		expect(await response.text()).toBe('missing token')
+		expect(response.headers.get('www-authenticate')).toBe('Bearer realm="taverna"')
+		expect(response.headers.get('www-authenticate')).not.toContain('error')
+		expect(next.count).toBe(0)
+	})
+
+	it('a scheme that does not match answers the same missing-token challenge', async () => {
+		const bearer = createBearer<BearerState>({
+			verify: () => 'user-1',
+			challenge: { realm: 'taverna' },
+		})
+		const next = createRecordingNext()
+		const request = buildTestRequest('/', { headers: { authorization: 'Basic dXNlcjpwYXNz' } })
+		const response = await bearer(request, createTestContext(request, {}), next.next)
+		expect(response.status).toBe(401)
+		expect(await response.text()).toBe('missing token')
+		expect(response.headers.get('www-authenticate')).toBe('Bearer realm="taverna"')
+		expect(next.count).toBe(0)
+	})
+
+	it('a bare scheme, which Headers trims to a scheme mismatch, answers the missing-token challenge without calling verify', async () => {
+		const calls = createRecorder<[string, Request]>()
+		const bearer = createBearer<BearerState>({
+			verify: (token, request) => {
+				calls.handler(token, request)
+				return 'user-1'
+			},
+			challenge: { realm: 'taverna' },
+		})
+		const next = createRecordingNext()
+		const request = buildTestRequest('/', { headers: { authorization: 'Bearer ' } })
+		const response = await bearer(request, createTestContext(request, {}), next.next)
+		expect(response.status).toBe(401)
+		expect(await response.text()).toBe('missing token')
+		expect(response.headers.get('www-authenticate')).toBe('Bearer realm="taverna"')
+		expect(calls.count).toBe(0)
+		expect(next.count).toBe(0)
+	})
+
+	it('an empty header under scheme: "" answers the missing-token challenge without calling verify', async () => {
+		const calls = createRecorder<[string, Request]>()
+		const bearer = createBearer<BearerState>({
+			verify: (token, request) => {
+				calls.handler(token, request)
+				return 'user-1'
+			},
+			scheme: '',
+		})
+		const next = createRecordingNext()
+		const request = buildTestRequest('/', { headers: { authorization: '' } })
+		expect(request.headers.get('authorization')).toBe('')
+		const response = await bearer(request, createTestContext(request, {}), next.next)
+		expect(response.status).toBe(401)
+		expect(await response.text()).toBe('missing token')
+		expect(response.headers.get('www-authenticate')).toBe('Bearer')
+		expect(calls.count).toBe(0)
+		expect(next.count).toBe(0)
+	})
+
+	it('verify resolving undefined answers an invalid_token challenge and the handler never runs', async () => {
+		const bearer = createBearer<BearerState>({
+			verify: () => undefined,
+			challenge: { realm: 'taverna' },
+		})
+		const next = createRecordingNext()
+		const request = buildTestRequest('/', { headers: { authorization: 'Bearer abc' } })
+		const response = await bearer(request, createTestContext(request, {}), next.next)
+		expect(response.status).toBe(401)
+		expect(await response.text()).toBe('invalid token')
+		expect(response.headers.get('www-authenticate')).toBe(
+			'Bearer realm="taverna", error="invalid_token"',
+		)
+		expect(next.count).toBe(0)
+	})
+
+	it('a verify that throws rejects with that same error and the handler never runs', async () => {
+		const failure = new Error('verifier is down')
+		const bearer = createBearer<BearerState>({
+			verify: () => {
+				throw failure
+			},
+		})
+		const next = createRecordingNext()
+		const request = buildTestRequest('/', { headers: { authorization: 'Bearer abc' } })
+		await expect(bearer(request, createTestContext(request, {}), next.next)).rejects.toBe(failure)
+		expect(next.count).toBe(0)
+	})
+
+	it('a verify that rejects propagates that same error', async () => {
+		const failure = new Error('verifier rejected')
+		const bearer = createBearer<BearerState>({ verify: () => Promise.reject(failure) })
+		const next = createRecordingNext()
+		const request = buildTestRequest('/', { headers: { authorization: 'Bearer abc' } })
+		await expect(bearer(request, createTestContext(request, {}), next.next)).rejects.toBe(failure)
+		expect(next.count).toBe(0)
+	})
+
+	it('an object credential is stashed on state.token and next runs exactly once', async () => {
+		const credential = { subject: 'user-1', scope: 'read' }
+		const bearer = createBearer<BearerState<typeof credential>, typeof credential>({
+			verify: () => credential,
+		})
+		const state: BearerState<typeof credential> = {}
+		const next = createRecordingNext()
+		const request = buildTestRequest('/', { headers: { authorization: 'Bearer abc' } })
+		const response = await bearer(request, createTestContext(request, state), next.next)
+		expect(response.status).toBe(200)
+		expect(state.token).toBe(credential)
+		expect(next.count).toBe(1)
+	})
+
+	it('verify receives the extracted token and the same Request object', async () => {
+		const calls = createRecorder<[string, Request]>()
+		const bearer = createBearer<BearerState>({
+			verify: (token, request) => {
+				calls.handler(token, request)
+				return 'user-1'
+			},
+		})
+		const request = buildTestRequest('/', { headers: { authorization: 'Bearer abc.def' } })
+		await bearer(request, createTestContext(request, {}), createRecordingNext().next)
+		expect(calls.count).toBe(1)
+		expect(calls.calls[0]?.[0]).toBe('abc.def')
+		expect(calls.calls[0]?.[1]).toBe(request)
+	})
+
+	it('a synchronous verify returning a credential admits the request', async () => {
+		const bearer = createBearer<BearerState>({ verify: (token) => `sync:${token}` })
+		const state: BearerState = {}
+		const request = buildTestRequest('/', { headers: { authorization: 'Bearer abc' } })
+		const response = await runChain(
+			[bearer],
+			createEchoTerminal(),
+			request,
+			createTestContext(request, state),
+		)
+		expect(await response.text()).toBe(ECHO_MARKER)
+		expect(state.token).toBe('sync:abc')
+	})
+
+	it('the HMAC arrangement: a valid token is stashed on state and the chain continues', async () => {
 		const token = await signToken('user-1', { secret: TEST_SECRET })
-		const bearer = createBearer<BearerState>({ secret: TEST_SECRET })
+		const bearer = createBearer<BearerState>({ verify: (value) => verifyToken(value, TEST_SECRET) })
 		const state: BearerState = {}
 		const request = buildTestRequest('/', { headers: { authorization: `Bearer ${token}` } })
 		const context = createTestContext(request, state)
@@ -861,39 +1012,47 @@ describe('createBearer', () => {
 		expect(state.token).toBe('user-1')
 	})
 
-	it('a missing token throws HTTPError 401', async () => {
-		const bearer = createBearer<BearerState>({ secret: TEST_SECRET })
+	it('the HMAC arrangement: a missing token answers a returned 401', async () => {
+		const bearer = createBearer<BearerState>({ verify: (value) => verifyToken(value, TEST_SECRET) })
 		const request = buildTestRequest('/')
-		const context = createTestContext(request, {})
-		await expect(bearer(request, context, async () => new Response())).rejects.toMatchObject({
-			status: 401,
-		})
+		const response = await bearer(
+			request,
+			createTestContext(request, {}),
+			createRecordingNext().next,
+		)
+		expect(response.status).toBe(401)
+		expect(await response.text()).toBe('missing token')
 	})
 
-	it('a tampered token throws HTTPError 401', async () => {
+	it('the HMAC arrangement: a tampered token answers a returned 401', async () => {
 		const token = await signToken('user-1', { secret: TEST_SECRET })
-		const bearer = createBearer<BearerState>({ secret: TEST_SECRET })
+		const bearer = createBearer<BearerState>({ verify: (value) => verifyToken(value, TEST_SECRET) })
+		const next = createRecordingNext()
 		const request = buildTestRequest('/', { headers: { authorization: `Bearer ${token}xx` } })
-		const context = createTestContext(request, {})
-		await expect(bearer(request, context, async () => new Response())).rejects.toMatchObject({
-			status: 401,
-		})
+		const response = await bearer(request, createTestContext(request, {}), next.next)
+		expect(response.status).toBe(401)
+		expect(await response.text()).toBe('invalid token')
+		expect(response.headers.get('www-authenticate')).toBe('Bearer error="invalid_token"')
+		expect(next.count).toBe(0)
 	})
 
-	it('an expired token throws HTTPError 401', async () => {
+	it('the HMAC arrangement: an expired token answers a returned 401', async () => {
 		const token = await signToken('user-1', { secret: TEST_SECRET, ttl: 1 })
 		await waitForDelay(20)
-		const bearer = createBearer<BearerState>({ secret: TEST_SECRET })
+		const bearer = createBearer<BearerState>({ verify: (value) => verifyToken(value, TEST_SECRET) })
+		const next = createRecordingNext()
 		const request = buildTestRequest('/', { headers: { authorization: `Bearer ${token}` } })
-		const context = createTestContext(request, {})
-		await expect(bearer(request, context, async () => new Response())).rejects.toMatchObject({
-			status: 401,
-		})
+		const response = await bearer(request, createTestContext(request, {}), next.next)
+		expect(response.status).toBe(401)
+		expect(await response.text()).toBe('invalid token')
+		expect(next.count).toBe(0)
 	})
 
-	it('rotation: a token signed with an older secret verifies against a rotation list', async () => {
+	it('the HMAC arrangement: a token signed with an older secret verifies against a rotation list', async () => {
 		const oldToken = await signToken('user-1', { secret: 'old-secret' })
-		const bearer = createBearer<BearerState>({ secret: ['new-secret', 'old-secret'] })
+		const bearer = createBearer<BearerState>({
+			verify: (value) => verifyToken(value, ['new-secret', 'old-secret']),
+		})
 		const state: BearerState = {}
 		const request = buildTestRequest('/', { headers: { authorization: `Bearer ${oldToken}` } })
 		const context = createTestContext(request, state)
@@ -901,9 +1060,9 @@ describe('createBearer', () => {
 		expect(state.token).toBe('user-1')
 	})
 
-	it('the scheme prefix match is case-insensitive', async () => {
+	it('the HMAC arrangement: the scheme prefix match is case-insensitive', async () => {
 		const token = await signToken('user-1', { secret: TEST_SECRET })
-		const bearer = createBearer<BearerState>({ secret: TEST_SECRET })
+		const bearer = createBearer<BearerState>({ verify: (value) => verifyToken(value, TEST_SECRET) })
 		const state: BearerState = {}
 		const request = buildTestRequest('/', { headers: { authorization: `bearer ${token}` } })
 		const context = createTestContext(request, state)
@@ -911,14 +1070,96 @@ describe('createBearer', () => {
 		expect(state.token).toBe('user-1')
 	})
 
-	it('scheme: "" treats the whole header value as the raw token', async () => {
+	it('the HMAC arrangement: scheme "" treats the whole header value as the raw token', async () => {
 		const token = await signToken('user-1', { secret: TEST_SECRET })
-		const bearer = createBearer<BearerState>({ secret: TEST_SECRET, scheme: '' })
+		const bearer = createBearer<BearerState>({
+			verify: (value) => verifyToken(value, TEST_SECRET),
+			scheme: '',
+		})
 		const state: BearerState = {}
 		const request = buildTestRequest('/', { headers: { authorization: token } })
 		const context = createTestContext(request, state)
 		await runChain([bearer], createEchoTerminal(), request, context)
 		expect(state.token).toBe('user-1')
+	})
+
+	it('scheme "" with no header answers a challenge naming Bearer', async () => {
+		const bearer = createBearer<BearerState>({ verify: () => 'user-1', scheme: '' })
+		const request = buildTestRequest('/')
+		const response = await bearer(
+			request,
+			createTestContext(request, {}),
+			createRecordingNext().next,
+		)
+		expect(response.headers.get('www-authenticate')).toBe('Bearer')
+	})
+
+	it('scheme "Token" answers a challenge naming Token', async () => {
+		const bearer = createBearer<BearerState>({ verify: () => undefined, scheme: 'Token' })
+		const missing = buildTestRequest('/')
+		const invalid = buildTestRequest('/', { headers: { authorization: 'Token abc' } })
+		const first = await bearer(missing, createTestContext(missing, {}), createRecordingNext().next)
+		const second = await bearer(invalid, createTestContext(invalid, {}), createRecordingNext().next)
+		expect(first.headers.get('www-authenticate')).toBe('Token')
+		expect(second.headers.get('www-authenticate')).toBe('Token error="invalid_token"')
+	})
+
+	it('with no challenge given the missing response header is exactly Bearer', async () => {
+		const bearer = createBearer<BearerState>({ verify: () => 'user-1' })
+		const request = buildTestRequest('/')
+		const response = await bearer(
+			request,
+			createTestContext(request, {}),
+			createRecordingNext().next,
+		)
+		expect(response.headers.get('www-authenticate')).toBe('Bearer')
+	})
+
+	it('refuses a missing or non-function verify at construction', () => {
+		const missing: BearerOptions = JSON.parse('{}')
+		const text: BearerOptions = JSON.parse('{"verify":"not-a-function"}')
+		expect(() => createBearer(missing)).toThrow(TypeError)
+		expect(() => createBearer(text)).toThrow(TypeError)
+	})
+
+	it('refuses a non-string header or scheme at construction', () => {
+		// JSON.parse supplies the malformed member, absorbed by the annotated binding.
+		const header: BearerOptions = Object.assign({ verify: () => 'x' }, JSON.parse('{"header":1}'))
+		const scheme: BearerOptions = Object.assign({ verify: () => 'x' }, JSON.parse('{"scheme":1}'))
+		expect(() => createBearer(header)).toThrow(TypeError)
+		expect(() => createBearer(scheme)).toThrow(TypeError)
+	})
+
+	it('refuses a challenge that is not a record of string values at construction', () => {
+		const number: BearerOptions = Object.assign(
+			{ verify: () => 'x' },
+			JSON.parse('{"challenge":{"realm":1}}'),
+		)
+		const list: BearerOptions = Object.assign(
+			{ verify: () => 'x' },
+			JSON.parse('{"challenge":["realm"]}'),
+		)
+		expect(() => createBearer(number)).toThrow(TypeError)
+		expect(() => createBearer(list)).toThrow(TypeError)
+	})
+
+	it('refuses a challenge that names error in any case, because the battery owns it', () => {
+		expect(() => createBearer({ verify: () => 'x', challenge: { error: 'x' } })).toThrow(TypeError)
+		expect(() => createBearer({ verify: () => 'x', challenge: { Error: 'x' } })).toThrow(TypeError)
+	})
+
+	it('refuses a challenge name that is not a token at construction', () => {
+		expect(() => createBearer({ verify: () => 'x', challenge: { 'two words': 'x' } })).toThrow(
+			TypeError,
+		)
+	})
+
+	it('refuses a challenge value holding a quote, a backslash, a CR, or an LF at construction', () => {
+		for (const value of ['a"b', 'a\\b', 'a\rb', 'a\nb']) {
+			expect(() => createBearer({ verify: () => 'x', challenge: { realm: value } })).toThrow(
+				TypeError,
+			)
+		}
 	})
 })
 
@@ -1877,7 +2118,7 @@ describe('composition', () => {
 		const clock = createManualClock()
 		const token = await signToken('user-1', { secret: TEST_SECRET })
 		const bearer = createBearer<BearerState & ClientState & ConnectionState>({
-			secret: TEST_SECRET,
+			verify: (value) => verifyToken(value, TEST_SECRET),
 		})
 		const limiter = createLimiter<BearerState & ClientState & ConnectionState>({
 			max: 1,
