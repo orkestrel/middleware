@@ -992,22 +992,27 @@ Scaffold writes one part of the manifest rather than advising on it: the writabl
 and `prepublishOnly`. Each sheet face adds its `check:src:<face>` and `build:src:<face>` scripts.
 Each occupied framework face adds `check:<axis>:vue` and `build:<axis>:vue`; the application face also adds `dev:vue`.
 Selected showcase pages add `showcase`, `showcase:<framework>`, `build:showcase`, and `build:showcase:<framework>`; application journeys add `test:journey:<framework>`.
+A workspace that plans the application server barrel adds `build:app:barrel`, which has no
+predecessor form. A workspace with the server application adds `serve:build`, which runs `build`
+before `serve` and accepts `npm run build:app:server && npm run serve` as its generated predecessor.
 Its `test:src:<face>` script accepts, as its generated predecessor, the command that ran the project
 without building the face first, and `build:src:styles` accepts the styles-only build as the
 predecessor of the chain that builds themes after it. A publishing `test` chain joins the region when
 it matches byte for byte the planned chain with the generated `test:app`, `test:journey`, and framework
 journey invocations inserted after `test:src`, where that blueprint emitted them before.
 `repair` and `overwrite` remove those helper invocations from that exact predecessor.
-The `test` chain also joins the region as a generated predecessor when it runs fewer steps than
-the planned chain and every step it runs is a planned step in the planned
-order, `repair` and `overwrite` write the planned chain in its place. That write lands only when
+When the `test` or `build:app` chain is a generated predecessor, which runs fewer steps than
+the planned chain and runs only planned steps in the planned order, that chain joins the region
+and `repair` and `overwrite` write the planned chain in its place. That write lands only when
 every step the planned chain adds runs a script the manifest declares or the region writes. The
 `test:src` and `test:app` aggregates sit outside the region. Only a private workspace's planned
 chain invokes `test:app`. A chain whose planned form adds an
 aggregate the manifest lacks stays with the package, and the `projects` question keeps its remedy.
-`audit` reports this chain write only through the `projects` question, so a planned step that
+`audit` reports this `test` chain write only through the `projects` question, so a planned step that
 registers no Vitest project, such as `npm run test:guides`, lands on the next `repair` without an
-earlier advisory. A `test` chain running any other step or order stays maintainer-owned, as do the
+earlier advisory. `audit` reports no `build:app` chain write, so in a barrel workspace only the
+`scripts` question's report of a missing `build:app:barrel` script precedes that write. A `test` or
+`build:app` chain running any other step or order stays maintainer-owned, as do the
 `check`, `build`, `dev`, `serve`, `format`, `lint`, `clean`, and `copy` gate chains. A
 declared value is overwritten only when it is already the value being written or is a recognized
 generated predecessor. The overwrite happens in place,
@@ -1693,7 +1698,9 @@ A workspace that selects `studies` and the `server` application also builds the 
 `app/server/index.ts`, because `@orkestrel/study` loads the package under study as ES modules. The
 `appBarrel` factory, the content-owned `configs/app/vite.barrel.config.ts` wrapper, and the
 `build:app:barrel` script exist only under that condition, and `build:app` runs the script after
-`build:app:server`. The build emits the single file `dist/app/server/index.js` with `@app/*` and
+`build:app:server`. `serve:build` runs `build` before `serve`, so the barrel, which the server
+build's emptied `dist/app/server` would otherwise lose, and every browser face the server serves are
+rebuilt. The build emits the single file `dist/app/server/index.js` with `@app/*` and
 `@src/*` specifiers and relative imports inlined, and `node:` and every installed package specifier
 left external. It sets `emptyOutDir` to `false`, so `main.cjs` stays byte-identical. A workspace
 without both conditions plans none of the three. Scaffold's `tests/src/core/templates.test.ts` builds both entries in a
@@ -2202,7 +2209,7 @@ extras pass through unchanged except for the selected showcase pair. Extras foll
 `ORKESTREL_RANGE_PATTERN`; foreign peers follow `FLOOR_RANGE_PATTERN`.
 
 A browser application with `showcase: true`, including its Vue face, selects exact
-`vite-plugin-singlefile: 2.3.3`, Vite `^8.3.7` from scaffold's manifest, and the npm override
+`vite-plugin-singlefile: 2.3.3`, Vite `^8.3.8` from scaffold's manifest, and the npm override
 `"vite-plugin-singlefile@2.3.3": { "micromatch": "npm:picomatch@2.3.2" }`. This policy applies
 after extras. Online resolution excludes this pair from ordinary foreign-major updates; other
 dependencies retain their usual resolution. Repair preserves each package's runtime or development
@@ -2280,7 +2287,7 @@ The dependency tables select these floors:
 | `oxfmt`                      | `^0.78.0`  | Every workspace                                                |
 | `@microsoft/api-extractor`   | `^7.60.1`  | Declaration builds; uses its bundled TypeScript 6.0.3 engine   |
 | `playwright`                 | `^1.64.1`  | Browser tooling                                                |
-| Vite                         | `^8.3.7`   | Every workspace                                                |
+| Vite                         | `^8.3.8`   | Every workspace                                                |
 | `@types/node`                | `^24.19.2` | Every workspace; generated workspaces support Node `>=22.18.0` |
 
 Node 26 types admit APIs that the supported runtime lacks. Inside the declared major the verbs

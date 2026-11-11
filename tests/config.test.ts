@@ -5174,7 +5174,7 @@ describe('configuration helpers', () => {
 			'environmentSourceError',
 			'fileSystemPath',
 			'findPackageDirectory',
-			'hasAsciiUrlControl',
+			'hasASCIIURLControl',
 			'isBoundaryExemptModule',
 			'isExtractorModule',
 			'isOutsideWorkspacePath',
@@ -5462,8 +5462,8 @@ describe('configuration helpers', () => {
 				"const module = import('./module.js')\nconst asset = new URL('./asset%20name.png', import.meta.url)\nvoid module\nvoid asset\n"
 			writeFileSync(source, code, 'utf8')
 
-			expect(configHelpers.hasAsciiUrlControl('clean')).toBe(false)
-			expect(configHelpers.hasAsciiUrlControl('line\u0000break')).toBe(true)
+			expect(configHelpers.hasASCIIURLControl('clean')).toBe(false)
+			expect(configHelpers.hasASCIIURLControl('line\u0000break')).toBe(true)
 			expect(configHelpers.isBoundaryExemptModule('virtual:control')).toBe(true)
 			expect(configHelpers.isBoundaryExemptModule(resolve(POLICY_ROOT, 'src/core/index.ts'))).toBe(
 				false,
