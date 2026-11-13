@@ -755,10 +755,10 @@ The `session` column holds the `SessionSnapshot` JSON that `snapshotSession`
 writes and `createRestoredSession` reads back: `{ id, state }`, where `state`
 carries the session's entries. The cursor columns are `seen` and `created`. A
 table still declared with the earlier `lastSeen` and `createdAt` columns fails
-closed rather than reading a stale row as live: the table's own read guard
-refuses a row that does not satisfy `sessionColumns`, `store.get` resolves
-`undefined`, and the row stays in place until the table is migrated or
-recreated.
+closed rather than reading a stale row as live: the table raises a `DRIVER`
+`DatabaseError` for a row that does not satisfy `sessionColumns`, `store.get`
+and `store.set` reject with it, and the row stays in place until the table is
+migrated or recreated.
 
 ### Session transport seam — direct calls
 
@@ -1064,7 +1064,7 @@ console.log(extractFieldToken({ csrf: 'credential' }, 'csrf'))
   absolute-lifetime eviction (including the underlying row's removal),
   `created` stamped once and preserved across re-set, guard rejection,
   construction guards, rebuild through the injected restore step, and the
-  fail-closed read of a row stored under the earlier cursor columns.
+  propagated `DRIVER` refusal of a row stored under the earlier cursor columns.
 - [`tests/src/core/factories.test.ts`](../tests/src/core/factories.test.ts) —
   `createCookieTransport`/`createHeaderTransport` round-trips over real
   `Request`/`Response`, `createMemorySessionStore` shallow mirror,

@@ -191,7 +191,7 @@ describe('DatabaseSessionStore delete', () => {
 })
 
 describe('DatabaseSessionStore earlier column names', () => {
-	it('refuses a row declared under the earlier cursor columns instead of reading it as live', async () => {
+	it('propagates the DRIVER refusal for a row declared under the earlier cursor columns', async () => {
 		// A table declared before `lastSeen`/`createdAt` became `seen`/`created`,
 		// written through the real database layer over a shared driver.
 		const driver = createMemoryDriver()
@@ -216,10 +216,12 @@ describe('DatabaseSessionStore earlier column names', () => {
 		const current = createDatabase({ driver, tables: { sessions: sessionColumns } })
 		const table = current.table('sessions')
 		const store = createDatabaseSessionStore(table, isSession, { ttl: 1_000 })
-		// The table's own read guard refuses the row, so the store never reads a
-		// missing `seen`/`created` into `sessionExpired`.
-		expect(await table.get('a')).toBeUndefined()
-		expect(await store.get('a', 10_000_000)).toBeUndefined()
+		// The table raises DRIVER for the nonconforming row and the store propagates
+		// it, so a missing `seen`/`created` never reaches `sessionExpired`.
+		const refusal = { code: 'DRIVER', context: { table: 'sessions', key: 'a' } }
+		await expect(table.get('a')).rejects.toMatchObject(refusal)
+		await expect(store.get('a', 10_000_000)).rejects.toMatchObject(refusal)
+		await expect(store.set(new Session('a'), 10_000_000)).rejects.toMatchObject(refusal)
 		expect(await driver.read('sessions', 'a')).toMatchObject({ lastSeen: 0, createdAt: 0 })
 	})
 })
