@@ -129,11 +129,13 @@ describe('renderChallenge', () => {
 	})
 
 	it('refuses a value holding a character outside the value set, naming the value', () => {
-		const values = ['a"b', 'a\\b', 'a\rb', 'a\nb', 'a\tb', 'a\u0000b', 'a\u007fb', 'café']
+		const values = ['a"b', 'a\\b', 'a\rb', 'a\nb', 'a\tb', 'a\u0000b', 'café']
 		for (const value of values) {
 			expect(() => renderChallenge('Bearer', { realm: value })).toThrow(TypeError)
 			expect(() => renderChallenge('Bearer', { realm: value })).toThrow(JSON.stringify(value))
 		}
+		expect(() => renderChallenge('Bearer', { realm: 'a\u007fb' })).toThrow(TypeError)
+		expect(() => renderChallenge('Bearer', { realm: 'a\u007fb' })).toThrow('"a\\u007fb"')
 	})
 
 	it('refuses a parameter name that is not a token, naming the name', () => {
