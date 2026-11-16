@@ -2,7 +2,7 @@ import type { Stats } from 'node:fs'
 import type { FileHandle } from 'node:fs/promises'
 import type { BudgetInterface } from '@orkestrel/budget'
 import type { Guard } from '@orkestrel/contract'
-import type { CookieOptions, Encoding, MiddlewareContext, TokenSecret } from '@orkestrel/server'
+import type { CookieOptions, Encoding, MiddlewareContext, SignerInterface } from '@orkestrel/server'
 
 /**
  * Configures `createBoundary` — the outermost error-rendering battery. The factory admits the bag whole, and a refusal is a `ContractError`. The bag must be a plain object; a class instance refuses.
@@ -638,7 +638,9 @@ export interface SessionOptions<S extends SessionInterface, TState = unknown> {
  *
  * @remarks
  * - `name` — the cookie name; defaults to {@link DEFAULT_SESSION_COOKIE}.
- * - `secret` — the {@link TokenSecret} the session id is signed with (`signToken`).
+ * - `signer` — the {@link SignerInterface} the session id is signed with (`signToken`); the
+ *   implementation checks only `sign` and `verify`, accepts a class instance, and ignores
+ *   every other member.
  * - `cookie` — extra {@link CookieOptions} attributes; `Max-Age` is derived
  *   from `SessionOptions.ttl` unless overridden here. The record is admitted whole: it
  *   accepts only `path` and `domain` (strings), `maxAge` (a finite number, because a
@@ -647,7 +649,7 @@ export interface SessionOptions<S extends SessionInterface, TState = unknown> {
  */
 export interface CookieTransportOptions {
 	readonly name?: string
-	readonly secret: TokenSecret
+	readonly signer: SignerInterface
 	readonly cookie?: CookieOptions
 }
 
@@ -695,7 +697,9 @@ export interface CSRFState {
  * Configures `createCSRF` — session-bound double-submit CSRF protection. The factory admits the bag whole, and a refusal is a `ContractError`. The bag must be a plain object; a class instance refuses.
  *
  * @remarks
- * - `secret` — the {@link TokenSecret} the CSRF token is signed with.
+ * - `signer` — the {@link SignerInterface} the CSRF token is signed with; the
+ *   implementation checks only `sign` and `verify`, accepts a class instance, and ignores
+ *   every other member.
  * - `cookie` — the signed-cookie name; defaults to {@link DEFAULT_CSRF_COOKIE}.
  * - `header` — the header a mutating request submits its token in; defaults
  *   to {@link DEFAULT_CSRF_HEADER}.
@@ -706,7 +710,7 @@ export interface CSRFState {
  *   {@link DEFAULT_CSRF_SAFE_METHODS}.
  */
 export interface CSRFOptions {
-	readonly secret: TokenSecret
+	readonly signer: SignerInterface
 	readonly cookie?: string
 	readonly header?: string
 	readonly field?: string

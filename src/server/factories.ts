@@ -20,9 +20,10 @@ import { DEFAULT_SESSION_COOKIE, DEFAULT_SESSION_HEADER } from './constants.js'
 import {
 	COOKIE_TRANSPORT_CONTRACT,
 	HEADER_TRANSPORT_CONTRACT,
+	SIGNER_FOREIGN,
 	UPLOADED_FILE_CONTRACT,
 } from './contracts.js'
-import { admitOptions } from './helpers.js'
+import { admitForeign, admitOptions } from './helpers.js'
 import { Session } from './Session.js'
 import { DatabaseSessionStore } from './stores/DatabaseSessionStore.js'
 import { MemorySessionStore } from './stores/MemorySessionStore.js'
@@ -47,25 +48,26 @@ export function createMemoryLimiterStore(
  *
  * @param options - See {@link CookieTransportOptions}
  * @returns A {@link SessionTransportInterface}
- * @throws {ContractError} When the bag is refused whole: an undeclared key, a `secret` that is not a string or a string array, or a `cookie` that is not a plain record of `path`, `domain` (strings), `maxAge` (a finite number), `httpOnly`, `secure` (booleans), and `sameSite` (`'Strict'`, `'Lax'`, or `'None'`)
+ * @throws {ContractError} When the bag is refused whole: an undeclared key such as `secret`, a missing `signer`, or a `cookie` that is not a plain record of `path`, `domain` (strings), `maxAge` (a finite number), `httpOnly`, `secure` (booleans), and `sameSite` (`'Strict'`, `'Lax'`, or `'None'`); or when `signer` lacks `sign` or `verify`
  *
  * @example
  * ```ts
- * const transport = createCookieTransport({ secret: 'shh' })
+ * const transport = createCookieTransport({ signer: createSigner('shh') })
  * ```
  */
 export function createCookieTransport(options: CookieTransportOptions): SessionTransportInterface {
 	admitOptions('createCookieTransport', COOKIE_TRANSPORT_CONTRACT, options)
+	admitForeign('createCookieTransport', ['signer'], SIGNER_FOREIGN, options.signer)
 	const name = options.name ?? DEFAULT_SESSION_COOKIE
-	const secret = options.secret
+	const signer = options.signer
 	const cookie = options.cookie
 	return {
 		read(request) {
-			return readSignedCookie(request, name, secret)
+			return readSignedCookie(request, name, signer)
 		},
 		async write(response, id, encrypted) {
 			const secure = resolveSecure(cookie?.secure, encrypted)
-			await writeSignedCookie(response.headers, name, id, secret, { ...cookie, secure })
+			await writeSignedCookie(response.headers, name, id, signer, { ...cookie, secure })
 		},
 		clear(response) {
 			clearCookie(response.headers, name, cookie)

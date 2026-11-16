@@ -96,6 +96,7 @@ import {
 	SESSION_CONTRACT,
 	SESSION_STORE_FOREIGN,
 	SESSION_TRANSPORT_FOREIGN,
+	SIGNER_FOREIGN,
 	STATIC_CONTRACT,
 	TELEMETRY_CONTRACT,
 } from './contracts.js'
@@ -713,20 +714,21 @@ export function createSession<
  * @typeParam TState - The consumer's opaque per-request state type, must carry {@link CSRFState} and {@link SessionState}
  * @param options - See {@link CSRFOptions}
  * @returns A `MiddlewareHandler<TState>`
- * @throws {ContractError} When the bag is refused whole: an undeclared key, a missing `secret`, or a value outside its declared type
+ * @throws {ContractError} When the bag is refused whole: an undeclared key such as `secret`, a missing `signer`, or a value outside its declared type; or when `signer` lacks `sign` or `verify`
  * @throws {HTTPError} `403` when the submitted token is missing, mismatched, or bound to a different session
  *
  * @example
  * ```ts
- * const csrf = createCSRF({ secret: 'shh' })
+ * const csrf = createCSRF({ signer: createSigner('shh') })
  * ```
  */
 export function createCSRF<TState extends CSRFState & SessionState>(
 	options: CSRFOptions,
 ): MiddlewareHandler<TState> {
 	admitOptions('createCSRF', CSRF_CONTRACT, options)
+	admitForeign('createCSRF', ['signer'], SIGNER_FOREIGN, options.signer)
 
-	const secret = options.secret
+	const signer = options.signer
 	const cookieName = options.cookie ?? DEFAULT_CSRF_COOKIE
 	const header = options.header ?? DEFAULT_CSRF_HEADER
 	const field = options.field ?? DEFAULT_CSRF_FIELD
@@ -739,15 +741,15 @@ export function createCSRF<TState extends CSRFState & SessionState>(
 			const submitted =
 				request.headers.get(header) ?? extractFieldToken(await context.body(), field)
 			if (submitted === undefined) throw new HTTPError(403, 'invalid csrf token')
-			const cookieToken = await readSignedCookie(request, cookieName, secret)
+			const cookieToken = await readSignedCookie(request, cookieName, signer)
 			if (cookieToken === undefined || !equalsConstantTime(cookieToken, submitted))
 				throw new HTTPError(403, 'invalid csrf token')
 			if (arrived !== undefined) {
-				const boundId = await verifyToken(cookieToken, secret)
+				const boundId = await verifyToken(cookieToken, signer)
 				if (boundId !== arrived) throw new HTTPError(403, 'invalid csrf token')
 			}
 		}
-		const minted = unsafe ? undefined : await signToken(arrived ?? crypto.randomUUID(), { secret })
+		const minted = unsafe ? undefined : await signToken(arrived ?? crypto.randomUUID(), { signer })
 		if (minted !== undefined) Object.assign(context.state, { csrf: minted })
 
 		const response = await next()
@@ -770,12 +772,12 @@ export function createCSRF<TState extends CSRFState & SessionState>(
 		}
 		const fresh =
 			current !== undefined && current !== arrived
-				? await signToken(current, { secret })
+				? await signToken(current, { signer })
 				: undefined
 		if (fresh !== undefined) Object.assign(context.state, { csrf: fresh })
 		const token = fresh ?? minted
 		if (token !== undefined)
-			await writeSignedCookie(response.headers, cookieName, token, secret, cookie)
+			await writeSignedCookie(response.headers, cookieName, token, signer, cookie)
 		return response
 	}
 }
@@ -801,7 +803,7 @@ export function createCSRF<TState extends CSRFState & SessionState>(
  * ```ts
  * const scoped = only(
  * 	['/admin', '/admin/*rest'],
- * 	createBearer({ verify: (token) => verifyToken(token, secret) }),
+ * 	createBearer({ verify: (token) => verifyToken(token, signer) }),
  * )
  * ```
  */

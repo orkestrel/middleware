@@ -46,7 +46,14 @@ import {
 	moveUploadedFile,
 	only,
 } from '@src/server'
-import { compose, ContentTooLargeError, HTTPError, signToken, verifyToken } from '@orkestrel/server'
+import {
+	compose,
+	ContentTooLargeError,
+	createSigner,
+	HTTPError,
+	signToken,
+	verifyToken,
+} from '@orkestrel/server'
 import { createDispatcher } from '@orkestrel/router'
 import { buildRequest as buildRouterRequest, sendResponse } from '@orkestrel/router/server'
 import {
@@ -71,7 +78,7 @@ import {
 	decompress,
 	ECHO_MARKER,
 	runChain,
-	TEST_SECRET,
+	TEST_SIGNER,
 } from '../../setup.js'
 
 // ── createAssets ─────────────────────────────────────────────────────────────
@@ -1275,8 +1282,8 @@ describe('createNodeCompression (node face)', () => {
 
 describe('capstone: real socket + Dispatcher + canonical onion', () => {
 	it('one authenticated JSON round-trip fingerprints every layer on the wire, plus a 429 and a CSRF 403', async () => {
-		const secret = 'capstone-secret'
-		const bearerToken = await signToken('capstone-user', { secret })
+		const signer = createSigner('capstone-secret')
+		const bearerToken = await signToken('capstone-user', { signer })
 		const telemetryEntries: Array<{
 			readonly method: string
 			readonly pathname: string
@@ -1310,12 +1317,12 @@ describe('capstone: real socket + Dispatcher + canonical onion', () => {
 			createCors<CapstoneState>({ origin: ['https://app.example'] }),
 			createForwarded<CapstoneState>({ proxies: 1 }),
 			createETag<CapstoneState>(),
-			createBearer<CapstoneState>({ verify: (token) => verifyToken(token, secret) }),
+			createBearer<CapstoneState>({ verify: (token) => verifyToken(token, signer) }),
 			createLimiter<CapstoneState>({ max: 3, window: 60_000 }),
 			createSession<SessionInterface, CapstoneState>({
-				transport: createCookieTransport({ secret }),
+				transport: createCookieTransport({ signer }),
 			}),
-			createCSRF<CapstoneState>({ secret }),
+			createCSRF<CapstoneState>({ signer }),
 		]
 
 		const composed = compose(onion, async (request, context) =>
@@ -2099,9 +2106,9 @@ describe('the exchange seam through a real Server', () => {
 	it('F4: createSession and createCSRF omit Secure over the plain Server', async () => {
 		const fixture = await startExchange(running, [
 			createSession<SessionInterface, ExchangeState>({
-				transport: createCookieTransport({ secret: TEST_SECRET }),
+				transport: createCookieTransport({ signer: TEST_SIGNER }),
 			}),
-			createCSRF<ExchangeState>({ secret: TEST_SECRET }),
+			createCSRF<ExchangeState>({ signer: TEST_SIGNER }),
 		])
 		const response = await fetch(`${fixture.url}/plain`)
 		const cookies = response.headers.getSetCookie()
@@ -2131,9 +2138,9 @@ describe('the exchange seam through a real Server', () => {
 				createBearer<ExchangeState>({ verify: (token) => token }),
 				createLimiter<ExchangeState>({ max: 10, window: 60_000 }),
 				createSession<SessionInterface, ExchangeState>({
-					transport: createCookieTransport({ secret: TEST_SECRET }),
+					transport: createCookieTransport({ signer: TEST_SIGNER }),
 				}),
-				createCSRF<ExchangeState>({ secret: TEST_SECRET }),
+				createCSRF<ExchangeState>({ signer: TEST_SIGNER }),
 				createBody(),
 				createMultipart<ExchangeState>(),
 				createStatic<ExchangeState>({ root: fixture.scratch.path, prefix: '/static' }),
@@ -2546,8 +2553,8 @@ describe('createBearer', () => {
 	})
 
 	it('the HMAC arrangement: a valid token is stashed on state and the chain continues', async () => {
-		const token = await signToken('user-1', { secret: TEST_SECRET })
-		const bearer = createBearer<BearerState>({ verify: (value) => verifyToken(value, TEST_SECRET) })
+		const token = await signToken('user-1', { signer: TEST_SIGNER })
+		const bearer = createBearer<BearerState>({ verify: (value) => verifyToken(value, TEST_SIGNER) })
 		const state: BearerState = {}
 		const request = buildTestRequest('/', { headers: { authorization: `Bearer ${token}` } })
 		const context = createTestContext(request, state)
@@ -2557,7 +2564,7 @@ describe('createBearer', () => {
 	})
 
 	it('the HMAC arrangement: a missing token answers a returned 401', async () => {
-		const bearer = createBearer<BearerState>({ verify: (value) => verifyToken(value, TEST_SECRET) })
+		const bearer = createBearer<BearerState>({ verify: (value) => verifyToken(value, TEST_SIGNER) })
 		const request = buildTestRequest('/')
 		const response = await bearer(
 			request,
@@ -2569,8 +2576,8 @@ describe('createBearer', () => {
 	})
 
 	it('the HMAC arrangement: a tampered token answers a returned 401', async () => {
-		const token = await signToken('user-1', { secret: TEST_SECRET })
-		const bearer = createBearer<BearerState>({ verify: (value) => verifyToken(value, TEST_SECRET) })
+		const token = await signToken('user-1', { signer: TEST_SIGNER })
+		const bearer = createBearer<BearerState>({ verify: (value) => verifyToken(value, TEST_SIGNER) })
 		const next = createRecordingNext()
 		const request = buildTestRequest('/', { headers: { authorization: `Bearer ${token}xx` } })
 		const response = await bearer(request, createTestContext(request, {}), next.next)
@@ -2581,9 +2588,9 @@ describe('createBearer', () => {
 	})
 
 	it('the HMAC arrangement: an expired token answers a returned 401', async () => {
-		const token = await signToken('user-1', { secret: TEST_SECRET, ttl: 1 })
+		const token = await signToken('user-1', { signer: TEST_SIGNER, ttl: 1 })
 		await waitForDelay(20)
-		const bearer = createBearer<BearerState>({ verify: (value) => verifyToken(value, TEST_SECRET) })
+		const bearer = createBearer<BearerState>({ verify: (value) => verifyToken(value, TEST_SIGNER) })
 		const next = createRecordingNext()
 		const request = buildTestRequest('/', { headers: { authorization: `Bearer ${token}` } })
 		const response = await bearer(request, createTestContext(request, {}), next.next)
@@ -2593,9 +2600,10 @@ describe('createBearer', () => {
 	})
 
 	it('the HMAC arrangement: a token signed with an older secret verifies against a rotation list', async () => {
-		const oldToken = await signToken('user-1', { secret: 'old-secret' })
+		const oldToken = await signToken('user-1', { signer: createSigner('old-secret') })
+		const rotation = createSigner(['new-secret', 'old-secret'])
 		const bearer = createBearer<BearerState>({
-			verify: (value) => verifyToken(value, ['new-secret', 'old-secret']),
+			verify: (value) => verifyToken(value, rotation),
 		})
 		const state: BearerState = {}
 		const request = buildTestRequest('/', { headers: { authorization: `Bearer ${oldToken}` } })
@@ -2605,8 +2613,8 @@ describe('createBearer', () => {
 	})
 
 	it('the HMAC arrangement: the scheme prefix match is case-insensitive', async () => {
-		const token = await signToken('user-1', { secret: TEST_SECRET })
-		const bearer = createBearer<BearerState>({ verify: (value) => verifyToken(value, TEST_SECRET) })
+		const token = await signToken('user-1', { signer: TEST_SIGNER })
+		const bearer = createBearer<BearerState>({ verify: (value) => verifyToken(value, TEST_SIGNER) })
 		const state: BearerState = {}
 		const request = buildTestRequest('/', { headers: { authorization: `bearer ${token}` } })
 		const context = createTestContext(request, state)
@@ -2615,9 +2623,9 @@ describe('createBearer', () => {
 	})
 
 	it('the HMAC arrangement: scheme "" treats the whole header value as the raw token', async () => {
-		const token = await signToken('user-1', { secret: TEST_SECRET })
+		const token = await signToken('user-1', { signer: TEST_SIGNER })
 		const bearer = createBearer<BearerState>({
-			verify: (value) => verifyToken(value, TEST_SECRET),
+			verify: (value) => verifyToken(value, TEST_SIGNER),
 			scheme: '',
 		})
 		const state: BearerState = {}
@@ -3281,7 +3289,7 @@ describe('createSession', () => {
 	})
 
 	it('auto-Secure: the cookie transport carries Secure when connection.encrypted is true, omits it when false/absent', async () => {
-		const transport = createCookieTransport({ secret: TEST_SECRET })
+		const transport = createCookieTransport({ signer: TEST_SIGNER })
 		const session = createSession<SessionInterface, SessionState>({ transport })
 
 		const secureRequest = buildTestRequest('/')
@@ -3379,7 +3387,7 @@ describe('createSession', () => {
 
 describe('createCSRF', () => {
 	it('a safe method mints a token, stashes it on state, and sets the signed cookie', async () => {
-		const csrf = createCSRF<CSRFState & SessionState>({ secret: TEST_SECRET })
+		const csrf = createCSRF<CSRFState & SessionState>({ signer: TEST_SIGNER })
 		const request = buildTestRequest('/')
 		const state: CSRFState & SessionState = {}
 		const response = await runChain(
@@ -3396,7 +3404,7 @@ describe('createCSRF', () => {
 	})
 
 	it('mutating happy path: header submission matches the cookie and is accepted', async () => {
-		const csrf = createCSRF<CSRFState & SessionState>({ secret: TEST_SECRET })
+		const csrf = createCSRF<CSRFState & SessionState>({ signer: TEST_SIGNER })
 		const mintState: CSRFState & SessionState = {}
 		const mintResponse = await runChain(
 			[csrf],
@@ -3424,7 +3432,7 @@ describe('createCSRF', () => {
 	})
 
 	it('mutating happy path: field submission matches the cookie and is accepted', async () => {
-		const csrf = createCSRF<CSRFState & SessionState>({ secret: TEST_SECRET })
+		const csrf = createCSRF<CSRFState & SessionState>({ signer: TEST_SIGNER })
 		const mintState: CSRFState & SessionState = {}
 		const mintResponse = await runChain(
 			[csrf],
@@ -3453,7 +3461,7 @@ describe('createCSRF', () => {
 	})
 
 	it('a missing submitted token throws HTTPError 403', async () => {
-		const csrf = createCSRF<CSRFState & SessionState>({ secret: TEST_SECRET })
+		const csrf = createCSRF<CSRFState & SessionState>({ signer: TEST_SIGNER })
 		const request = buildTestRequest('/', { method: 'POST' })
 		const context = createTestContext(request, {})
 		await expect(csrf(request, context, async () => new Response())).rejects.toMatchObject({
@@ -3462,7 +3470,7 @@ describe('createCSRF', () => {
 	})
 
 	it('a mismatched submitted token throws HTTPError 403', async () => {
-		const csrf = createCSRF<CSRFState & SessionState>({ secret: TEST_SECRET })
+		const csrf = createCSRF<CSRFState & SessionState>({ signer: TEST_SIGNER })
 		const mintResponse = await runChain(
 			[csrf],
 			createEchoTerminal(),
@@ -3482,7 +3490,7 @@ describe('createCSRF', () => {
 	})
 
 	it('SESSION-BOUND: a token minted under session A replayed under session B is rejected with 403; A-on-A is accepted', async () => {
-		const csrf = createCSRF<CSRFState & SessionState>({ secret: TEST_SECRET })
+		const csrf = createCSRF<CSRFState & SessionState>({ signer: TEST_SIGNER })
 		const sessionA: SessionInterface = buildSession('session-a')
 		const sessionB: SessionInterface = buildSession('session-b')
 
@@ -3520,7 +3528,7 @@ describe('createCSRF', () => {
 	})
 
 	it('sessionless fallback still works (no session on state)', async () => {
-		const csrf = createCSRF<CSRFState & SessionState>({ secret: TEST_SECRET })
+		const csrf = createCSRF<CSRFState & SessionState>({ signer: TEST_SIGNER })
 		const mintState: CSRFState & SessionState = {}
 		const mintResponse = await runChain(
 			[csrf],
@@ -3547,7 +3555,7 @@ describe('createCSRF', () => {
 	})
 
 	it('auto-Secure: the double-submit cookie carries Secure when connection.encrypted is true, omits it when false', async () => {
-		const csrf = createCSRF<CSRFState & SessionState>({ secret: TEST_SECRET })
+		const csrf = createCSRF<CSRFState & SessionState>({ signer: TEST_SIGNER })
 
 		const secureResponse = await runChain(
 			[csrf],
@@ -3581,7 +3589,7 @@ describe('createCSRF session rotation', () => {
 	it('an unsafe handler that rotates the session leaves a token for the new session on the same response', async () => {
 		const transport = createTestTransport()
 		const session = createSession<SessionInterface, CSRFState & SessionState>({ transport })
-		const csrf = createCSRF<CSRFState & SessionState>({ secret: TEST_SECRET })
+		const csrf = createCSRF<CSRFState & SessionState>({ signer: TEST_SIGNER })
 		const mintRequest = buildTestRequest('/')
 		const mintState: CSRFState & SessionState = {}
 		const mintResponse = await runChain(
@@ -3604,7 +3612,7 @@ describe('createCSRF session rotation', () => {
 			async (_request, context) => {
 				context.state.control?.regenerate()
 				const successor = context.state.control?.successor?.id ?? ''
-				return new Response(await signToken(successor, { secret: TEST_SECRET }))
+				return new Response(await signToken(successor, { signer: TEST_SIGNER }))
 			},
 			loginRequest,
 			createTestContext(loginRequest, loginState),
@@ -3618,7 +3626,7 @@ describe('createCSRF session rotation', () => {
 		expect(rotatedCookie).toMatch(/^csrf=./)
 		const rotatedToken = await loginResponse.text()
 		expect(loginState.csrf).toBe(rotatedToken)
-		expect(await verifyToken(rotatedToken, TEST_SECRET)).toBe(rotatedId)
+		expect(await verifyToken(rotatedToken, TEST_SIGNER)).toBe(rotatedId)
 
 		const writeRequest = buildTestRequest('/', {
 			method: 'POST',
@@ -3638,7 +3646,7 @@ describe('createCSRF session rotation', () => {
 	it('a safe handler that rotates the session mints for the new session, not the one it arrived with', async () => {
 		const transport = createTestTransport()
 		const session = createSession<SessionInterface, CSRFState & SessionState>({ transport })
-		const csrf = createCSRF<CSRFState & SessionState>({ secret: TEST_SECRET })
+		const csrf = createCSRF<CSRFState & SessionState>({ signer: TEST_SIGNER })
 		const mintRequest = buildTestRequest('/')
 		const mintResponse = await runChain(
 			[session, csrf],
@@ -3666,7 +3674,7 @@ describe('createCSRF session rotation', () => {
 		expect(rotatedCookies).toHaveLength(1)
 		const rotatedCookie = (rotatedCookies[0] ?? '').split(';')[0] ?? ''
 		const rotatedToken = rotateState.csrf ?? ''
-		expect(await verifyToken(rotatedToken, TEST_SECRET)).toBe(rotatedId)
+		expect(await verifyToken(rotatedToken, TEST_SIGNER)).toBe(rotatedId)
 
 		const writeRequest = buildTestRequest('/', {
 			method: 'POST',
@@ -3686,7 +3694,7 @@ describe('createCSRF session rotation', () => {
 	it('a write with the token minted before the rotation is still refused, under the new session and the old', async () => {
 		const transport = createTestTransport()
 		const session = createSession<SessionInterface, CSRFState & SessionState>({ transport })
-		const csrf = createCSRF<CSRFState & SessionState>({ secret: TEST_SECRET })
+		const csrf = createCSRF<CSRFState & SessionState>({ signer: TEST_SIGNER })
 		const mintRequest = buildTestRequest('/')
 		const mintState: CSRFState & SessionState = {}
 		const mintResponse = await runChain(
@@ -3746,7 +3754,7 @@ describe('createCSRF session rotation', () => {
 	it('an unsafe request that keeps its session writes no csrf cookie and stashes no token', async () => {
 		const transport = createTestTransport()
 		const session = createSession<SessionInterface, CSRFState & SessionState>({ transport })
-		const csrf = createCSRF<CSRFState & SessionState>({ secret: TEST_SECRET })
+		const csrf = createCSRF<CSRFState & SessionState>({ signer: TEST_SIGNER })
 		const mintRequest = buildTestRequest('/')
 		const mintState: CSRFState & SessionState = {}
 		const mintResponse = await runChain(
@@ -3780,7 +3788,7 @@ describe('createCSRF session rotation', () => {
 	it('a handler that ends the session clears the csrf cookie instead of leaving one bound to the ended session', async () => {
 		const transport = createTestTransport()
 		const session = createSession<SessionInterface, CSRFState & SessionState>({ transport })
-		const csrf = createCSRF<CSRFState & SessionState>({ secret: TEST_SECRET })
+		const csrf = createCSRF<CSRFState & SessionState>({ signer: TEST_SIGNER })
 		const mintRequest = buildTestRequest('/')
 		const mintState: CSRFState & SessionState = {}
 		const mintResponse = await runChain(
@@ -3927,9 +3935,9 @@ describe('composition', () => {
 
 	it('bearer -> limiter token-key idiom: the limiter keys off the bearer-stashed token', async () => {
 		const clock = createManualClock()
-		const token = await signToken('user-1', { secret: TEST_SECRET })
+		const token = await signToken('user-1', { signer: TEST_SIGNER })
 		const bearer = createBearer<BearerState & ClientState>({
-			verify: (value) => verifyToken(value, TEST_SECRET),
+			verify: (value) => verifyToken(value, TEST_SIGNER),
 		})
 		const limiter = createLimiter<BearerState & ClientState>({
 			max: 1,
@@ -3947,7 +3955,7 @@ describe('composition', () => {
 
 	it('body -> csrf field read: csrf reads the field the body battery cached', async () => {
 		const body = createBody<BodyState & CSRFState & SessionState>()
-		const csrf = createCSRF<CSRFState & SessionState>({ secret: TEST_SECRET })
+		const csrf = createCSRF<CSRFState & SessionState>({ signer: TEST_SIGNER })
 		const mintState: CSRFState & SessionState = {}
 		const mintResponse = await runChain(
 			[csrf],
@@ -3977,7 +3985,7 @@ describe('composition', () => {
 	it('session -> csrf binding: the csrf battery binds to the session resolved upstream', async () => {
 		const transport = createTestTransport()
 		const session = createSession<SessionInterface, CSRFState & SessionState>({ transport })
-		const csrf = createCSRF<CSRFState & SessionState>({ secret: TEST_SECRET })
+		const csrf = createCSRF<CSRFState & SessionState>({ signer: TEST_SIGNER })
 
 		const mintRequest = buildTestRequest('/')
 		const mintState: CSRFState & SessionState = {}
@@ -4024,7 +4032,7 @@ describe('transports', () => {
 	})
 
 	it('createCookieTransport signs and reads back a session id through a real cookie round-trip', async () => {
-		const transport = createCookieTransport({ secret: TEST_SECRET })
+		const transport = createCookieTransport({ signer: TEST_SIGNER })
 		const response = new Response()
 		await transport.write(response, 'session-id-1', false)
 		const setCookie = response.headers.get('set-cookie') ?? ''

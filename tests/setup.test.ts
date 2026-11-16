@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { ContentTooLargeError, signToken, verifyToken } from '@orkestrel/server'
+import { ContentTooLargeError, createSigner, signToken, verifyToken } from '@orkestrel/server'
 import {
 	buildTestRequest,
 	buildSession,
@@ -15,7 +15,7 @@ import {
 	ECHO_MARKER,
 	runChain,
 	TEST_BODY_LIMIT,
-	TEST_SECRET,
+	TEST_SIGNER,
 } from './setup.js'
 
 // ── tests/setup.ts — the host-independent middleware harness ──────────────────
@@ -247,11 +247,11 @@ describe('buildSession', () => {
 	})
 })
 
-describe('TEST_SECRET', () => {
-	it('signs and verifies a token through the peer, so every battery shares one real secret', async () => {
-		const token = await signToken('user-1', { secret: TEST_SECRET })
-		expect(await verifyToken(token, TEST_SECRET)).toBe('user-1')
-		expect(await verifyToken(token, `${TEST_SECRET}-other`)).toBeUndefined()
+describe('TEST_SIGNER', () => {
+	it('signs and verifies a token through the peer, so every battery shares one real signer', async () => {
+		const token = await signToken('user-1', { signer: TEST_SIGNER })
+		expect(await verifyToken(token, TEST_SIGNER)).toBe('user-1')
+		expect(await verifyToken(token, createSigner('test-secret-other'))).toBeUndefined()
 	})
 })
 

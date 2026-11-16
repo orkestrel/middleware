@@ -12,7 +12,7 @@ import type {
 	SessionStoreInterface,
 	SessionTransportInterface,
 } from '@src/server'
-import { ContentTooLargeError, compose, readBody } from '@orkestrel/server'
+import { ContentTooLargeError, compose, createSigner, readBody } from '@orkestrel/server'
 import { createDatabase, createMemoryDriver } from '@orkestrel/database'
 import {
 	createDatabaseSessionStore,
@@ -33,8 +33,8 @@ import {
 /** Limits a test request's body to the default byte cap the test harness's {@link createTestContext} applies. */
 export const TEST_BODY_LIMIT = 1_048_576
 
-/** Signs every bearer, CSRF, and cookie-transport scenario — the secret each one shares. */
-export const TEST_SECRET = 'test-secret'
+/** Signs every bearer, CSRF, and cookie-transport scenario — the signer each one shares. */
+export const TEST_SIGNER = createSigner('test-secret')
 
 /**
  * Builds a `Request` for a test — a tiny, centralized request builder so
