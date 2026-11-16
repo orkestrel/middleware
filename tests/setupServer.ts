@@ -1,16 +1,24 @@
 import type { FileHandle } from 'node:fs/promises'
-import type { ScratchInterface } from '@orkestrel/test/server'
+import type { IncomingHttpHeaders, OutgoingHttpHeaders } from 'node:http'
+import type { CookieJarInterface, ScratchInterface } from '@orkestrel/test/server'
 import type {
 	AssetRepresentation,
 	AssetSourceInterface,
+	BearerState,
 	BodyState,
+	ClientState,
+	CSRFState,
+	ForwardedOptions,
+	IdentifierState,
 	MultipartState,
+	SessionInterface,
 	SessionState,
 } from '@src/server'
 import type { MiddlewareHandler } from '@orkestrel/server'
 import {
 	createAssets,
 	createBearer,
+	createBody,
 	createBoundary,
 	createCSRF,
 	createCompression,
@@ -35,17 +43,20 @@ import {
 	except,
 	isSession,
 	only,
+	Session,
 } from '@src/server'
-import { ContractError, attempt, isRecord } from '@orkestrel/contract'
+import { ContractError, attempt, isRecord, isString } from '@orkestrel/contract'
 import { MiddlewareValue, buildStore } from './setup.js'
 import { statSync, writeFileSync } from 'node:fs'
+import { createServer as createHttpServer, request as sendHttpRequest } from 'node:http'
+import { connect, createServer as createNetServer } from 'node:net'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { randomUUID } from 'node:crypto'
-import { createScratch } from '@orkestrel/test/server'
+import { createCookieJar, createLoopback, createScratch } from '@orkestrel/test/server'
 import { createDispatcher } from '@orkestrel/router'
-import { createServer } from '@orkestrel/server'
-import { waitForDelay } from '@orkestrel/test'
+import { createServer, HTTPError } from '@orkestrel/server'
+import { createRecorder, requireValue, waitForAbort, waitForDelay } from '@orkestrel/test'
 
 // ── Server-only test harness ─────────────────────────────────────────────────
 //
@@ -1433,4 +1444,1515 @@ export async function startExchange(
 	}
 	running.push(fixture)
 	return fixture
+}
+
+// ── Composed-stack oracle ────────────────────────────────────────────────────
+
+/** Names one battery position in the composed-stack oracle's onion. */
+export type StackLayer =
+	| 'compression'
+	| 'security'
+	| 'cors'
+	| 'boundary'
+	| 'deadline'
+	| 'forwarded'
+	| 'etag'
+	| 'bearer'
+	| 'limiter'
+	| 'body'
+	| 'session'
+	| 'csrf'
+	| 'multipart'
+	| 'static'
+
+/** Names one onion order the guide's ordering doctrine permits. */
+export type StackArrangement = 'oracle' | 'canonical' | 'deadline' | 'cors'
+
+/** Names the compression battery a stack mounts: `createCompression` or `createNodeCompression`. */
+export type StackEngine = 'web' | 'node'
+
+/** Names the unit that turns a red oracle cell green. */
+export type StackCloser = 'M2' | 'M3' | 'M4' | 'M6'
+
+/** Carries every state slice a battery of the composed stack reads or writes. */
+export interface StackState
+	extends
+		BearerState,
+		BodyState,
+		ClientState,
+		CSRFState,
+		IdentifierState,
+		MultipartState,
+		SessionState {}
+
+/** Configures one composed stack: its order, its forwarded trust, its compression battery, its session capacity, and whether a cookie-less request mints no session. */
+export interface StackOptions {
+	readonly order: readonly StackLayer[]
+	readonly forwarded: ForwardedOptions
+	readonly engine: StackEngine
+	readonly capacity?: number
+	readonly anonymous?: boolean
+	readonly peer?: string
+}
+
+/** Holds one started composed stack: a real `Server` over a real dispatcher, and the proxy fixture in front of it. */
+export interface StackFixtureInterface {
+	readonly url: string
+	readonly proxy: string
+	readonly peer: string
+	readonly hops: readonly string[]
+	readonly ids: readonly string[]
+	stop(): Promise<void>
+}
+
+/** Holds every stack the oracle drives, and whether the proxy reaches the server from its own address. */
+export interface StackSetInterface {
+	readonly orders: Readonly<Record<StackArrangement, StackFixtureInterface>>
+	readonly trusted: StackFixtureInterface
+	readonly node: StackFixtureInterface
+	readonly capacity: StackFixtureInterface
+	readonly anonymous: StackFixtureInterface
+	readonly alias: boolean
+	stop(): Promise<void>
+}
+
+/** Describes one request the oracle sends. */
+export interface StackRequest {
+	readonly method?: string
+	readonly path: string
+	readonly headers?: Readonly<Record<string, string>>
+	readonly body?: string | Blob
+}
+
+/** Holds what one oracle request read back: the status, the headers, the raw `Set-Cookie` fields, and the content-decoded body. */
+export interface StackReply {
+	readonly status: number
+	readonly headers: Headers
+	readonly cookies: readonly string[]
+	readonly body: Uint8Array
+	readonly text: string
+}
+
+/** Describes one oracle cell: the request it sends with the CSRF token or without it, and the unit that closes it when the base holds it red. */
+export interface StackCell {
+	readonly title: string
+	readonly build: (token: string | undefined) => StackRequest
+	readonly closer?: StackCloser
+}
+
+/** Describes one oracle cell whose route answers a status the fixture knows. */
+export interface StackStatusCell extends StackCell {
+	readonly status?: number
+}
+
+/** Describes one forwarded-trust cell: the stack's trust, whether the request crosses the proxy, the hops the client wrote, and the address the cell expects. */
+export interface StackForwardedCell {
+	readonly title: string
+	readonly trust: 'proxies' | 'trusted'
+	readonly proxied: boolean
+	readonly headers: Readonly<Record<string, string>>
+	readonly expect: 'peer' | 'hop'
+	readonly closer?: StackCloser
+}
+
+/** Describes one ranged-response cell: the compression battery its stack mounts and the request it sends. */
+export interface StackRangeCell extends StackCell {
+	readonly engine: StackEngine
+}
+
+/** Names the loopback address every oracle client and fixture server uses. */
+export const STACK_LOOPBACK = '127.0.0.1'
+
+/** Names the second loopback address the proxy fixture connects to the server from, so the server's socket peer differs from the hop the proxy appends. */
+export const STACK_PEER = '127.0.0.2'
+
+/** Signs the session cookie and the CSRF token alike, as the guide's canonical onion shares one secret between them. */
+export const STACK_SECRET = 'stack-secret'
+
+/** Holds the bearer token `/admin` admits. */
+export const STACK_BEARER = 'stack-bearer'
+
+/** Holds the one origin the stack's list-mode CORS battery allows. */
+export const STACK_ORIGIN = 'https://app.example'
+
+/** Holds an origin the stack's list-mode CORS battery does not allow. */
+export const STACK_FOREIGN_ORIGIN = 'https://other.example'
+
+/** Holds a hop a client writes into a forwarding header itself. */
+export const STACK_CLIENT_HOP = '198.51.100.66'
+
+/** Bounds every stack response, in milliseconds: past every ordinary route on a loaded host, and the wait of the route that parks until the deadline fires. */
+export const STACK_DEADLINE = 1_500
+
+/** Bounds the session store of the capacity stack, so a cookie-less flood the size of the store reaches eviction. */
+export const STACK_CAPACITY = 4
+
+/** Holds the HTML `/page` and the static `index.html` answer: deterministic, and longer than the compression threshold. */
+export const STACK_PAGE = `<!doctype html><title>Lamp</title>${'<p>lamp oil and wick</p>'.repeat(200)}`
+
+/** Holds the static `large.txt` text: compressible, and longer than the range the ranged cells request. */
+export const STACK_TEXT = 'lamp oil and wick\n'.repeat(1_200)
+
+/** Holds the byte range the ranged cells request. */
+export const STACK_RANGE = 'bytes=0-4999'
+
+/** Holds the multipart boundary the upload cells send, fixed so every order receives the same bytes. */
+export const STACK_BOUNDARY = 'stack-boundary'
+
+/** Lists the security headers invariant 7 compares against the bare-route control, by name. */
+export const SECURITY_HEADERS: readonly string[] = Object.freeze([
+	'x-content-type-options',
+	'x-frame-options',
+	'content-security-policy',
+	'referrer-policy',
+	'permissions-policy',
+	'cross-origin-opener-policy',
+	'cross-origin-resource-policy',
+	'origin-agent-cluster',
+	'strict-transport-security',
+])
+
+/**
+ * Lists the onion orders the guide's ordering doctrine permits, outermost first.
+ *
+ * @remarks
+ * `oracle` mounts `createSecurity` and `createCors` above `createBoundary`, the placement doctrine
+ * items 7 and 8 permit for a consumer who wants their headers on every response; `canonical` is
+ * the guide's fence order; `deadline` mounts `createDeadline` after `createBody` (doctrine item 6);
+ * `cors` mounts `createCors` innermost (doctrine item 8). Every order keeps compression outside the
+ * boundary and `createETag`, the bearer before the limiter, and the body before the session and CSRF.
+ */
+export const STACK_ORDERS: Readonly<Record<StackArrangement, readonly StackLayer[]>> =
+	Object.freeze({
+		oracle: [
+			'compression',
+			'security',
+			'cors',
+			'boundary',
+			'deadline',
+			'forwarded',
+			'etag',
+			'bearer',
+			'limiter',
+			'body',
+			'session',
+			'csrf',
+			'multipart',
+			'static',
+		],
+		canonical: [
+			'compression',
+			'boundary',
+			'deadline',
+			'security',
+			'cors',
+			'forwarded',
+			'etag',
+			'bearer',
+			'limiter',
+			'body',
+			'session',
+			'csrf',
+			'multipart',
+			'static',
+		],
+		deadline: [
+			'compression',
+			'security',
+			'cors',
+			'boundary',
+			'forwarded',
+			'etag',
+			'bearer',
+			'limiter',
+			'body',
+			'deadline',
+			'session',
+			'csrf',
+			'multipart',
+			'static',
+		],
+		cors: [
+			'compression',
+			'security',
+			'boundary',
+			'deadline',
+			'forwarded',
+			'etag',
+			'bearer',
+			'limiter',
+			'body',
+			'session',
+			'csrf',
+			'cors',
+			'multipart',
+			'static',
+		],
+	})
+
+/** Lists the orders invariant 10 compares against the `oracle` order. */
+export const STACK_VARIANTS: readonly StackArrangement[] = Object.freeze([
+	'canonical',
+	'deadline',
+	'cors',
+])
+
+/**
+ * Builds the headers of a request that carries the CSRF token in its header, when it has one.
+ *
+ * @param token - The CSRF token, or `undefined` for the uncredentialed arm
+ * @param headers - The request's other headers
+ * @returns The headers, with `x-csrf-token` when `token` is defined
+ *
+ * @example
+ * ```ts
+ * buildTokenHeaders('abc', { 'content-type': 'application/json' }) // { 'content-type': ..., 'x-csrf-token': 'abc' }
+ * ```
+ */
+export function buildTokenHeaders(
+	token: string | undefined,
+	headers: Readonly<Record<string, string>> = {},
+): Readonly<Record<string, string>> {
+	return token === undefined ? headers : { ...headers, 'x-csrf-token': token }
+}
+
+/**
+ * Builds the `POST /echo` request with a JSON body and the CSRF token in its header.
+ *
+ * @param token - The CSRF token, or `undefined` for the uncredentialed arm
+ * @returns The request
+ *
+ * @example
+ * ```ts
+ * buildEchoRequest(undefined).path // '/echo'
+ * ```
+ */
+export function buildEchoRequest(token: string | undefined): StackRequest {
+	return {
+		method: 'POST',
+		path: '/echo',
+		headers: buildTokenHeaders(token, { 'content-type': 'application/json' }),
+		body: '{"item":"lamp"}',
+	}
+}
+
+/**
+ * Builds the `POST /upload` multipart request, with the CSRF token in its header.
+ *
+ * @param token - The CSRF token, or `undefined` for the uncredentialed arm
+ * @returns The request, over the fixed {@link STACK_BOUNDARY}
+ *
+ * @example
+ * ```ts
+ * buildUploadRequest('abc').headers?.['x-csrf-token'] // 'abc'
+ * ```
+ */
+export function buildUploadRequest(token: string | undefined): StackRequest {
+	const { body, contentType } = buildMultipartBody(
+		[
+			{ kind: 'field', name: 'title', value: 'lamp' },
+			{
+				kind: 'file',
+				name: 'avatar',
+				filename: 'lamp.png',
+				contentType: 'image/png',
+				bytes: PNG_MAGIC,
+			},
+		],
+		STACK_BOUNDARY,
+	)
+	return {
+		method: 'POST',
+		path: '/upload',
+		headers: buildTokenHeaders(token, { 'content-type': contentType }),
+		body: new Blob([Buffer.from(body)]),
+	}
+}
+
+/**
+ * Lists the cells of a table the base holds green: those that name no closing unit.
+ *
+ * @param cells - The table
+ * @returns The cells with no `closer`, in table order
+ *
+ * @example
+ * ```ts
+ * listGreenCells(FAULT_CELLS).every((cell) => cell.closer === undefined) // true
+ * ```
+ */
+export function listGreenCells<TCell extends { readonly closer?: StackCloser }>(
+	cells: readonly TCell[],
+): readonly TCell[] {
+	return cells.filter((cell) => cell.closer === undefined)
+}
+
+/**
+ * Lists the cells of a table the base holds red: those that name the unit that closes them.
+ *
+ * @param cells - The table
+ * @returns The cells with a `closer`, in table order
+ *
+ * @example
+ * ```ts
+ * listRedCells(FAULT_CELLS).map((cell) => cell.closer) // ['M4', ...]
+ * ```
+ */
+export function listRedCells<TCell extends { readonly closer?: StackCloser }>(
+	cells: readonly TCell[],
+): ReadonlyArray<TCell & { readonly closer: StackCloser }> {
+	return cells.filter(
+		(cell): cell is TCell & { readonly closer: StackCloser } => cell.closer !== undefined,
+	)
+}
+
+/** Lists invariant 1's cells: each request through the oracle stack, which answers no 5xx unless its handler threw a non-`HTTPError`. */
+export const FAULT_CELLS: readonly StackCell[] = Object.freeze([
+	{ title: 'GET /page', build: () => ({ path: '/page' }) },
+	{ title: 'GET /token', build: () => ({ path: '/token' }) },
+	{ title: 'POST /echo with a JSON body and the header token', build: buildEchoRequest },
+	{ title: 'POST /echo without a token', build: () => buildEchoRequest(undefined) },
+	{
+		title: 'POST /echo with malformed JSON',
+		build: (token) => ({
+			method: 'POST',
+			path: '/echo',
+			headers: buildTokenHeaders(token, { 'content-type': 'application/json' }),
+			body: '{"item":',
+		}),
+	},
+	{ title: 'GET /teapot, whose handler throws an HTTPError', build: () => ({ path: '/teapot' }) },
+	{ title: 'GET /missing, which no route matches', build: () => ({ path: '/missing' }) },
+	{ title: 'GET /moved, a constructed 302', build: () => ({ path: '/moved' }) },
+	{ title: 'GET /redirect, a Response.redirect 302', build: () => ({ path: '/redirect' }) },
+	{
+		title: 'POST /redirect, a Response.redirect 303 after a write',
+		build: (token) => ({ method: 'POST', path: '/redirect', headers: buildTokenHeaders(token) }),
+	},
+	{
+		title: 'POST /login, which regenerates the session and redirects',
+		build: (token) => ({ method: 'POST', path: '/login', headers: buildTokenHeaders(token) }),
+	},
+	{
+		title: 'OPTIONS /echo, a preflight from the allowed origin',
+		build: () => ({
+			method: 'OPTIONS',
+			path: '/echo',
+			headers: { origin: STACK_ORIGIN, 'access-control-request-method': 'POST' },
+		}),
+	},
+	{ title: 'GET /static/index.html', build: () => ({ path: '/static/index.html' }) },
+	{
+		title: 'GET /static/large.txt with a Range',
+		build: () => ({ path: '/static/large.txt', headers: { range: STACK_RANGE } }),
+	},
+	{ title: 'POST /upload, a multipart form with the header token', build: buildUploadRequest },
+	{
+		title: 'POST /upload, a malformed multipart form',
+		build: (token) => ({
+			method: 'POST',
+			path: '/upload',
+			headers: buildTokenHeaders(token, {
+				'content-type': `multipart/form-data; boundary=${STACK_BOUNDARY}`,
+			}),
+			body: 'not a multipart body',
+		}),
+	},
+	{ title: 'GET /admin/ without a bearer token', build: () => ({ path: '/admin/' }) },
+])
+
+/** Lists invariant 2's cells: each protected route, whose credentialed arm answers 200 and whose uncredentialed arm answers 401 or 403. */
+export const ARM_CELLS: readonly StackCell[] = Object.freeze([
+	{ title: 'POST /echo, the token in the header', build: buildEchoRequest },
+	{
+		title: 'POST /echo, the token in the JSON _csrf field',
+		build: (token) => ({
+			method: 'POST',
+			path: '/echo',
+			headers: { 'content-type': 'application/json' },
+			body: JSON.stringify(token === undefined ? { item: 'lamp' } : { item: 'lamp', _csrf: token }),
+		}),
+	},
+	{
+		title: 'POST /echo, the token in the urlencoded _csrf field',
+		build: (token) => ({
+			method: 'POST',
+			path: '/echo',
+			headers: { 'content-type': 'application/x-www-form-urlencoded' },
+			body: new URLSearchParams(
+				token === undefined ? { item: 'lamp' } : { item: 'lamp', _csrf: token },
+			).toString(),
+		}),
+	},
+	{ title: 'POST /upload, the token in the header of a multipart form', build: buildUploadRequest },
+	{
+		title: 'GET /admin, the bearer token',
+		build: (token) => ({
+			path: '/admin',
+			headers: token === undefined ? {} : { authorization: `Bearer ${STACK_BEARER}` },
+		}),
+	},
+	{
+		title: 'GET /admin/, the bearer token on the trailing-slash form the router dispatches',
+		closer: 'M2',
+		build: (token) => ({
+			path: '/admin/',
+			headers: token === undefined ? {} : { authorization: `Bearer ${STACK_BEARER}` },
+		}),
+	},
+])
+
+/** Lists invariant 3's cells: the client ip each request resolves to, which is the socket peer or a hop the proxy fixture appended. */
+export const FORWARDED_CELLS: readonly StackForwardedCell[] = Object.freeze([
+	{
+		title: 'proxies: 1, a direct request with no forwarding header resolves the socket peer',
+		trust: 'proxies',
+		proxied: false,
+		headers: {},
+		expect: 'peer',
+	},
+	{
+		title: 'proxies: 1, a request through the proxy resolves the hop the proxy appended',
+		trust: 'proxies',
+		proxied: true,
+		headers: {},
+		expect: 'hop',
+		closer: 'M2',
+	},
+	{
+		title: 'proxies: 1, a client-written X-Forwarded-For hop through the proxy never resolves',
+		trust: 'proxies',
+		proxied: true,
+		headers: { 'x-forwarded-for': STACK_CLIENT_HOP },
+		expect: 'hop',
+		closer: 'M2',
+	},
+	{
+		title: 'proxies: 1, two client-written X-Forwarded-For hops through the proxy never resolve',
+		trust: 'proxies',
+		proxied: true,
+		headers: { 'x-forwarded-for': `${STACK_CLIENT_HOP}, 203.0.113.7` },
+		expect: 'hop',
+		closer: 'M2',
+	},
+	{
+		title: 'proxies: 1, a client-written Forwarded hop through the proxy never resolves',
+		trust: 'proxies',
+		proxied: true,
+		headers: { forwarded: `for=${STACK_CLIENT_HOP}` },
+		expect: 'hop',
+		closer: 'M2',
+	},
+	{
+		title: 'trusted, a direct request with no forwarding header resolves the socket peer',
+		trust: 'trusted',
+		proxied: false,
+		headers: {},
+		expect: 'peer',
+	},
+	{
+		title:
+			'trusted, a direct request from an untrusted peer naming the trusted proxy resolves the socket peer',
+		trust: 'trusted',
+		proxied: false,
+		headers: { 'x-forwarded-for': `${STACK_CLIENT_HOP}, ${STACK_PEER}` },
+		expect: 'peer',
+		closer: 'M2',
+	},
+	{
+		title: 'trusted, a request through the trusted proxy resolves the hop it appended',
+		trust: 'trusted',
+		proxied: true,
+		headers: {},
+		expect: 'hop',
+		closer: 'M2',
+	},
+	{
+		title: 'trusted, a client-written hop through the trusted proxy never resolves',
+		trust: 'trusted',
+		proxied: true,
+		headers: { 'x-forwarded-for': STACK_CLIENT_HOP },
+		expect: 'hop',
+		closer: 'M2',
+	},
+	{
+		title: 'trusted, a client-written hop naming the trusted proxy through it never resolves',
+		trust: 'trusted',
+		proxied: true,
+		headers: { 'x-forwarded-for': `${STACK_CLIENT_HOP}, ${STACK_PEER}` },
+		expect: 'hop',
+		closer: 'M2',
+	},
+])
+
+/** Lists invariant 5's cells: each response or preflight in list mode, which carries `Vary: Origin`. */
+export const VARY_CELLS: readonly StackStatusCell[] = Object.freeze([
+	{
+		title: 'GET /page from the allowed origin',
+		status: 200,
+		build: () => ({ path: '/page', headers: { origin: STACK_ORIGIN } }),
+	},
+	{
+		title: 'GET /page from a disallowed origin',
+		status: 200,
+		closer: 'M4',
+		build: () => ({ path: '/page', headers: { origin: STACK_FOREIGN_ORIGIN } }),
+	},
+	{
+		title: 'GET /page with no Origin',
+		status: 200,
+		closer: 'M4',
+		build: () => ({ path: '/page' }),
+	},
+	{
+		title: 'OPTIONS /echo, a preflight from the allowed origin',
+		build: () => ({
+			method: 'OPTIONS',
+			path: '/echo',
+			headers: { origin: STACK_ORIGIN, 'access-control-request-method': 'POST' },
+		}),
+	},
+	{
+		title: 'OPTIONS /echo, a preflight from a disallowed origin',
+		closer: 'M4',
+		build: () => ({
+			method: 'OPTIONS',
+			path: '/echo',
+			headers: { origin: STACK_FOREIGN_ORIGIN, 'access-control-request-method': 'POST' },
+		}),
+	},
+	{
+		title: 'GET /missing from the allowed origin',
+		status: 404,
+		build: () => ({ path: '/missing', headers: { origin: STACK_ORIGIN } }),
+	},
+	{
+		title: 'POST /echo without a token from the allowed origin',
+		status: 403,
+		build: () => ({ ...buildEchoRequest(undefined), headers: { origin: STACK_ORIGIN } }),
+	},
+	{
+		title: 'GET /teapot from a disallowed origin',
+		status: 418,
+		closer: 'M4',
+		build: () => ({ path: '/teapot', headers: { origin: STACK_FOREIGN_ORIGIN } }),
+	},
+	{
+		title: 'GET /static/large.txt with a Range from the allowed origin',
+		status: 206,
+		build: () => ({
+			path: '/static/large.txt',
+			headers: { origin: STACK_ORIGIN, range: STACK_RANGE },
+		}),
+	},
+	{
+		title: 'GET /redirect, a Response.redirect 302, from the allowed origin',
+		status: 302,
+		build: () => ({ path: '/redirect', headers: { origin: STACK_ORIGIN } }),
+	},
+])
+
+/** Lists invariant 7's cells: each redirect and error, whose security headers equal the bare `/page` route's. */
+export const HEADER_CELLS: readonly StackStatusCell[] = Object.freeze<StackStatusCell[]>([
+	{ title: 'GET /moved, a constructed 302', status: 302, build: () => ({ path: '/moved' }) },
+	{
+		title: 'GET /redirect, a Response.redirect 302',
+		status: 302,
+		build: () => ({ path: '/redirect' }),
+	},
+	{
+		title: 'POST /redirect, a Response.redirect 303 after a write',
+		status: 303,
+		build: (token) => ({ method: 'POST', path: '/redirect', headers: buildTokenHeaders(token) }),
+	},
+	{
+		title: 'POST /login, which regenerates the session and redirects',
+		status: 303,
+		build: (token) => ({ method: 'POST', path: '/login', headers: buildTokenHeaders(token) }),
+	},
+	{
+		title: 'POST /echo without a token, a thrown 403',
+		status: 403,
+		build: () => buildEchoRequest(undefined),
+	},
+	{
+		title: 'POST /echo with malformed JSON, a thrown 400',
+		status: 400,
+		build: (token) => ({
+			method: 'POST',
+			path: '/echo',
+			headers: buildTokenHeaders(token, { 'content-type': 'application/json' }),
+			body: '{"item":',
+		}),
+	},
+	{
+		title: 'GET /admin without a bearer token, a returned 401',
+		status: 401,
+		build: () => ({ path: '/admin' }),
+	},
+	{ title: 'GET /missing, the router 404', status: 404, build: () => ({ path: '/missing' }) },
+	{ title: 'GET /teapot, a thrown HTTPError 418', status: 418, build: () => ({ path: '/teapot' }) },
+	{ title: 'GET /fault, a thrown Error', status: 500, build: () => ({ path: '/fault' }) },
+	{ title: 'GET /slow, the deadline 503', status: 503, build: () => ({ path: '/slow' }) },
+	{
+		title: 'POST /upload, a malformed multipart form',
+		status: 400,
+		build: (token) => ({
+			method: 'POST',
+			path: '/upload',
+			headers: buildTokenHeaders(token, {
+				'content-type': `multipart/form-data; boundary=${STACK_BOUNDARY}`,
+			}),
+			body: 'not a multipart body',
+		}),
+	},
+])
+
+/** Lists invariant 8's cells: each 206 a client that accepts gzip receives, which carries no content coding. */
+export const RANGE_CELLS: readonly StackRangeCell[] = Object.freeze([
+	{
+		title: 'createCompression over createStatic, GET /static/large.txt with a Range',
+		engine: 'web',
+		closer: 'M4',
+		build: () => ({
+			path: '/static/large.txt',
+			headers: { range: STACK_RANGE, 'accept-encoding': 'gzip' },
+		}),
+	},
+	{
+		title: 'createCompression over a handler 206, GET /partial',
+		engine: 'web',
+		closer: 'M4',
+		build: () => ({ path: '/partial', headers: { 'accept-encoding': 'gzip' } }),
+	},
+	{
+		title: 'createNodeCompression over createStatic, GET /static/large.txt with a Range',
+		engine: 'node',
+		closer: 'M4',
+		build: () => ({
+			path: '/static/large.txt',
+			headers: { range: STACK_RANGE, 'accept-encoding': 'gzip' },
+		}),
+	},
+	{
+		title: 'createNodeCompression over a handler 206, GET /partial',
+		engine: 'node',
+		closer: 'M4',
+		build: () => ({ path: '/partial', headers: { 'accept-encoding': 'gzip' } }),
+	},
+])
+
+/** Lists invariant 10's cells: each request whose body every permitted order answers byte for byte alike. */
+export const BODY_CELLS: readonly StackCell[] = Object.freeze([
+	{ title: 'GET /page', build: () => ({ path: '/page', headers: { 'accept-encoding': 'gzip' } }) },
+	{ title: 'POST /echo, the token in the header', build: buildEchoRequest },
+	{
+		title: 'POST /echo, the token in the JSON _csrf field',
+		build: (token) => ({
+			method: 'POST',
+			path: '/echo',
+			headers: { 'content-type': 'application/json' },
+			body: JSON.stringify({ item: 'lamp', _csrf: token }),
+		}),
+	},
+	{ title: 'POST /upload, a multipart form', build: buildUploadRequest },
+	{ title: 'GET /static/index.html', build: () => ({ path: '/static/index.html' }) },
+	{
+		title: 'GET /static/large.txt with a Range',
+		build: () => ({ path: '/static/large.txt', headers: { range: STACK_RANGE } }),
+	},
+	{
+		title: 'GET /admin, the bearer token',
+		build: () => ({ path: '/admin', headers: { authorization: `Bearer ${STACK_BEARER}` } }),
+	},
+	{ title: 'GET /missing', build: () => ({ path: '/missing' }) },
+	{ title: 'GET /teapot', build: () => ({ path: '/teapot' }) },
+	{
+		title: 'POST /echo with malformed JSON',
+		build: (token) => ({
+			method: 'POST',
+			path: '/echo',
+			headers: buildTokenHeaders(token, { 'content-type': 'application/json' }),
+			body: '{"item":',
+		}),
+	},
+])
+
+/**
+ * Probes whether the host routes a second loopback address, by connecting from {@link STACK_PEER}.
+ *
+ * @returns `true` when a socket bound to {@link STACK_PEER} reaches a {@link STACK_LOOPBACK} listener
+ * @remarks Linux routes all of `127.0.0.0/8` to the loopback interface; a host that routes only
+ * `127.0.0.1` refuses the bind with `EADDRNOTAVAIL`, and then the proxy fixture's hop and the
+ * server's socket peer are the same address.
+ *
+ * @example
+ * ```ts
+ * const alias = await probeLoopbackAlias()
+ * ```
+ */
+export async function probeLoopbackAlias(): Promise<boolean> {
+	const loopback = await createLoopback(createNetServer((socket) => socket.end()))
+	try {
+		return await new Promise<boolean>((resolve) => {
+			const socket = connect({
+				host: STACK_LOOPBACK,
+				port: loopback.port,
+				localAddress: STACK_PEER,
+			})
+			socket.once('connect', () => {
+				socket.destroy()
+				resolve(true)
+			})
+			socket.once('error', () => resolve(false))
+		})
+	} finally {
+		await loopback.destroy()
+	}
+}
+
+/**
+ * Renders a node address as an RFC 7239 `for=` value: a bare IPv4 address, or a quoted bracketed IPv6 one.
+ *
+ * @param address - The address, or `undefined` when the socket reports none
+ * @returns The `for=` value, `unknown` for an absent address
+ *
+ * @example
+ * ```ts
+ * renderForwardedNode('127.0.0.1') // '127.0.0.1'
+ * renderForwardedNode('::1') // '"[::1]"'
+ * ```
+ */
+export function renderForwardedNode(address: string | undefined): string {
+	if (address === undefined) return 'unknown'
+	return address.includes(':') ? `"[${address}]"` : address
+}
+
+/**
+ * Builds the headers the proxy fixture forwards: the client's headers with one hop appended to
+ * `X-Forwarded-For` and to `Forwarded`, and no `Connection` field.
+ *
+ * @param headers - The headers the proxy received
+ * @param hop - The client address the proxy read from its own socket
+ * @returns The headers to send upstream
+ *
+ * @example
+ * ```ts
+ * appendForwardedHops({ 'x-forwarded-for': '198.51.100.66' }, '127.0.0.1')['x-forwarded-for'] // '198.51.100.66, 127.0.0.1'
+ * ```
+ */
+export function appendForwardedHops(
+	headers: IncomingHttpHeaders,
+	hop: string,
+): OutgoingHttpHeaders {
+	const written = headers['x-forwarded-for']
+	const claimed = headers.forwarded
+	const node = `for=${renderForwardedNode(hop)}`
+	return {
+		...Object.fromEntries(Object.entries(headers).filter(([name]) => name !== 'connection')),
+		'x-forwarded-for': written === undefined ? hop : `${String(written)}, ${hop}`,
+		forwarded: claimed === undefined ? node : `${String(claimed)}, ${node}`,
+	}
+}
+
+/** Holds one started proxy fixture: its origin, the hops it appended, and its teardown. */
+export interface ProxyFixtureInterface {
+	readonly url: string
+	readonly hops: readonly string[]
+	destroy(): Promise<void>
+}
+
+/**
+ * Starts a reverse proxy on a loopback port that forwards every request to `target`, appending
+ * the client address it read from its own socket to `X-Forwarded-For` and `Forwarded`.
+ *
+ * @param target - The upstream origin
+ * @param peer - The local address the proxy connects upstream from, or `undefined` for the host's choice
+ * @returns The fixture, whose `hops` lists every hop it appended, in order
+ *
+ * @example
+ * ```ts
+ * const proxy = await startProxy('http://127.0.0.1:8080', '127.0.0.2')
+ * ```
+ */
+export async function startProxy(
+	target: string,
+	peer: string | undefined,
+): Promise<ProxyFixtureInterface> {
+	const upstream = new URL(target)
+	const hops: string[] = []
+	const loopback = await createLoopback(
+		createHttpServer((incoming, outgoing) => {
+			const hop = incoming.socket.remoteAddress ?? 'unknown'
+			hops.push(hop)
+			const forwarded = sendHttpRequest(
+				{
+					host: upstream.hostname,
+					port: upstream.port,
+					method: incoming.method,
+					path: incoming.url,
+					headers: appendForwardedHops(incoming.headers, hop),
+					agent: false,
+					...(peer === undefined ? {} : { localAddress: peer }),
+				},
+				(reply) => {
+					outgoing.writeHead(reply.statusCode ?? 502, reply.rawHeaders)
+					reply.pipe(outgoing)
+				},
+			)
+			forwarded.once('error', () => outgoing.destroy())
+			incoming.pipe(forwarded)
+		}),
+	)
+	return {
+		url: loopback.url,
+		get hops() {
+			return [...hops]
+		},
+		destroy: () => loopback.destroy(),
+	}
+}
+
+/**
+ * Refuses to mint a session, as the `mint` option of a stack whose cookie-less requests carry none.
+ *
+ * @returns `false`
+ *
+ * @example
+ * ```ts
+ * createSession({ transport, mint: refuseSession })
+ * ```
+ */
+export function refuseSession(): boolean {
+	return false
+}
+
+/**
+ * Starts one composed stack: a real `Server` from `@orkestrel/server` over a real router
+ * dispatcher, the given onion, and a proxy fixture in front of it.
+ *
+ * @remarks
+ * The dispatcher answers `GET /page` with {@link STACK_PAGE}, `GET /token` with the request's
+ * CSRF token as JSON, `POST /echo` with the stashed body's `item`, `GET /client` with the resolved client
+ * ip, `GET /admin` with `admin`, `GET /redirect` and `POST /redirect` with a `Response.redirect`,
+ * `POST /login` and `POST /rotate` after regenerating the session, `GET /moved` with a constructed
+ * 302, `GET /mark` after writing the session, `GET /whoami` with that write, `GET /teapot` and
+ * `GET /fault` with a throw, `GET /slow` after the deadline aborts its request, `GET /partial` with
+ * a handler 206, and `POST /upload` with the parsed multipart form. `createStatic` serves
+ * {@link STACK_PAGE} and {@link STACK_TEXT} under `/static`. The session battery records every id it
+ * mints or rotates to, through its `create` option.
+ *
+ * @param options - The order, the forwarded trust, the compression battery, the session capacity, whether a cookie-less request mints no session, and the proxy's upstream address
+ * @returns The fixture, whose `stop` ends the server and the proxy and removes the scratch trees
+ *
+ * @example
+ * ```ts
+ * const stack = await startStack({ order: STACK_ORDERS.oracle, forwarded: { proxies: 1 }, engine: 'web' })
+ * ```
+ */
+export async function startStack(options: StackOptions): Promise<StackFixtureInterface> {
+	const files = createScratch({
+		prefix: 'middleware-stack-',
+		files: { 'index.html': STACK_PAGE, 'large.txt': STACK_TEXT },
+	})
+	const uploads = createScratch({ prefix: 'middleware-stack-uploads-' })
+	const minted = createRecorder<readonly [string]>()
+	const layers: Readonly<Record<StackLayer, MiddlewareHandler<StackState>>> = {
+		compression: options.engine === 'node' ? createNodeCompression() : createCompression(),
+		security: createSecurity({ hsts: true }),
+		cors: createCors({ origin: [STACK_ORIGIN] }),
+		boundary: createBoundary({ expose: false }),
+		deadline: createDeadline({ ms: STACK_DEADLINE }),
+		forwarded: createForwarded(options.forwarded),
+		etag: createETag(),
+		bearer: only(
+			'/admin',
+			createBearer<StackState>({
+				verify: (token) => (token === STACK_BEARER ? 'admin' : undefined),
+			}),
+		),
+		limiter: createLimiter({ max: 10_000, window: 60_000 }),
+		body: except('/upload', createBody<StackState>()),
+		session: createSession<SessionInterface, StackState>({
+			transport: createCookieTransport({ secret: STACK_SECRET }),
+			store: createMemorySessionStore(
+				options.capacity === undefined ? {} : { capacity: options.capacity },
+			),
+			create: (id) => {
+				minted.handler(id)
+				return new Session(id)
+			},
+			...(options.anonymous === true ? { mint: refuseSession } : {}),
+		}),
+		csrf: createCSRF({ secret: STACK_SECRET }),
+		multipart: only('/upload', createMultipart<StackState>({ directory: uploads.path })),
+		static: createStatic({ root: files.path, prefix: '/static' }),
+	}
+	const dispatcher = createDispatcher<StackState>()
+	dispatcher.add([
+		{
+			method: 'GET',
+			path: '/page',
+			handler: () =>
+				new Response(STACK_PAGE, { headers: { 'content-type': 'text/html; charset=utf-8' } }),
+		},
+		{
+			method: 'GET',
+			path: '/token',
+			handler: (_request, context) => Response.json({ csrf: context.state.csrf }),
+		},
+		{
+			method: 'POST',
+			path: '/echo',
+			handler: (_request, context) =>
+				Response.json({
+					item: isRecord(context.state.body) ? context.state.body.item : undefined,
+				}),
+		},
+		{
+			method: 'GET',
+			path: '/client',
+			handler: (_request, context) => new Response(context.state.client?.ip ?? 'none'),
+		},
+		{ method: 'GET', path: '/admin', handler: () => new Response('admin') },
+		{
+			method: 'GET',
+			path: '/redirect',
+			handler: (_request, context) => Response.redirect(new URL('/page', context.url), 302),
+		},
+		{
+			method: 'POST',
+			path: '/redirect',
+			handler: (_request, context) => Response.redirect(new URL('/page', context.url), 303),
+		},
+		{
+			method: 'POST',
+			path: '/login',
+			handler: (_request, context) => {
+				context.state.control?.regenerate()
+				return Response.redirect(new URL('/page', context.url), 303)
+			},
+		},
+		{
+			method: 'POST',
+			path: '/rotate',
+			handler: (_request, context) => {
+				context.state.control?.regenerate()
+				return Response.json({ rotated: true })
+			},
+		},
+		{
+			method: 'GET',
+			path: '/moved',
+			handler: () => new Response(null, { status: 302, headers: { location: '/page' } }),
+		},
+		{
+			method: 'GET',
+			path: '/mark',
+			handler: (_request, context) => {
+				context.state.session?.set('mark', 'lamp')
+				return new Response('marked')
+			},
+		},
+		{
+			method: 'GET',
+			path: '/whoami',
+			handler: (_request, context) =>
+				new Response(String(context.state.session?.state.get('mark') ?? 'none')),
+		},
+		{
+			method: 'GET',
+			path: '/teapot',
+			handler: () => {
+				throw new HTTPError(418, 'teapot')
+			},
+		},
+		{
+			method: 'GET',
+			path: '/fault',
+			handler: () => {
+				throw new Error('fault')
+			},
+		},
+		{
+			method: 'GET',
+			path: '/slow',
+			handler: async (request) => {
+				await waitForAbort(request.signal)
+				return new Response('late')
+			},
+		},
+		{
+			method: 'GET',
+			path: '/partial',
+			handler: () =>
+				new Response(STACK_TEXT.slice(0, 5_000), {
+					status: 206,
+					headers: {
+						'content-type': 'text/plain; charset=utf-8',
+						'content-range': `bytes 0-4999/${STACK_TEXT.length}`,
+					},
+				}),
+		},
+		{
+			method: 'POST',
+			path: '/upload',
+			handler: (_request, context) =>
+				Response.json({
+					fields: context.state.multipart?.fields,
+					files: Object.values(context.state.multipart?.files ?? {})
+						.flat()
+						.map((file) => ({ field: file.field, name: file.name, size: file.size })),
+				}),
+		},
+	])
+	const server = createServer<StackState>({
+		dispatcher,
+		state: () => ({}),
+		host: STACK_LOOPBACK,
+		middleware: options.order.map((layer) => layers[layer]),
+	})
+	const url = `http://${STACK_LOOPBACK}:${await server.start()}`
+	const proxy = await startProxy(url, options.peer)
+	return {
+		url,
+		proxy: proxy.url,
+		peer: options.peer ?? STACK_LOOPBACK,
+		get hops() {
+			return proxy.hops
+		},
+		get ids() {
+			return minted.calls.map(([id]) => id)
+		},
+		stop: async () => {
+			await proxy.destroy()
+			await server.stop()
+			files.destroy()
+			uploads.destroy()
+		},
+	}
+}
+
+/**
+ * Starts every stack the oracle drives: one per permitted order under `proxies: 1`, one under
+ * `trusted`, one mounting `createNodeCompression`, one with a session store of
+ * {@link STACK_CAPACITY}, and one whose session battery mints no session for a cookie-less
+ * request, so `createCSRF` runs on its own nonce.
+ *
+ * @returns The stacks, whose `stop` ends every one
+ *
+ * @example
+ * ```ts
+ * const stacks = await startStacks()
+ * await stacks.stop()
+ * ```
+ */
+export async function startStacks(): Promise<StackSetInterface> {
+	const alias = await probeLoopbackAlias()
+	const base: Omit<StackOptions, 'order'> = {
+		forwarded: { proxies: 1 },
+		engine: 'web',
+		...(alias ? { peer: STACK_PEER } : {}),
+	}
+	const [oracle, canonical, deadline, cors, trusted, node, capacity, anonymous] = await Promise.all(
+		[
+			startStack({ ...base, order: STACK_ORDERS.oracle }),
+			startStack({ ...base, order: STACK_ORDERS.canonical }),
+			startStack({ ...base, order: STACK_ORDERS.deadline }),
+			startStack({ ...base, order: STACK_ORDERS.cors }),
+			startStack({ ...base, order: STACK_ORDERS.oracle, forwarded: { trusted: [STACK_PEER] } }),
+			startStack({ ...base, order: STACK_ORDERS.oracle, engine: 'node' }),
+			startStack({ ...base, order: STACK_ORDERS.oracle, capacity: STACK_CAPACITY }),
+			startStack({ ...base, order: STACK_ORDERS.oracle, anonymous: true }),
+		],
+	)
+	const all = [oracle, canonical, deadline, cors, trusted, node, capacity, anonymous]
+	return {
+		orders: { oracle, canonical, deadline, cors },
+		trusted,
+		node,
+		capacity,
+		anonymous,
+		alias,
+		stop: async () => {
+			await Promise.all(all.map((stack) => stack.stop()))
+		},
+	}
+}
+
+/**
+ * Sends one oracle request with `fetch`, never following a redirect, and reads the reply whole.
+ *
+ * @param origin - The server's or the proxy's origin
+ * @param request - The request
+ * @param jar - The cookie jar whose header the request carries and whose cookies the reply updates
+ * @returns The status, the headers, the raw `Set-Cookie` fields, and the content-decoded body
+ *
+ * @example
+ * ```ts
+ * const reply = await sendStack(stack.url, { path: '/page' })
+ * ```
+ */
+export async function sendStack(
+	origin: string,
+	request: StackRequest,
+	jar?: CookieJarInterface,
+): Promise<StackReply> {
+	const headers = new Headers(request.headers)
+	const cookie = jar?.header
+	if (cookie !== undefined) headers.set('cookie', cookie)
+	const response = await fetch(`${origin}${request.path}`, {
+		method: request.method ?? 'GET',
+		headers,
+		redirect: 'manual',
+		...(request.body === undefined ? {} : { body: request.body }),
+	})
+	const cookies = jar === undefined ? response.headers.getSetCookie() : jar.capture(response)
+	const body = new Uint8Array(await response.arrayBuffer())
+	return {
+		status: response.status,
+		headers: response.headers,
+		cookies,
+		body,
+		text: new TextDecoder().decode(body),
+	}
+}
+
+/**
+ * Opens a session the way a page does: a `GET /token` whose cookies join `jar`, and whose body
+ * carries the CSRF token the page embeds.
+ *
+ * @param stack - The stack
+ * @param jar - The client's cookie jar
+ * @returns The CSRF token
+ * @throws When the body carries no string `csrf`
+ *
+ * @example
+ * ```ts
+ * const token = await openSession(stack, createCookieJar())
+ * ```
+ */
+export async function openSession(
+	stack: StackFixtureInterface,
+	jar: CookieJarInterface,
+): Promise<string> {
+	const reply = await sendStack(stack.url, { path: '/token' }, jar)
+	const parsed = attempt((): unknown => JSON.parse(reply.text))
+	const token = parsed.success && isRecord(parsed.value) ? parsed.value.csrf : undefined
+	return requireValue(isString(token) ? token : undefined, `GET /token answered ${reply.text}`)
+}
+
+/**
+ * Drives one cell the way a page does: opens a session in `jar`, then sends the cell's request
+ * with the token.
+ *
+ * @param stack - The stack
+ * @param cell - The cell
+ * @param jar - The client's cookie jar
+ * @returns The reply to the cell's request
+ *
+ * @example
+ * ```ts
+ * const reply = await driveCell(stack, FAULT_CELLS[0], createCookieJar())
+ * ```
+ */
+export async function driveCell(
+	stack: StackFixtureInterface,
+	cell: StackCell,
+	jar: CookieJarInterface,
+): Promise<StackReply> {
+	const token = await openSession(stack, jar)
+	return sendStack(stack.url, cell.build(token), jar)
+}
+
+/**
+ * Drives invariant 2's two arms of one cell: the credentialed arm sends the cell's request with
+ * the session's token, and the uncredentialed arm sends it from another session without one.
+ *
+ * @param stack - The stack
+ * @param cell - The cell
+ * @returns The credentialed arm's status, and whether the uncredentialed arm answered 401 or 403
+ *
+ * @example
+ * ```ts
+ * await readArms(stack, ARM_CELLS[0]) // { granted: 200, refused: true }
+ * ```
+ */
+export async function readArms(
+	stack: StackFixtureInterface,
+	cell: StackCell,
+): Promise<{ readonly granted: number; readonly refused: boolean }> {
+	const granted = await driveCell(stack, cell, createCookieJar())
+	const anonymous = createCookieJar()
+	await openSession(stack, anonymous)
+	const refused = await sendStack(stack.url, cell.build(undefined), anonymous)
+	return { granted: granted.status, refused: refused.status === 401 || refused.status === 403 }
+}
+
+/**
+ * Drives one invariant 3 cell and pairs the client ip the stack resolved with the address the
+ * fixture knows: its own loopback address for a direct request, or the hop the proxy appended.
+ *
+ * @param stacks - The stacks
+ * @param cell - The cell
+ * @returns The resolved ip and the expected one
+ *
+ * @example
+ * ```ts
+ * const { resolved, expected } = await readForwarded(stacks, FORWARDED_CELLS[0])
+ * ```
+ */
+export async function readForwarded(
+	stacks: StackSetInterface,
+	cell: StackForwardedCell,
+): Promise<{ readonly resolved: string; readonly expected: string }> {
+	const stack = cell.trust === 'proxies' ? stacks.orders.oracle : stacks.trusted
+	const reply = await sendStack(cell.proxied ? stack.proxy : stack.url, {
+		path: '/client',
+		headers: cell.headers,
+	})
+	return {
+		resolved: reply.text,
+		expected: cell.expect === 'hop' ? requireValue(stack.hops.at(-1)) : STACK_LOOPBACK,
+	}
+}
+
+/**
+ * Drives one invariant 7 cell beside the bare `GET /page` control.
+ *
+ * @param stack - The stack
+ * @param cell - The cell
+ * @returns The cell's status and security headers, and the expected ones: the cell's route status and the control's headers
+ *
+ * @example
+ * ```ts
+ * const { observed, expected } = await readSecurityCell(stack, HEADER_CELLS[0])
+ * ```
+ */
+export async function readSecurityCell(
+	stack: StackFixtureInterface,
+	cell: StackStatusCell,
+): Promise<{ readonly observed: unknown; readonly expected: unknown }> {
+	const control = await sendStack(stack.url, { path: '/page' })
+	const reply = await driveCell(stack, cell, createCookieJar())
+	return {
+		observed: { status: reply.status, headers: readSecurityHeaders(reply.headers) },
+		expected: { status: cell.status, headers: readSecurityHeaders(control.headers) },
+	}
+}
+
+/**
+ * Drives one invariant 5 cell and reads its status and whether `Vary` names `Origin`.
+ *
+ * @param stack - The stack
+ * @param cell - The cell
+ * @returns The observed status and `Vary` reading, and the expected ones
+ *
+ * @example
+ * ```ts
+ * const { observed, expected } = await readVaryCell(stack, VARY_CELLS[0])
+ * ```
+ */
+export async function readVaryCell(
+	stack: StackFixtureInterface,
+	cell: StackStatusCell,
+): Promise<{ readonly observed: unknown; readonly expected: unknown }> {
+	const reply = await driveCell(stack, cell, createCookieJar())
+	return {
+		observed: { status: reply.status, vary: listVary(reply.headers).includes('origin') },
+		expected: { status: cell.status ?? reply.status, vary: true },
+	}
+}
+
+/**
+ * Drives one invariant 8 cell on the stack that mounts its compression battery.
+ *
+ * @param stacks - The stacks
+ * @param cell - The cell
+ * @returns The status and the `Content-Encoding` value, `null` when absent
+ *
+ * @example
+ * ```ts
+ * await readRangeCell(stacks, RANGE_CELLS[0]) // { status: 206, coding: null }
+ * ```
+ */
+export async function readRangeCell(
+	stacks: StackSetInterface,
+	cell: StackRangeCell,
+): Promise<{ readonly status: number; readonly coding: string | null }> {
+	const stack = cell.engine === 'node' ? stacks.node : stacks.orders.oracle
+	const reply = await sendStack(stack.url, cell.build(undefined))
+	return { status: reply.status, coding: reply.headers.get('content-encoding') }
+}
+
+/**
+ * Drives one invariant 10 cell under the `oracle` order and under another permitted order.
+ *
+ * @param stacks - The stacks
+ * @param arrangement - The other order
+ * @param cell - The cell
+ * @returns The content-decoded body under each order
+ *
+ * @example
+ * ```ts
+ * const { variant, reference } = await readBodies(stacks, 'canonical', BODY_CELLS[0])
+ * ```
+ */
+export async function readBodies(
+	stacks: StackSetInterface,
+	arrangement: StackArrangement,
+	cell: StackCell,
+): Promise<{ readonly variant: Uint8Array; readonly reference: Uint8Array }> {
+	const reference = await driveCell(stacks.orders.oracle, cell, createCookieJar())
+	const variant = await driveCell(stacks.orders[arrangement], cell, createCookieJar())
+	return { variant: variant.body, reference: reference.body }
+}
+
+/**
+ * Drives invariant 9's flood on the capacity stack: one client writes its session through
+ * `GET /mark`, {@link STACK_CAPACITY} cookie-less requests to `path` follow, and the client then
+ * reads its session back.
+ *
+ * @param stack - The capacity stack
+ * @param path - The flood's route
+ * @returns What `GET /whoami` read: `lamp` while the written session survives, `none` after eviction
+ *
+ * @example
+ * ```ts
+ * await readFlood(stacks.capacity, '/page') // 'lamp'
+ * ```
+ */
+export async function readFlood(stack: StackFixtureInterface, path: string): Promise<string> {
+	const jar = createCookieJar()
+	await sendStack(stack.url, { path: '/mark' }, jar)
+	await Promise.all(Array.from({ length: STACK_CAPACITY }, () => sendStack(stack.url, { path })))
+	return (await sendStack(stack.url, { path: '/whoami' }, jar)).text
+}
+
+/**
+ * Detects whether a `Set-Cookie` field carries the `HttpOnly` attribute.
+ *
+ * @param field - One raw `Set-Cookie` field
+ * @returns `true` when an attribute after the pair is `HttpOnly`, in any case
+ *
+ * @example
+ * ```ts
+ * isHttpOnlyCookie('sid=abc; Path=/; HttpOnly') // true
+ * ```
+ */
+export function isHttpOnlyCookie(field: string): boolean {
+	return field
+		.split(';')
+		.slice(1)
+		.some((attribute) => attribute.trim().toLowerCase() === 'httponly')
+}
+
+/**
+ * Detects whether a text holds a value: as written, percent-decoded, or inside a base64 or
+ * base64url run, to `depth` decodings.
+ *
+ * @param text - The text a script can read
+ * @param value - The value to find
+ * @param depth - How many decodings deep to search
+ * @returns `true` when some decoding of `text` contains `value`
+ *
+ * @example
+ * ```ts
+ * holdsValue(Buffer.from('{"value":"abc"}').toString('base64url'), 'abc') // true
+ * ```
+ */
+export function holdsValue(text: string, value: string, depth = 4): boolean {
+	if (text.includes(value)) return true
+	if (depth === 0) return false
+	const decoded = attempt(() => decodeURIComponent(text))
+	if (decoded.success && decoded.value !== text && holdsValue(decoded.value, value, depth - 1))
+		return true
+	return (text.match(/[A-Za-z0-9+/_-]{8,}/g) ?? []).some((run) =>
+		holdsValue(Buffer.from(run, 'base64').toString('latin1'), value, depth - 1),
+	)
+}
+
+/**
+ * Lists every value of a reply a page script can read: the body, each `Set-Cookie` field without
+ * `HttpOnly`, and every other header value.
+ *
+ * @param reply - The reply
+ * @returns The script-readable values
+ *
+ * @example
+ * ```ts
+ * listScriptValues(reply).some((text) => holdsValue(text, id))
+ * ```
+ */
+export function listScriptValues(reply: StackReply): readonly string[] {
+	return [
+		reply.text,
+		...reply.cookies.filter((field) => !isHttpOnlyCookie(field)),
+		...[...reply.headers]
+			.filter(([name]) => name !== 'set-cookie')
+			.map(([name, value]) => `${name}: ${value}`),
+	]
+}
+
+/**
+ * Lists every script-readable value of a reply that holds one of the session ids.
+ *
+ * @param reply - The reply
+ * @param ids - The session ids the stack minted
+ * @returns The holding values; empty when none holds an id
+ *
+ * @example
+ * ```ts
+ * listHeldValues(reply, stack.ids) // []
+ * ```
+ */
+export function listHeldValues(reply: StackReply, ids: readonly string[]): readonly string[] {
+	return listScriptValues(reply).filter((text) => ids.some((id) => holdsValue(text, id)))
+}
+
+/**
+ * Reads the {@link SECURITY_HEADERS} of a response, by name.
+ *
+ * @param headers - The response headers
+ * @returns Each declared security header's value, `null` when absent
+ *
+ * @example
+ * ```ts
+ * readSecurityHeaders(reply.headers)['x-content-type-options'] // 'nosniff'
+ * ```
+ */
+export function readSecurityHeaders(headers: Headers): Readonly<Record<string, string | null>> {
+	return Object.fromEntries(SECURITY_HEADERS.map((name) => [name, headers.get(name)]))
+}
+
+/**
+ * Lists the field names a `Vary` header carries, lower-cased.
+ *
+ * @param headers - The response headers
+ * @returns The names; empty when the header is absent
+ *
+ * @example
+ * ```ts
+ * listVary(new Headers({ vary: 'Accept-Encoding, Origin' })) // ['accept-encoding', 'origin']
+ * ```
+ */
+export function listVary(headers: Headers): readonly string[] {
+	return (headers.get('vary') ?? '')
+		.split(',')
+		.map((name) => name.trim().toLowerCase())
+		.filter((name) => name.length > 0)
+}
+
+/**
+ * Lists the CORS response headers a response carries, by name.
+ *
+ * @param headers - The response headers
+ * @returns Every `access-control-*` header name
+ *
+ * @example
+ * ```ts
+ * listCorsHeaders(new Headers({ 'access-control-allow-origin': '*' })) // ['access-control-allow-origin']
+ * ```
+ */
+export function listCorsHeaders(headers: Headers): readonly string[] {
+	return [...headers.keys()].filter((name) => name.startsWith('access-control-'))
 }
