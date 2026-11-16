@@ -1472,7 +1472,7 @@ export type StackArrangement = 'oracle' | 'canonical' | 'deadline' | 'cors'
 export type StackEngine = 'web' | 'node'
 
 /** Names the unit that turns a red oracle cell green. */
-export type StackCloser = 'M2' | 'M3' | 'M4' | 'M6'
+export type StackCloser = 'M3' | 'M4' | 'M6'
 
 /** Carries every state slice a battery of the composed stack reads or writes. */
 export interface StackState

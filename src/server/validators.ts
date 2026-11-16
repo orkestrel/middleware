@@ -34,13 +34,14 @@ import {
  */
 export function isSession(value: unknown): value is SessionInterface {
 	if (!isObject(value)) return false
-	const id: unknown = Reflect.get(value, 'id')
-	const state: unknown = Reflect.get(value, 'state')
-	if (!isString(id) || !isInstance(state, Map)) return false
-	const set: unknown = Reflect.get(value, 'set')
-	const remove: unknown = Reflect.get(value, 'delete')
-	const clear: unknown = Reflect.get(value, 'clear')
-	return isFunction(set) && isFunction(remove) && isFunction(clear)
+	return holds(
+		() =>
+			isString(Reflect.get(value, 'id')) &&
+			isInstance(Reflect.get(value, 'state'), Map) &&
+			isFunction(Reflect.get(value, 'set')) &&
+			isFunction(Reflect.get(value, 'delete')) &&
+			isFunction(Reflect.get(value, 'clear')),
+	)
 }
 
 /**
