@@ -68,14 +68,27 @@ import {
 	streamFile,
 	streamUploadedFile,
 	unlinkStagedFiles,
+	CSRF_LABEL,
+	generateNonce,
+	matchesSessionState,
+	signCSRFToken,
+	verifyCSRFToken,
 } from '@src/server'
+import { createSigner, signToken, verifyToken } from '@orkestrel/server'
 import {
 	PNG_MAGIC,
 	countActiveFileRequests,
 	detectClosedHandle,
+	holdsValue,
 	resolveSecondDevicePath,
 } from '../../setupServer.js'
-import { buildTestRequest, buildSession, createTestContext, decompress } from '../../setup.js'
+import {
+	buildTestRequest,
+	buildSession,
+	createTestContext,
+	decompress,
+	TEST_SIGNER,
+} from '../../setup.js'
 
 // Read once at collection: the host's device layout does not change under the
 // suite, and `it.runIf` needs the answer while the cases are being registered.
@@ -1888,5 +1901,141 @@ describe('admitForeign', () => {
 		expect(outcome.error.message).toContain('createSession: options.store must be')
 		expect(outcome.error.message).toContain('get, set')
 		expect(outcome.error.context?.path).toEqual(['store'])
+	})
+})
+
+describe('generateNonce', () => {
+	it('returns 43 base64url characters, the encoding of 32 random bytes, apart on every call', () => {
+		const nonces = Array.from({ length: 16 }, () => generateNonce())
+		expect(nonces.filter((nonce) => !/^[A-Za-z0-9_-]{43}$/.test(nonce))).toEqual([])
+		expect(nonces.map((nonce) => Buffer.from(nonce, 'base64url').length)).toEqual(
+			nonces.map(() => 32),
+		)
+		expect(new Set(nonces).size).toBe(nonces.length)
+	})
+})
+
+describe('signCSRFToken and verifyCSRFToken', () => {
+	it('mints random.signature over the label, the binding, and the random part', async () => {
+		const token = await signCSRFToken(TEST_SIGNER, 'session-7f3a')
+		const [random = '', signature = '', ...rest] = token.split('.')
+		expect(rest).toEqual([])
+		expect(random).toMatch(/^[A-Za-z0-9_-]{43}$/)
+		expect(await TEST_SIGNER.verify(`${CSRF_LABEL}session-7f3a${random}`, signature)).toBe(true)
+		expect(await verifyCSRFToken(TEST_SIGNER, 'session-7f3a', token)).toBe(true)
+	})
+
+	it('mints a token apart on every call, and every one verifies for its binding', async () => {
+		const tokens = await Promise.all(
+			Array.from({ length: 8 }, () => signCSRFToken(TEST_SIGNER, 'session-7f3a')),
+		)
+		expect(new Set(tokens).size).toBe(tokens.length)
+		const verdicts = await Promise.all(
+			tokens.map((token) => verifyCSRFToken(TEST_SIGNER, 'session-7f3a', token)),
+		)
+		expect(verdicts).toEqual(tokens.map(() => true))
+	})
+
+	it('holds no form of the binding', async () => {
+		const binding = randomUUID()
+		const tokens = await Promise.all(
+			Array.from({ length: 8 }, () => signCSRFToken(TEST_SIGNER, binding)),
+		)
+		expect(tokens.filter((token) => holdsValue(token, binding))).toEqual([])
+	})
+
+	it('refuses another binding, a binding that moves a character into the random part, and another signer', async () => {
+		const token = await signCSRFToken(TEST_SIGNER, 'ab')
+		const [random = '', signature = ''] = token.split('.')
+		const verdicts = await Promise.all([
+			verifyCSRFToken(TEST_SIGNER, 'ac', token),
+			verifyCSRFToken(TEST_SIGNER, '', token),
+			verifyCSRFToken(TEST_SIGNER, 'a', `b${random}.${signature}`),
+			verifyCSRFToken(TEST_SIGNER, 'abx', `${random.slice(1)}.${signature}`),
+			verifyCSRFToken(createSigner('other-secret'), 'ab', token),
+		])
+		expect(verdicts).toEqual([false, false, false, false, false])
+		expect(await verifyCSRFToken(createSigner(['other-secret', 'test-secret']), 'ab', token)).toBe(
+			true,
+		)
+	})
+
+	it('answers false, and never rejects, for a malformed token', async () => {
+		const token = await signCSRFToken(TEST_SIGNER, 'session-7f3a')
+		const [random = '', signature = ''] = token.split('.')
+		const malformed = [
+			'',
+			'.',
+			'..',
+			random,
+			`${random}.`,
+			`.${signature}`,
+			`${token}.`,
+			`${random}.${signature}.${signature}`,
+			`${random}=.${signature}`,
+			`${random.slice(0, 42)}+.${signature}`,
+			`${random}.${signature}=`,
+			'\uD800'.repeat(87),
+			`${'a'.repeat(43)}.${'a'.repeat(8_192)}`,
+		]
+		const verdicts = await Promise.all(
+			malformed.map((value) => verifyCSRFToken(TEST_SIGNER, 'session-7f3a', value)),
+		)
+		expect(verdicts).toEqual(malformed.map(() => false))
+	})
+
+	it('never verifies as a server token, and no server token verifies as a CSRF token', async () => {
+		const csrf = await signCSRFToken(TEST_SIGNER, 'session-7f3a')
+		const session = await signToken('session-7f3a', { signer: TEST_SIGNER })
+		expect(await verifyToken(csrf, TEST_SIGNER)).toBeUndefined()
+		expect(await verifyCSRFToken(TEST_SIGNER, 'session-7f3a', session)).toBe(false)
+		expect(CSRF_LABEL).toMatch(/[^A-Za-z0-9_-]/)
+	})
+})
+
+describe('matchesSessionState', () => {
+	it('matches equal entries in any order, and no change in key, value identity, or size', () => {
+		const shared = { lamp: 'oil' }
+		const before = new Map<string, unknown>([
+			['mark', 'lamp'],
+			['cart', shared],
+		])
+		expect(matchesSessionState(before, new Map(before))).toBe(true)
+		expect(
+			matchesSessionState(
+				before,
+				new Map<string, unknown>([
+					['cart', shared],
+					['mark', 'lamp'],
+				]),
+			),
+		).toBe(true)
+		const changed = [
+			new Map<string, unknown>([['mark', 'lamp']]),
+			new Map<string, unknown>([...before, ['extra', 1]]),
+			new Map<string, unknown>([
+				['mark', 'wick'],
+				['cart', shared],
+			]),
+			new Map<string, unknown>([
+				['mark', 'lamp'],
+				['cart', { lamp: 'oil' }],
+			]),
+			new Map<string, unknown>([
+				['mark', 'lamp'],
+				['basket', shared],
+			]),
+			new Map<string, unknown>(),
+		]
+		expect(changed.map((after) => matchesSessionState(before, after))).toEqual(
+			changed.map(() => false),
+		)
+	})
+
+	it('reads NaN as equal to itself, and +0 apart from -0', () => {
+		expect(matchesSessionState(new Map([['n', Number.NaN]]), new Map([['n', Number.NaN]]))).toBe(
+			true,
+		)
+		expect(matchesSessionState(new Map([['z', 0]]), new Map([['z', -0]]))).toBe(false)
 	})
 })

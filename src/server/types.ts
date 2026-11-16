@@ -383,13 +383,17 @@ export interface SessionInterface {
  * `regenerate` and `destroy` record intent synchronously when called; the
  * store I/O and transport write happen after the handler's `next()` returns
  * (`destroy` supersedes a prior `regenerate`). `regenerate` mints a new id,
- * carries the session's `state` over, and invalidates the old id.
+ * carries the session's `state` over, and invalidates the old id. `fresh`
+ * is true for a session minted on this request: the client holds no credential
+ * for it until a write or a `regenerate` persists it.
  */
 export interface SessionControlInterface {
 	/** Reports whether destruction superseded regeneration. */
 	readonly destroyed: boolean
 	/** Exposes the latest regenerated session, when one exists. */
 	readonly successor: SessionInterface | undefined
+	/** Reports whether the session was minted on this request, so the client does not hold it yet. */
+	readonly fresh: boolean
 	/** Mints a fresh id, carries the session's `state` over, and invalidates the old id. */
 	regenerate(): void
 	/** Ends the session — deletes it from the store and clears its transport. */

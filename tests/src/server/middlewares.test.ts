@@ -19,6 +19,7 @@ import { afterEach, describe, expect, it } from 'vitest'
 import { createRecorder, waitForCondition, waitForDelay } from '@orkestrel/test'
 import { createLoopback, createScratch } from '@orkestrel/test/server'
 import {
+	CSRF_LABEL,
 	createAssets,
 	createBearer,
 	createBody,
@@ -45,6 +46,7 @@ import {
 	MemoryLimiterStore,
 	moveUploadedFile,
 	only,
+	verifyCSRFToken,
 } from '@src/server'
 import {
 	compose,
@@ -62,6 +64,7 @@ import {
 	buildStaticFixture,
 	buildSymlinkFixture,
 	createAssetSource,
+	holdsValue,
 	PNG_MAGIC,
 	startExchange,
 } from '../../setupServer.js'
@@ -75,8 +78,12 @@ import {
 	buildSession,
 	createTestContext,
 	createTestTransport,
+	createRecordingSigner,
+	createWritingTerminal,
 	decompress,
 	ECHO_MARKER,
+	issueToken,
+	readChainStatus,
 	runChain,
 	TEST_SIGNER,
 } from '../../setup.js'
@@ -1299,10 +1306,8 @@ describe('capstone: real socket + Dispatcher + canonical onion', () => {
 		dispatcher.add({
 			method: 'GET',
 			path: '/prime',
-			// Exposes `state.csrf` (the RAW double-submit token, distinct from the
-			// double-SIGNED `Set-Cookie` wire value) through a response header — the
-			// documented consumption pattern a real app follows (a template or
-			// JSON body field, never decoded back out of the cookie by the client).
+			// Exposes `state.csrf` through a response header, as a page template or a JSON body
+			// field hands it to the client.
 			handler: async (_request, context) =>
 				new Response('primed', {
 					headers: context.state.csrf === undefined ? {} : { 'x-csrf-issued': context.state.csrf },
@@ -1362,19 +1367,14 @@ describe('capstone: real socket + Dispatcher + canonical onion', () => {
 			const setCookies = primed.headers.getSetCookie()
 			const sessionCookie = setCookies.find((value) => value.startsWith('session='))
 			const csrfCookie = setCookies.find((value) => value.startsWith('csrf='))
-			expect(sessionCookie).toBeDefined()
+			// The handler wrote nothing to the session, so no session cookie; CSRF runs on its nonce.
+			expect(sessionCookie).toBeUndefined()
 			expect(csrfCookie).toBeDefined()
 			expect(telemetryEntries.length).toBeGreaterThan(0)
 
-			const cookieHeader = [sessionCookie, csrfCookie]
-				.filter((value): value is string => value !== undefined)
-				.map((value) => value.split(';')[0])
-				.join('; ')
-			// The RAW double-submit token — `context.state.csrf` — travels through
-			// the `x-csrf-issued` response header the `/prime` handler exposes
-			// earlier in this case,
-			// NOT by decoding the `Set-Cookie` wire value (which is a SECOND,
-			// outer signing layer over that same raw token).
+			const cookieHeader = (csrfCookie ?? '').split(';')[0] ?? ''
+			// The token travels through the `x-csrf-issued` header the `/prime` handler exposes,
+			// as a page embeds it; the nonce cookie is HttpOnly and never holds the token.
 			const csrfToken = primed.headers.get('x-csrf-issued')
 			expect(csrfToken).toBeDefined()
 
@@ -2109,6 +2109,10 @@ describe('the exchange seam through a real Server', () => {
 				transport: createCookieTransport({ signer: TEST_SIGNER }),
 			}),
 			createCSRF<ExchangeState>({ signer: TEST_SIGNER }),
+			async (_request, context, next) => {
+				context.state.session?.set('mark', 'lamp')
+				return next()
+			},
 		])
 		const response = await fetch(`${fixture.url}/plain`)
 		const cookies = response.headers.getSetCookie()
@@ -3054,40 +3058,193 @@ describe('createBody', () => {
 // ── createSession ─────────────────────────────────────────────────────────
 
 describe('createSession', () => {
-	it('auto-mints a session and writes the transport on the way out', async () => {
+	it('mints a fresh session for a request with no credential and stores nothing when the handler writes nothing', async () => {
 		const transport = createTestTransport()
-		const session = createSession<SessionInterface, SessionState>({ transport })
+		const count = new MiddlewareValue(0)
+		const memory = createMemorySessionStore<SessionInterface>()
+		const session = createSession<SessionInterface, SessionState>({
+			transport,
+			store: createCountedStore(memory, count),
+		})
 		const request = buildTestRequest('/')
-		const state: SessionState = {}
-		const context = createTestContext(request, state)
-		const response = await runChain([session], createEchoTerminal(), request, context)
-		expect(state.session).toBeDefined()
-		expect(response.headers.get('x-test-session')).toBe(state.session?.id)
-	})
-
-	it('resolves an existing session and re-persists it without re-writing the transport', async () => {
-		const transport = createTestTransport()
-		const store = createMemorySessionStore<SessionInterface>()
-		const session = createSession<SessionInterface, SessionState>({ transport, store })
-		const first = await runChain(
-			[session],
-			createEchoTerminal(),
-			buildTestRequest('/'),
-			createTestContext(buildTestRequest('/'), {}),
-		)
-		const id = first.headers.get('x-test-session')
-		expect(id).not.toBeNull()
-
-		const secondRequest = buildTestRequest('/', { headers: { 'x-test-session': id ?? '' } })
 		const state: SessionState = {}
 		const response = await runChain(
 			[session],
 			createEchoTerminal(),
-			secondRequest,
-			createTestContext(secondRequest, state),
+			request,
+			createTestContext(request, state),
 		)
-		expect(state.session?.id).toBe(id)
+		expect(state.session).toBeDefined()
+		expect(state.control?.fresh).toBe(true)
+		expect(count.value).toBe(0)
+		expect(transport.written).toEqual([])
 		expect(response.headers.has('x-test-session')).toBe(false)
+		expect(await memory.get(state.session?.id ?? '', Date.now())).toBeUndefined()
+	})
+
+	it('stores a fresh session and writes its credential once the handler writes to it', async () => {
+		const transport = createTestTransport()
+		const count = new MiddlewareValue(0)
+		const memory = createMemorySessionStore<SessionInterface>()
+		const session = createSession<SessionInterface, SessionState>({
+			transport,
+			store: createCountedStore(memory, count),
+		})
+		const request = buildTestRequest('/')
+		const state: SessionState = {}
+		const response = await runChain(
+			[session],
+			createWritingTerminal(),
+			request,
+			createTestContext(request, state),
+		)
+		const id = state.session?.id ?? ''
+		expect(count.value).toBe(1)
+		expect(transport.written.map((entry) => entry.id)).toEqual([id])
+		expect(response.headers.get('x-test-session')).toBe(id)
+		expect((await memory.get(id, Date.now()))?.state.get('mark')).toBe('lamp')
+	})
+
+	it('resolves a held session and stores nothing when the handler writes nothing', async () => {
+		const transport = createTestTransport()
+		const count = new MiddlewareValue(0)
+		const memory = createMemorySessionStore<SessionInterface>()
+		await memory.set(buildSession('held', 'lamp'), Date.now())
+		const session = createSession<SessionInterface, SessionState>({
+			transport,
+			store: createCountedStore(memory, count),
+		})
+		const request = buildTestRequest('/', { headers: { 'x-test-session': 'held' } })
+		const state: SessionState = {}
+		const response = await runChain(
+			[session],
+			createEchoTerminal(),
+			request,
+			createTestContext(request, state),
+		)
+		expect(state.session?.id).toBe('held')
+		expect(state.control?.fresh).toBe(false)
+		expect(count.value).toBe(0)
+		expect(transport.written).toEqual([])
+		expect(response.headers.has('x-test-session')).toBe(false)
+	})
+
+	it('stores a held session the handler writes to, without writing its credential again', async () => {
+		const transport = createTestTransport()
+		const count = new MiddlewareValue(0)
+		const memory = createMemorySessionStore<SessionInterface>()
+		await memory.set(buildSession('held', 'oil'), Date.now())
+		const session = createSession<SessionInterface, SessionState>({
+			transport,
+			store: createCountedStore(memory, count),
+		})
+		const request = buildTestRequest('/', { headers: { 'x-test-session': 'held' } })
+		const response = await runChain(
+			[session],
+			createWritingTerminal('wick'),
+			request,
+			createTestContext(request, {}),
+		)
+		expect(count.value).toBe(1)
+		expect(transport.written).toEqual([])
+		expect(response.headers.has('x-test-session')).toBe(false)
+		expect((await memory.get('held', Date.now()))?.state.get('mark')).toBe('wick')
+	})
+
+	it('counts a delete of a held key and a clear of a held state as writes, and a set of the held value as none', async () => {
+		const cases = [
+			{
+				title: 'delete',
+				write: (target: SessionInterface): void => {
+					target.delete('mark')
+				},
+				stored: 1,
+			},
+			{ title: 'clear', write: (target: SessionInterface): void => target.clear(), stored: 1 },
+			{
+				title: 'delete of an absent key',
+				write: (target: SessionInterface): void => {
+					target.delete('absent')
+				},
+				stored: 0,
+			},
+			{
+				title: 'set of the held value',
+				write: (target: SessionInterface): void => target.set('mark', 'lamp'),
+				stored: 0,
+			},
+		]
+		const observed = await Promise.all(
+			cases.map(async (entry) => {
+				const count = new MiddlewareValue(0)
+				const memory = createMemorySessionStore<SessionInterface>()
+				await memory.set(buildSession('held', 'lamp'), Date.now())
+				const session = createSession<SessionInterface, SessionState>({
+					transport: createTestTransport(),
+					store: createCountedStore(memory, count),
+				})
+				const request = buildTestRequest('/', { headers: { 'x-test-session': 'held' } })
+				await runChain(
+					[session],
+					async (_request, context) => {
+						const target = context.state.session
+						if (target !== undefined) entry.write(target)
+						return new Response(ECHO_MARKER)
+					},
+					request,
+					createTestContext(request, {}),
+				)
+				return { title: entry.title, stored: count.value }
+			}),
+		)
+		expect(observed).toEqual(cases.map((entry) => ({ title: entry.title, stored: entry.stored })))
+	})
+
+	it('a flood of requests with no credential that write nothing keeps a written session in a full store', async () => {
+		const transport = createTestTransport()
+		const memory = createMemorySessionStore<SessionInterface>({ capacity: 2 })
+		const session = createSession<SessionInterface, SessionState>({ transport, store: memory })
+		const written: SessionState = {}
+		await runChain(
+			[session],
+			createWritingTerminal(),
+			buildTestRequest('/'),
+			createTestContext(buildTestRequest('/'), written),
+		)
+		const id = written.session?.id ?? ''
+		await Promise.all(
+			Array.from({ length: 4 }, async () =>
+				runChain(
+					[session],
+					createEchoTerminal(),
+					buildTestRequest('/'),
+					createTestContext(buildTestRequest('/'), {}),
+				),
+			),
+		)
+		expect((await memory.get(id, Date.now()))?.state.get('mark')).toBe('lamp')
+	})
+
+	it('regenerate() on a fresh session stores the successor and writes its credential', async () => {
+		const transport = createTestTransport()
+		const memory = createMemorySessionStore<SessionInterface>()
+		const session = createSession<SessionInterface, SessionState>({ transport, store: memory })
+		const request = buildTestRequest('/')
+		const state: SessionState = {}
+		const response = await runChain(
+			[session],
+			async (_request, context) => {
+				context.state.control?.regenerate()
+				return new Response(ECHO_MARKER)
+			},
+			request,
+			createTestContext(request, state),
+		)
+		const successor = state.control?.successor?.id ?? ''
+		expect(successor).not.toBe('')
+		expect(response.headers.get('x-test-session')).toBe(successor)
+		expect(await memory.get(successor, Date.now())).toBeDefined()
+		expect(await memory.get(state.session?.id ?? '', Date.now())).toBeUndefined()
 	})
 
 	it('rejects a malformed capacity at construction (admitted by the session contract)', () => {
@@ -3117,7 +3274,7 @@ describe('createSession', () => {
 		const session = createSession<SessionInterface, SessionState>({ transport, store })
 		const first = await runChain(
 			[session],
-			createEchoTerminal(),
+			createWritingTerminal(),
 			buildTestRequest('/'),
 			createTestContext(buildTestRequest('/'), {}),
 		)
@@ -3154,7 +3311,7 @@ describe('createSession', () => {
 		const session = createSession<SessionInterface, SessionState>({ transport, store })
 		const first = await runChain(
 			[session],
-			createEchoTerminal(),
+			createWritingTerminal(),
 			buildTestRequest('/'),
 			createTestContext(buildTestRequest('/'), {}),
 		)
@@ -3182,7 +3339,7 @@ describe('createSession', () => {
 		const session = createSession<SessionInterface, SessionState>({ transport, store })
 		const first = await runChain(
 			[session],
-			createEchoTerminal(),
+			createWritingTerminal(),
 			buildTestRequest('/'),
 			createTestContext(buildTestRequest('/'), {}),
 		)
@@ -3235,7 +3392,7 @@ describe('createSession', () => {
 		})
 		const first = await runChain(
 			[session],
-			createEchoTerminal(),
+			createWritingTerminal(),
 			buildTestRequest('/'),
 			createTestContext(buildTestRequest('/'), {}),
 		)
@@ -3258,7 +3415,7 @@ describe('createSession', () => {
 		})
 		const first = await runChain(
 			[session],
-			createEchoTerminal(),
+			createWritingTerminal(),
 			buildTestRequest('/'),
 			createTestContext(buildTestRequest('/'), {}),
 		)
@@ -3295,7 +3452,7 @@ describe('createSession', () => {
 		const secureRequest = buildTestRequest('/')
 		const secureResponse = await runChain(
 			[session],
-			createEchoTerminal(),
+			createWritingTerminal(),
 			secureRequest,
 			createTestContext(secureRequest, {}, { connection: { ip: '203.0.113.1', encrypted: true } }),
 		)
@@ -3304,14 +3461,14 @@ describe('createSession', () => {
 		const plainRequest = buildTestRequest('/')
 		const plainResponse = await runChain(
 			[session],
-			createEchoTerminal(),
+			createWritingTerminal(),
 			plainRequest,
 			createTestContext(plainRequest, {}, { connection: { ip: '203.0.113.1', encrypted: false } }),
 		)
 		expect(plainResponse.headers.get('set-cookie')).not.toContain('Secure')
 	})
 
-	it('persists a freshly-minted session exactly once (no redundant mint-time store.set)', async () => {
+	it('persists a freshly-minted session it writes to exactly once (no redundant mint-time store.set)', async () => {
 		const setCount = new MiddlewareValue(0)
 		const transport = createTestTransport()
 		const memory = createMemorySessionStore<SessionInterface>()
@@ -3319,7 +3476,7 @@ describe('createSession', () => {
 		const session = createSession<SessionInterface, SessionState>({ transport, store })
 		const request = buildTestRequest('/')
 		const state: SessionState = {}
-		await runChain([session], createEchoTerminal(), request, createTestContext(request, state))
+		await runChain([session], createWritingTerminal(), request, createTestContext(request, state))
 		expect(setCount.value).toBe(1)
 	})
 
@@ -3333,18 +3490,18 @@ describe('createSession', () => {
 		})
 		const first = await runChain(
 			[session],
-			createEchoTerminal(),
+			createWritingTerminal(),
 			buildTestRequest('/'),
 			createTestContext(buildTestRequest('/'), {}),
 		)
 		const firstId = first.headers.get('x-test-session')
 		expect(firstId).not.toBeNull()
 
-		// A second, distinct incoming (unresolvable) session id forces the store to
-		// mint a brand-new session, exceeding capacity:1 and evicting the first.
+		// A second request with no credential mints a brand-new session; its write exceeds
+		// capacity:1 and evicts the first.
 		const second = await runChain(
 			[session],
-			createEchoTerminal(),
+			createWritingTerminal(),
 			buildTestRequest('/'),
 			createTestContext(buildTestRequest('/'), {}),
 		)
@@ -3358,7 +3515,7 @@ describe('createSession', () => {
 		const session = createSession<SessionInterface, SessionState>({ transport, store })
 		const first = await runChain(
 			[session],
-			createEchoTerminal(),
+			createWritingTerminal(),
 			buildTestRequest('/'),
 			createTestContext(buildTestRequest('/'), {}),
 		)
@@ -3386,21 +3543,240 @@ describe('createSession', () => {
 // ── createCSRF ────────────────────────────────────────────────────────────
 
 describe('createCSRF', () => {
-	it('a safe method mints a token, stashes it on state, and sets the signed cookie', async () => {
-		const csrf = createCSRF<CSRFState & SessionState>({ signer: TEST_SIGNER })
+	it('with no session, mints a token over its own nonce cookie: HttpOnly, SameSite=Lax, Path=/', async () => {
+		const { token, cookie, response } = await issueToken([
+			createCSRF<CSRFState & SessionState>({ signer: TEST_SIGNER }),
+		])
+		const fields = response.headers.getSetCookie()
+		const nonce = cookie.slice('csrf='.length)
+		expect(fields).toHaveLength(1)
+		expect(cookie).toMatch(/^csrf=[A-Za-z0-9_-]{43}$/)
+		expect(fields[0]).toContain('HttpOnly')
+		expect(fields[0]).toContain('SameSite=Lax')
+		expect(fields[0]).toContain('Path=/')
+		expect(token).toMatch(/^[A-Za-z0-9_-]{43}\.[A-Za-z0-9_-]{43}$/)
+		expect(holdsValue(token, nonce)).toBe(false)
+		expect(await verifyCSRFToken(TEST_SIGNER, nonce, token)).toBe(true)
+	})
+
+	it('signs the label, the binding, and the random part, and nothing else, through the signer it was given', async () => {
+		const recording = createRecordingSigner(TEST_SIGNER)
+		const held: SessionInterface = buildSession('held-session')
 		const request = buildTestRequest('/')
-		const state: CSRFState & SessionState = {}
-		const response = await runChain(
-			[csrf],
+		const state: CSRFState & SessionState = { session: held }
+		await runChain(
+			[createCSRF<CSRFState & SessionState>({ signer: recording })],
 			createEchoTerminal(),
 			request,
 			createTestContext(request, state),
 		)
-		expect(state.csrf).toBeTruthy()
-		const setCookie = response.headers.get('set-cookie')
-		expect(setCookie).toContain('csrf=')
-		expect(setCookie).toContain('SameSite=Strict')
-		expect(setCookie).not.toContain('HttpOnly')
+		const [random = '', signature = ''] = (state.csrf ?? '').split('.')
+		expect(recording.signed).toEqual([`${CSRF_LABEL}held-session${random}`])
+		expect(await TEST_SIGNER.sign(`${CSRF_LABEL}held-session${random}`)).toBe(signature)
+	})
+
+	it('with no session, a token passes in the header, a JSON field, and an urlencoded field', async () => {
+		const csrf = createCSRF<CSRFState & SessionState>({ signer: TEST_SIGNER })
+		const { token, cookie } = await issueToken([csrf])
+		const statuses = await Promise.all([
+			readChainStatus([csrf], {
+				method: 'POST',
+				headers: { cookie, 'x-csrf-token': token },
+			}),
+			readChainStatus([csrf], {
+				method: 'POST',
+				headers: { cookie, 'content-type': 'application/json' },
+				body: JSON.stringify({ _csrf: token }),
+			}),
+			readChainStatus([csrf], {
+				method: 'POST',
+				headers: { cookie, 'content-type': 'application/x-www-form-urlencoded; charset=utf-8' },
+				body: new URLSearchParams({ _csrf: token }).toString(),
+			}),
+		])
+		expect(statuses).toEqual([200, 200, 200])
+	})
+
+	it('reads no field from a multipart form, which sends its token in the header, and leaves the body unread', async () => {
+		const csrf = createCSRF<CSRFState & SessionState>({ signer: TEST_SIGNER })
+		const { token, cookie } = await issueToken([csrf])
+		const form = new FormData()
+		form.set('_csrf', token)
+		const fieldRequest = buildTestRequest('/', { method: 'POST', headers: { cookie }, body: form })
+		await expect(
+			runChain([csrf], createEchoTerminal(), fieldRequest, createTestContext(fieldRequest, {})),
+		).rejects.toMatchObject({ status: 403 })
+		expect(fieldRequest.bodyUsed).toBe(false)
+		const headerRequest = buildTestRequest('/', {
+			method: 'POST',
+			headers: { cookie, 'x-csrf-token': token },
+			body: form,
+		})
+		const response = await runChain(
+			[csrf],
+			createEchoTerminal(),
+			headerRequest,
+			createTestContext(headerRequest, {}),
+		)
+		expect(response.status).toBe(200)
+		expect(headerRequest.bodyUsed).toBe(false)
+	})
+
+	it('with no session, every page load keeps the nonce, so the first tab token passes after a second tab', async () => {
+		const csrf = createCSRF<CSRFState & SessionState>({ signer: TEST_SIGNER })
+		const first = await issueToken([csrf])
+		const second = await issueToken([csrf], { cookie: first.cookie })
+		expect(second.cookie).toBe('')
+		expect(second.token).not.toBe(first.token)
+		const statuses = await Promise.all(
+			[first.token, second.token].map((token) =>
+				readChainStatus([csrf], {
+					method: 'POST',
+					headers: { cookie: first.cookie, 'x-csrf-token': token },
+				}),
+			),
+		)
+		expect(statuses).toEqual([200, 200])
+	})
+
+	it('with no session, refuses a request with no nonce cookie, another nonce, or a malformed nonce', async () => {
+		const csrf = createCSRF<CSRFState & SessionState>({ signer: TEST_SIGNER })
+		const { token, cookie } = await issueToken([csrf])
+		const other = await issueToken([csrf])
+		const cookies = [undefined, other.cookie, 'csrf=short', `${cookie}x`, 'csrf=']
+		const statuses = await Promise.all(
+			cookies.map((value) =>
+				readChainStatus([csrf], {
+					method: 'POST',
+					headers: { ...(value === undefined ? {} : { cookie: value }), 'x-csrf-token': token },
+				}),
+			),
+		)
+		expect(statuses).toEqual(cookies.map(() => 403))
+	})
+
+	it('refuses a malformed or tampered token with 403', async () => {
+		const csrf = createCSRF<CSRFState & SessionState>({ signer: TEST_SIGNER })
+		const { token, cookie } = await issueToken([csrf])
+		const [random = '', signature = ''] = token.split('.')
+		const foreign = await issueToken([createCSRF({ signer: createSigner('other-secret') })], {
+			cookie,
+		})
+		const tokens = [
+			'',
+			'.',
+			random,
+			`${random}.`,
+			`.${signature}`,
+			`${token}.${signature}`,
+			`${random.slice(1)}a.${signature}`,
+			`${random}x.${signature}`,
+			`${random}.${signature.slice(1)}A`,
+			`x${random.slice(1)}.${signature}`,
+			foreign.token,
+			'\uD800'.repeat(87),
+		]
+		const statuses = await Promise.all(
+			tokens.map((value) =>
+				readChainStatus([csrf], {
+					method: 'POST',
+					headers: { cookie, 'x-csrf-token': value },
+				}),
+			),
+		)
+		expect(statuses).toEqual(tokens.map(() => 403))
+	})
+
+	it('with a held session, every token the session minted passes and no csrf cookie is written', async () => {
+		const transport = createTestTransport()
+		const store = createMemorySessionStore<SessionInterface>()
+		await store.set(buildSession('held', 'lamp'), Date.now())
+		const chain = [
+			createSession<SessionInterface, CSRFState & SessionState>({ transport, store }),
+			createCSRF<CSRFState & SessionState>({ signer: TEST_SIGNER }),
+		]
+		const first = await issueToken(chain, { 'x-test-session': 'held' })
+		const second = await issueToken(chain, { 'x-test-session': 'held' })
+		expect([first.cookie, second.cookie]).toEqual(['', ''])
+		expect(second.token).not.toBe(first.token)
+		const statuses = await Promise.all(
+			[first.token, second.token].map((token) =>
+				readChainStatus(chain, {
+					method: 'POST',
+					headers: { 'x-test-session': 'held', 'x-csrf-token': token },
+				}),
+			),
+		)
+		expect(statuses).toEqual([200, 200])
+	})
+
+	it('with a held session, a token holds no form of the session id', async () => {
+		const id = crypto.randomUUID()
+		const tokens = await Promise.all(
+			Array.from({ length: 8 }, async () => {
+				const state: CSRFState & SessionState = { session: buildSession(id) }
+				const request = buildTestRequest('/')
+				await runChain(
+					[createCSRF<CSRFState & SessionState>({ signer: TEST_SIGNER })],
+					createEchoTerminal(),
+					request,
+					createTestContext(request, state),
+				)
+				return state.csrf ?? ''
+			}),
+		)
+		expect(tokens.filter((token) => token === '' || holdsValue(token, id))).toEqual([])
+	})
+
+	it('with a held session, refuses a token minted over a nonce, even beside that nonce cookie', async () => {
+		const csrf = createCSRF<CSRFState & SessionState>({ signer: TEST_SIGNER })
+		const { token, cookie } = await issueToken([csrf])
+		const request = buildTestRequest('/', {
+			method: 'POST',
+			headers: { cookie, 'x-csrf-token': token },
+		})
+		const state: CSRFState & SessionState = { session: buildSession('held') }
+		await expect(
+			runChain([csrf], createEchoTerminal(), request, createTestContext(request, state)),
+		).rejects.toMatchObject({ status: 403 })
+	})
+
+	it('a fresh session the handler does not write leaves CSRF on its nonce, so the next request passes', async () => {
+		const chain = [
+			createSession<SessionInterface, CSRFState & SessionState>({
+				transport: createTestTransport(),
+			}),
+			createCSRF<CSRFState & SessionState>({ signer: TEST_SIGNER }),
+		]
+		const { token, cookie, state } = await issueToken(chain)
+		expect(state.control?.fresh).toBe(true)
+		expect(cookie).toMatch(/^csrf=/)
+		expect(
+			await readChainStatus(chain, { method: 'POST', headers: { cookie, 'x-csrf-token': token } }),
+		).toBe(200)
+	})
+
+	it('a CSRF token sent as the session cookie resumes no session, under one shared signer', async () => {
+		const transport = createCookieTransport({ signer: TEST_SIGNER })
+		const store = createMemorySessionStore<SessionInterface>()
+		const chain = [
+			createSession<SessionInterface, CSRFState & SessionState>({ transport, store }),
+			createCSRF<CSRFState & SessionState>({ signer: TEST_SIGNER }),
+		]
+		const login = buildTestRequest('/')
+		const opened: CSRFState & SessionState = {}
+		const response = await runChain(
+			chain,
+			createWritingTerminal(),
+			login,
+			createTestContext(login, opened),
+		)
+		const sessionCookie = (response.headers.getSetCookie()[0] ?? '').split(';')[0] ?? ''
+		const { token } = await issueToken(chain, { cookie: sessionCookie })
+		expect(token).not.toBe('')
+		const replay = await issueToken(chain, { cookie: `session=${token}` })
+		expect(replay.state.control?.fresh).toBe(true)
+		expect(replay.state.session?.id).not.toBe(opened.session?.id)
 	})
 
 	it('mutating happy path: header submission matches the cookie and is accepted', async () => {
@@ -3586,267 +3962,134 @@ describe('createCSRF', () => {
 // ── createCSRF across a session rotation ──────────────────────────────────
 
 describe('createCSRF session rotation', () => {
-	it('an unsafe handler that rotates the session leaves a token for the new session on the same response', async () => {
+	it('on rotation, state.csrf holds the arrived session token, and after the redirect the successor mints tokens that pass', async () => {
 		const transport = createTestTransport()
-		const session = createSession<SessionInterface, CSRFState & SessionState>({ transport })
-		const csrf = createCSRF<CSRFState & SessionState>({ signer: TEST_SIGNER })
-		const mintRequest = buildTestRequest('/')
-		const mintState: CSRFState & SessionState = {}
-		const mintResponse = await runChain(
-			[session, csrf],
-			createEchoTerminal(),
-			mintRequest,
-			createTestContext(mintRequest, mintState),
-		)
-		const sessionId = mintResponse.headers.get('x-test-session') ?? ''
-		const cookieValue = (mintResponse.headers.get('set-cookie') ?? '').split(';')[0] ?? ''
-		const token = mintState.csrf ?? ''
-
+		const store = createMemorySessionStore<SessionInterface>()
+		await store.set(buildSession('arrived', 'lamp'), Date.now())
+		const chain = [
+			createSession<SessionInterface, CSRFState & SessionState>({ transport, store }),
+			createCSRF<CSRFState & SessionState>({ signer: TEST_SIGNER }),
+		]
+		const { token } = await issueToken(chain, { 'x-test-session': 'arrived' })
 		const loginRequest = buildTestRequest('/login', {
 			method: 'POST',
-			headers: { 'x-test-session': sessionId, 'x-csrf-token': token, cookie: cookieValue },
+			headers: { 'x-test-session': 'arrived', 'x-csrf-token': token },
 		})
-		const loginState: CSRFState & SessionState = {}
+		const seen = createRecorder<readonly [string, string]>()
 		const loginResponse = await runChain(
-			[session, csrf],
+			chain,
 			async (_request, context) => {
 				context.state.control?.regenerate()
-				const successor = context.state.control?.successor?.id ?? ''
-				return new Response(await signToken(successor, { signer: TEST_SIGNER }))
+				seen.handler(context.state.csrf ?? '', context.state.control?.successor?.id ?? '')
+				return Response.redirect(new URL('/', context.url), 303)
 			},
 			loginRequest,
-			createTestContext(loginRequest, loginState),
+			createTestContext(loginRequest, {}),
 		)
-		const rotatedId = loginResponse.headers.get('x-test-session') ?? ''
-		expect(rotatedId).not.toBe('')
-		expect(rotatedId).not.toBe(sessionId)
-		const rotatedCookies = loginResponse.headers.getSetCookie()
-		expect(rotatedCookies).toHaveLength(1)
-		const rotatedCookie = (rotatedCookies[0] ?? '').split(';')[0] ?? ''
-		expect(rotatedCookie).toMatch(/^csrf=./)
-		const rotatedToken = await loginResponse.text()
-		expect(loginState.csrf).toBe(rotatedToken)
-		expect(await verifyToken(rotatedToken, TEST_SIGNER)).toBe(rotatedId)
+		const [[handed = '', successor = ''] = []] = seen.calls
+		const rotated = loginResponse.headers.get('x-test-session') ?? ''
+		expect(loginResponse.status).toBe(303)
+		expect(rotated).toBe(successor)
+		expect(loginResponse.headers.getSetCookie()).toEqual([])
+		expect(await verifyCSRFToken(TEST_SIGNER, 'arrived', handed)).toBe(true)
+		expect(await verifyCSRFToken(TEST_SIGNER, successor, handed)).toBe(false)
 
-		const writeRequest = buildTestRequest('/', {
-			method: 'POST',
-			headers: { 'x-test-session': rotatedId, 'x-csrf-token': rotatedToken, cookie: rotatedCookie },
-		})
-		const terminal = createRecordingTerminal()
-		const response = await runChain(
-			[session, csrf],
-			terminal.handler,
-			writeRequest,
-			createTestContext(writeRequest, {}),
+		const page = await issueToken(chain, { 'x-test-session': rotated })
+		const statuses = await Promise.all(
+			[page.token, token, handed].map((value) =>
+				readChainStatus(chain, {
+					method: 'POST',
+					headers: { 'x-test-session': rotated, 'x-csrf-token': value },
+				}),
+			),
 		)
-		expect(response.status).toBe(200)
-		expect(terminal.count).toBe(1)
+		expect(statuses).toEqual([200, 403, 403])
 	})
 
-	it('a safe handler that rotates the session mints for the new session, not the one it arrived with', async () => {
+	it('an unsafe request that passes stashes a token bound to the session it arrived with', async () => {
 		const transport = createTestTransport()
-		const session = createSession<SessionInterface, CSRFState & SessionState>({ transport })
-		const csrf = createCSRF<CSRFState & SessionState>({ signer: TEST_SIGNER })
-		const mintRequest = buildTestRequest('/')
-		const mintResponse = await runChain(
-			[session, csrf],
-			createEchoTerminal(),
-			mintRequest,
-			createTestContext(mintRequest, {}),
-		)
-		const sessionId = mintResponse.headers.get('x-test-session') ?? ''
-
-		const rotateRequest = buildTestRequest('/', { headers: { 'x-test-session': sessionId } })
-		const rotateState: CSRFState & SessionState = {}
-		const rotateResponse = await runChain(
-			[session, csrf],
-			async (_request, context) => {
-				context.state.control?.regenerate()
-				return new Response(ECHO_MARKER)
-			},
-			rotateRequest,
-			createTestContext(rotateRequest, rotateState),
-		)
-		const rotatedId = rotateResponse.headers.get('x-test-session') ?? ''
-		expect(rotatedId).not.toBe('')
-		expect(rotatedId).not.toBe(sessionId)
-		const rotatedCookies = rotateResponse.headers.getSetCookie()
-		expect(rotatedCookies).toHaveLength(1)
-		const rotatedCookie = (rotatedCookies[0] ?? '').split(';')[0] ?? ''
-		const rotatedToken = rotateState.csrf ?? ''
-		expect(await verifyToken(rotatedToken, TEST_SIGNER)).toBe(rotatedId)
-
-		const writeRequest = buildTestRequest('/', {
+		const store = createMemorySessionStore<SessionInterface>()
+		await store.set(buildSession('arrived'), Date.now())
+		const chain = [
+			createSession<SessionInterface, CSRFState & SessionState>({ transport, store }),
+			createCSRF<CSRFState & SessionState>({ signer: TEST_SIGNER }),
+		]
+		const { token } = await issueToken(chain, { 'x-test-session': 'arrived' })
+		const request = buildTestRequest('/', {
 			method: 'POST',
-			headers: { 'x-test-session': rotatedId, 'x-csrf-token': rotatedToken, cookie: rotatedCookie },
+			headers: { 'x-test-session': 'arrived', 'x-csrf-token': token },
 		})
-		const terminal = createRecordingTerminal()
-		const response = await runChain(
-			[session, csrf],
-			terminal.handler,
-			writeRequest,
-			createTestContext(writeRequest, {}),
-		)
-		expect(response.status).toBe(200)
-		expect(terminal.count).toBe(1)
+		const state: CSRFState & SessionState = {}
+		await runChain(chain, createEchoTerminal(), request, createTestContext(request, state))
+		expect(state.csrf).not.toBe(token)
+		expect(await verifyCSRFToken(TEST_SIGNER, 'arrived', state.csrf ?? '')).toBe(true)
 	})
 
-	it('a write with the token minted before the rotation is still refused, under the new session and the old', async () => {
+	it('a handler that writes a fresh session starts it, and the nonce tokens issued before it stop', async () => {
 		const transport = createTestTransport()
-		const session = createSession<SessionInterface, CSRFState & SessionState>({ transport })
-		const csrf = createCSRF<CSRFState & SessionState>({ signer: TEST_SIGNER })
-		const mintRequest = buildTestRequest('/')
-		const mintState: CSRFState & SessionState = {}
-		const mintResponse = await runChain(
-			[session, csrf],
-			createEchoTerminal(),
-			mintRequest,
-			createTestContext(mintRequest, mintState),
-		)
-		const sessionId = mintResponse.headers.get('x-test-session') ?? ''
-		const cookieValue = (mintResponse.headers.get('set-cookie') ?? '').split(';')[0] ?? ''
-		const token = mintState.csrf ?? ''
+		const chain = [
+			createSession<SessionInterface, CSRFState & SessionState>({ transport }),
+			createCSRF<CSRFState & SessionState>({ signer: TEST_SIGNER }),
+		]
+		const { token, cookie } = await issueToken(chain)
 		const loginRequest = buildTestRequest('/login', {
 			method: 'POST',
-			headers: { 'x-test-session': sessionId, 'x-csrf-token': token, cookie: cookieValue },
+			headers: { cookie, 'x-csrf-token': token },
 		})
-		const loginState: CSRFState & SessionState = {}
 		const loginResponse = await runChain(
-			[session, csrf],
-			async (_request, context) => {
-				context.state.control?.regenerate()
-				return new Response(ECHO_MARKER)
-			},
+			chain,
+			createWritingTerminal(),
 			loginRequest,
-			createTestContext(loginRequest, loginState),
+			createTestContext(loginRequest, {}),
 		)
-		const rotatedId = loginResponse.headers.get('x-test-session') ?? ''
-		expect(rotatedId).not.toBe('')
-		expect(rotatedId).not.toBe(sessionId)
-
-		const newRequest = buildTestRequest('/', {
-			method: 'POST',
-			headers: { 'x-test-session': rotatedId, 'x-csrf-token': token, cookie: cookieValue },
-		})
-		await expect(
-			runChain(
-				[session, csrf],
-				createEchoTerminal(),
-				newRequest,
-				createTestContext(newRequest, {}),
+		const started = loginResponse.headers.get('x-test-session') ?? ''
+		expect(started).not.toBe('')
+		const page = await issueToken(chain, { cookie, 'x-test-session': started })
+		const statuses = await Promise.all(
+			[page.token, token].map((value) =>
+				readChainStatus(chain, {
+					method: 'POST',
+					headers: { cookie, 'x-test-session': started, 'x-csrf-token': value },
+				}),
 			),
-		).rejects.toMatchObject({ status: 403, message: 'invalid csrf token' })
-
-		const oldRequest = buildTestRequest('/', {
-			method: 'POST',
-			headers: { 'x-test-session': sessionId, 'x-csrf-token': token, cookie: cookieValue },
-		})
-		await expect(
-			runChain(
-				[session, csrf],
-				createEchoTerminal(),
-				oldRequest,
-				createTestContext(oldRequest, {}),
-			),
-		).rejects.toMatchObject({ status: 403, message: 'invalid csrf token' })
+		)
+		expect(statuses).toEqual([200, 403])
 	})
 
-	it('an unsafe request that keeps its session writes no csrf cookie and stashes no token', async () => {
+	it('on destroy, state.csrf holds the arrived session token, no csrf cookie is written, and the next page falls back to a nonce', async () => {
 		const transport = createTestTransport()
-		const session = createSession<SessionInterface, CSRFState & SessionState>({ transport })
-		const csrf = createCSRF<CSRFState & SessionState>({ signer: TEST_SIGNER })
-		const mintRequest = buildTestRequest('/')
-		const mintState: CSRFState & SessionState = {}
-		const mintResponse = await runChain(
-			[session, csrf],
-			createEchoTerminal(),
-			mintRequest,
-			createTestContext(mintRequest, mintState),
-		)
-		const sessionId = mintResponse.headers.get('x-test-session') ?? ''
-		const cookieValue = (mintResponse.headers.get('set-cookie') ?? '').split(';')[0] ?? ''
-		const token = mintState.csrf ?? ''
-
-		const writeRequest = buildTestRequest('/', {
-			method: 'POST',
-			headers: { 'x-test-session': sessionId, 'x-csrf-token': token, cookie: cookieValue },
-		})
-		const writeState: CSRFState & SessionState = {}
-		const terminal = createRecordingTerminal()
-		const response = await runChain(
-			[session, csrf],
-			terminal.handler,
-			writeRequest,
-			createTestContext(writeRequest, writeState),
-		)
-		expect(response.status).toBe(200)
-		expect(terminal.count).toBe(1)
-		expect(response.headers.getSetCookie()).toEqual([])
-		expect(writeState.csrf).toBeUndefined()
-	})
-
-	it('a handler that ends the session clears the csrf cookie instead of leaving one bound to the ended session', async () => {
-		const transport = createTestTransport()
-		const session = createSession<SessionInterface, CSRFState & SessionState>({ transport })
-		const csrf = createCSRF<CSRFState & SessionState>({ signer: TEST_SIGNER })
-		const mintRequest = buildTestRequest('/')
-		const mintState: CSRFState & SessionState = {}
-		const mintResponse = await runChain(
-			[session, csrf],
-			createEchoTerminal(),
-			mintRequest,
-			createTestContext(mintRequest, mintState),
-		)
-		const sessionId = mintResponse.headers.get('x-test-session') ?? ''
-		const cookieValue = (mintResponse.headers.get('set-cookie') ?? '').split(';')[0] ?? ''
-		const token = mintState.csrf ?? ''
-
+		const store = createMemorySessionStore<SessionInterface>()
+		await store.set(buildSession('arrived'), Date.now())
+		const chain = [
+			createSession<SessionInterface, CSRFState & SessionState>({ transport, store }),
+			createCSRF<CSRFState & SessionState>({ signer: TEST_SIGNER }),
+		]
+		const { token } = await issueToken(chain, { 'x-test-session': 'arrived' })
 		const logoutRequest = buildTestRequest('/logout', {
 			method: 'POST',
-			headers: { 'x-test-session': sessionId, 'x-csrf-token': token, cookie: cookieValue },
+			headers: { 'x-test-session': 'arrived', 'x-csrf-token': token },
 		})
 		const logoutState: CSRFState & SessionState = {}
 		const logoutResponse = await runChain(
-			[session, csrf],
+			chain,
 			async (_request, context) => {
 				context.state.control?.destroy()
-				return new Response(ECHO_MARKER)
+				return Response.redirect(new URL('/', context.url), 303)
 			},
 			logoutRequest,
 			createTestContext(logoutRequest, logoutState),
 		)
 		expect(logoutResponse.headers.get('x-test-session')).toBeNull()
-		const logoutCookies = logoutResponse.headers.getSetCookie()
-		expect(logoutCookies).toHaveLength(1)
-		expect(logoutCookies[0]).toMatch(/^csrf=;/)
-		expect(logoutCookies[0]).toContain('Max-Age=0')
-		expect(logoutCookies[0]).toContain('Path=/')
-		expect(logoutState.csrf).toBeUndefined()
-
-		const secondMintRequest = buildTestRequest('/')
-		const secondMintResponse = await runChain(
-			[session, csrf],
-			createEchoTerminal(),
-			secondMintRequest,
-			createTestContext(secondMintRequest, {}),
-		)
-		const secondId = secondMintResponse.headers.get('x-test-session') ?? ''
-		const endRequest = buildTestRequest('/', { headers: { 'x-test-session': secondId } })
-		const endState: CSRFState & SessionState = {}
-		const endResponse = await runChain(
-			[session, csrf],
-			async (_request, context) => {
-				context.state.control?.destroy()
-				return new Response(ECHO_MARKER)
-			},
-			endRequest,
-			createTestContext(endRequest, endState),
-		)
-		const endCookies = endResponse.headers.getSetCookie()
-		expect(endCookies).toHaveLength(1)
-		expect(endCookies[0]).toMatch(/^csrf=;/)
-		expect(endCookies[0]).toContain('Max-Age=0')
-		expect(endState.csrf).toBeUndefined()
+		expect(logoutResponse.headers.getSetCookie()).toEqual([])
+		expect(await verifyCSRFToken(TEST_SIGNER, 'arrived', logoutState.csrf ?? '')).toBe(true)
+		const page = await issueToken(chain)
+		expect(page.cookie).toMatch(/^csrf=/)
+		expect(
+			await readChainStatus(chain, {
+				method: 'POST',
+				headers: { cookie: page.cookie, 'x-csrf-token': page.token },
+			}),
+		).toBe(200)
 	})
 })
 
@@ -3982,28 +4225,61 @@ describe('composition', () => {
 		expect(response.status).toBe(200)
 	})
 
+	it('the session and CSRF batteries reach the HMAC only through the one signer they share', async () => {
+		const recording = createRecordingSigner(TEST_SIGNER)
+		const chain = [
+			createSession<SessionInterface, CSRFState & SessionState>({
+				transport: createCookieTransport({ signer: recording }),
+			}),
+			createCSRF<CSRFState & SessionState>({ signer: recording }),
+		]
+		const page = await issueToken(chain)
+		const counts = [{ signed: recording.signed.length, verified: recording.verified.length }]
+		const loginRequest = buildTestRequest('/login', {
+			method: 'POST',
+			headers: { cookie: page.cookie, 'x-csrf-token': page.token },
+		})
+		const login = await runChain(
+			chain,
+			createWritingTerminal(),
+			loginRequest,
+			createTestContext(loginRequest, {}),
+		)
+		counts.push({ signed: recording.signed.length, verified: recording.verified.length })
+		const session = (login.headers.getSetCookie()[0] ?? '').split(';')[0] ?? ''
+		await issueToken(chain, { cookie: session })
+		counts.push({ signed: recording.signed.length, verified: recording.verified.length })
+		// The page signs its token; the login verifies that token, signs the next one, and signs
+		// the session cookie; the next page verifies the session cookie and signs its token.
+		expect(counts).toEqual([
+			{ signed: 1, verified: 0 },
+			{ signed: 3, verified: 1 },
+			{ signed: 4, verified: 2 },
+		])
+	})
+
 	it('session -> csrf binding: the csrf battery binds to the session resolved upstream', async () => {
 		const transport = createTestTransport()
 		const session = createSession<SessionInterface, CSRFState & SessionState>({ transport })
 		const csrf = createCSRF<CSRFState & SessionState>({ signer: TEST_SIGNER })
 
-		const mintRequest = buildTestRequest('/')
-		const mintState: CSRFState & SessionState = {}
-		const mintResponse = await runChain(
+		const startRequest = buildTestRequest('/')
+		const startResponse = await runChain(
 			[session, csrf],
-			createEchoTerminal(),
-			mintRequest,
-			createTestContext(mintRequest, mintState),
+			createWritingTerminal(),
+			startRequest,
+			createTestContext(startRequest, {}),
 		)
-		const sessionId = mintResponse.headers.get('x-test-session')
+		const sessionId = startResponse.headers.get('x-test-session')
 		expect(sessionId).not.toBeNull()
-		const setCookie = mintResponse.headers.get('set-cookie') ?? ''
-		const cookieValue = setCookie.split(';')[0] ?? ''
-		const token = mintState.csrf ?? ''
+		const { token, cookie } = await issueToken([session, csrf], {
+			'x-test-session': sessionId ?? '',
+		})
+		expect(cookie).toBe('')
 
 		const postRequest = buildTestRequest('/', {
 			method: 'POST',
-			headers: { 'x-test-session': sessionId ?? '', 'x-csrf-token': token, cookie: cookieValue },
+			headers: { 'x-test-session': sessionId ?? '', 'x-csrf-token': token },
 		})
 		const terminal = createRecordingTerminal()
 		const response = await runChain(

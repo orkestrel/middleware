@@ -120,26 +120,26 @@ describe('invariant 4: no script-readable value holds the session id', () => {
 		expect(sealed.some((field) => oracle.ids.some((id) => holdsValue(field, id)))).toBe(true)
 	})
 
-	it.fails('a cookie-less GET /token [red until M3]', async () => {
+	it('a cookie-less GET /token', async () => {
 		const reply = await sendStack(oracle.url, { path: '/token' }, createCookieJar())
 		expect(listHeldValues(reply, oracle.ids)).toEqual([])
 	})
 
-	it.fails('GET /page inside an open session [red until M3]', async () => {
+	it('GET /page inside an open session', async () => {
 		const jar = createCookieJar()
 		await openSession(oracle, jar)
 		const reply = await sendStack(oracle.url, { path: '/page' }, jar)
 		expect(listHeldValues(reply, oracle.ids)).toEqual([])
 	})
 
-	it.fails('GET /static/index.html inside an open session [red until M3]', async () => {
+	it('GET /static/index.html inside an open session', async () => {
 		const jar = createCookieJar()
 		await openSession(oracle, jar)
 		const reply = await sendStack(oracle.url, { path: '/static/index.html' }, jar)
 		expect(listHeldValues(reply, oracle.ids)).toEqual([])
 	})
 
-	it.fails('POST /rotate, which regenerates the session [red until M3]', async () => {
+	it('POST /rotate, which regenerates the session', async () => {
 		const jar = createCookieJar()
 		const token = await openSession(oracle, jar)
 		const reply = await sendStack(
@@ -228,14 +228,14 @@ describe('invariant 6: every earlier CSRF token of the session passes', () => {
 		expect((await sendStack(stacks.anonymous.url, buildEchoRequest(token), jar)).status).toBe(200)
 	})
 
-	it.fails('with no session, the first tab token passes after a second tab opens [red until M3]', async () => {
+	it('with no session, the first tab token passes after a second tab opens', async () => {
 		const jar = createCookieJar()
 		const first = await openSession(stacks.anonymous, jar)
 		await openSession(stacks.anonymous, jar)
 		expect((await sendStack(stacks.anonymous.url, buildEchoRequest(first), jar)).status).toBe(200)
 	})
 
-	it.fails('with no session, a token passes after the page loads a static file [red until M3]', async () => {
+	it('with no session, a token passes after the page loads a static file', async () => {
 		const jar = createCookieJar()
 		const token = await openSession(stacks.anonymous, jar)
 		await sendStack(stacks.anonymous.url, { path: '/static/index.html' }, jar)
@@ -301,7 +301,7 @@ describe('invariant 9: a cookie-less request that writes nothing leaves the stor
 		expect(await readFlood(stacks.capacity, '/mark')).toBe('none')
 	})
 
-	it.fails('a flood of cookie-less GET /page requests keeps a written session [red until M3]', async () => {
+	it('a flood of cookie-less GET /page requests keeps a written session', async () => {
 		expect(await readFlood(stacks.capacity, '/page')).toBe('lamp')
 	})
 })
