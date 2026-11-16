@@ -4,6 +4,8 @@ import { createCookieJar } from '@orkestrel/test/server'
 import {
 	ARM_CELLS,
 	BODY_CELLS,
+	CANONICAL_HEADER_CELLS,
+	CANONICAL_VARY_CELLS,
 	FAULT_CELLS,
 	FORWARDED_CELLS,
 	HEADER_CELLS,
@@ -93,24 +95,27 @@ describe('invariant 3: the resolved IP is the socket peer or a hop the fixture a
 
 	// A host that routes only 127.0.0.1 refuses the proxy's bind to a second loopback address
 	// (`EADDRNOTAVAIL`), and then the hop the proxy appends equals the server's socket peer.
-	describe.runIf(stacks.alias)('through the proxy fixture, from its own loopback address', () => {
-		it('the proxy reaches the server from an address apart from the hop it appends (control)', async () => {
-			await sendStack(oracle.proxy, { path: '/client' })
-			expect(requireValue(oracle.hops.at(-1))).not.toBe(oracle.peer)
-		})
-
-		for (const cell of listGreenCells(proxied))
-			it(`${cell.title}`, async () => {
-				const { resolved, expected } = await readForwarded(stacks, cell)
-				expect(resolved).toBe(expected)
+	describe.runIf(stacks.alias)(
+		'through the proxy fixture from 127.0.0.2, run only where the host routes 127.0.0.2 (a bind refused with EADDRNOTAVAIL skips it)',
+		() => {
+			it('the proxy reaches the server from an address apart from the hop it appends (control)', async () => {
+				await sendStack(oracle.proxy, { path: '/client' })
+				expect(requireValue(oracle.hops.at(-1))).not.toBe(oracle.peer)
 			})
 
-		for (const cell of listRedCells(proxied))
-			it.fails(`${cell.title} [red until ${cell.closer}]`, async () => {
-				const { resolved, expected } = await readForwarded(stacks, cell)
-				expect(resolved).toBe(expected)
-			})
-	})
+			for (const cell of listGreenCells(proxied))
+				it(`${cell.title}`, async () => {
+					const { resolved, expected } = await readForwarded(stacks, cell)
+					expect(resolved).toBe(expected)
+				})
+
+			for (const cell of listRedCells(proxied))
+				it.fails(`${cell.title} [red until ${cell.closer}]`, async () => {
+					const { resolved, expected } = await readForwarded(stacks, cell)
+					expect(resolved).toBe(expected)
+				})
+		},
+	)
 })
 
 describe('invariant 4: no script-readable value holds the session id', () => {
@@ -188,6 +193,18 @@ describe('invariant 5: Vary: Origin sits on every response and preflight in list
 		})
 		expect(listCorsHeaders(reply.headers)).toEqual([])
 	})
+
+	for (const cell of listGreenCells(CANONICAL_VARY_CELLS))
+		it(`${cell.title}`, async () => {
+			const { observed, expected } = await readVaryCell(stacks.orders.canonical, cell)
+			expect(observed).toEqual(expected)
+		})
+
+	for (const cell of listRedCells(CANONICAL_VARY_CELLS))
+		it.fails(`${cell.title} [red until ${cell.closer}]`, async () => {
+			const { observed, expected } = await readVaryCell(stacks.orders.canonical, cell)
+			expect(observed).toEqual(expected)
+		})
 })
 
 describe('invariant 6: every earlier CSRF token of the session passes', () => {
@@ -258,6 +275,23 @@ describe('invariant 7: security headers sit on redirects and on errors', () => {
 	for (const cell of listRedCells(HEADER_CELLS))
 		it.fails(`${cell.title} [red until ${cell.closer}]`, async () => {
 			const { observed, expected } = await readSecurityCell(oracle, cell)
+			expect(observed).toEqual(expected)
+		})
+
+	it('the bare GET /page route carries every declared security header in the canonical order (control)', async () => {
+		const reply = await sendStack(stacks.orders.canonical.url, { path: '/page' })
+		expect(SECURITY_HEADERS.filter((name) => !reply.headers.has(name))).toEqual([])
+	})
+
+	for (const cell of listGreenCells(CANONICAL_HEADER_CELLS))
+		it(`${cell.title}`, async () => {
+			const { observed, expected } = await readSecurityCell(stacks.orders.canonical, cell)
+			expect(observed).toEqual(expected)
+		})
+
+	for (const cell of listRedCells(CANONICAL_HEADER_CELLS))
+		it.fails(`${cell.title} [red until ${cell.closer}]`, async () => {
+			const { observed, expected } = await readSecurityCell(stacks.orders.canonical, cell)
 			expect(observed).toEqual(expected)
 		})
 })

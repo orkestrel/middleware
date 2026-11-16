@@ -2098,6 +2098,115 @@ export const HEADER_CELLS: readonly StackStatusCell[] = Object.freeze<StackStatu
 	},
 ])
 
+/** Lists invariant 5's cells on the guide's `canonical` order: each error from the allowed origin, which carries `Vary: Origin`. */
+export const CANONICAL_VARY_CELLS: readonly StackStatusCell[] = Object.freeze<StackStatusCell[]>([
+	{
+		title: 'POST /echo without a token, a thrown 403, from the allowed origin, the canonical order',
+		closer: 'M4',
+		status: 403,
+		build: () => ({ ...buildEchoRequest(undefined), headers: { origin: STACK_ORIGIN } }),
+	},
+	{
+		title:
+			'POST /echo with malformed JSON, a thrown 400, from the allowed origin, the canonical order',
+		closer: 'M4',
+		status: 400,
+		build: (token) => ({
+			method: 'POST',
+			path: '/echo',
+			headers: buildTokenHeaders(token, {
+				'content-type': 'application/json',
+				origin: STACK_ORIGIN,
+			}),
+			body: '{"item":',
+		}),
+	},
+	{
+		title: 'GET /teapot, a thrown HTTPError 418, from the allowed origin, the canonical order',
+		closer: 'M4',
+		status: 418,
+		build: () => ({ path: '/teapot', headers: { origin: STACK_ORIGIN } }),
+	},
+	{
+		title: 'GET /fault, a thrown Error, from the allowed origin, the canonical order',
+		closer: 'M4',
+		status: 500,
+		build: () => ({ path: '/fault', headers: { origin: STACK_ORIGIN } }),
+	},
+	{
+		title: 'GET /slow, the deadline 503, from the allowed origin, the canonical order',
+		closer: 'M4',
+		status: 503,
+		build: () => ({ path: '/slow', headers: { origin: STACK_ORIGIN } }),
+	},
+	{
+		title: 'POST /upload, a malformed multipart form, from the allowed origin, the canonical order',
+		closer: 'M4',
+		status: 400,
+		build: (token) => ({
+			method: 'POST',
+			path: '/upload',
+			headers: buildTokenHeaders(token, {
+				'content-type': `multipart/form-data; boundary=${STACK_BOUNDARY}`,
+				origin: STACK_ORIGIN,
+			}),
+			body: 'not a multipart body',
+		}),
+	},
+])
+
+/** Lists invariant 7's cells on the guide's `canonical` order: each error, whose security headers equal the bare `/page` route's on that order. */
+export const CANONICAL_HEADER_CELLS: readonly StackStatusCell[] = Object.freeze<StackStatusCell[]>([
+	{
+		title: 'POST /echo without a token, a thrown 403, the canonical order',
+		closer: 'M4',
+		status: 403,
+		build: () => buildEchoRequest(undefined),
+	},
+	{
+		title: 'POST /echo with malformed JSON, a thrown 400, the canonical order',
+		closer: 'M4',
+		status: 400,
+		build: (token) => ({
+			method: 'POST',
+			path: '/echo',
+			headers: buildTokenHeaders(token, { 'content-type': 'application/json' }),
+			body: '{"item":',
+		}),
+	},
+	{
+		title: 'GET /teapot, a thrown HTTPError 418, the canonical order',
+		closer: 'M4',
+		status: 418,
+		build: () => ({ path: '/teapot' }),
+	},
+	{
+		title: 'GET /fault, a thrown Error, the canonical order',
+		closer: 'M4',
+		status: 500,
+		build: () => ({ path: '/fault' }),
+	},
+	{
+		title: 'GET /slow, the deadline 503, the canonical order',
+		closer: 'M4',
+		status: 503,
+		build: () => ({ path: '/slow' }),
+	},
+	{
+		title: 'POST /upload, a malformed multipart form, the canonical order',
+		closer: 'M4',
+		status: 400,
+		build: (token) => ({
+			method: 'POST',
+			path: '/upload',
+			headers: buildTokenHeaders(token, {
+				'content-type': `multipart/form-data; boundary=${STACK_BOUNDARY}`,
+			}),
+			body: 'not a multipart body',
+		}),
+	},
+])
+
 /** Lists invariant 8's cells: each 206 a client that accepts gzip receives, which carries no content coding. */
 export const RANGE_CELLS: readonly StackRangeCell[] = Object.freeze([
 	{
@@ -2171,7 +2280,9 @@ export const BODY_CELLS: readonly StackCell[] = Object.freeze([
 /**
  * Probes whether the host routes a second loopback address, by connecting from {@link STACK_PEER}.
  *
- * @returns `true` when a socket bound to {@link STACK_PEER} reaches a {@link STACK_LOOPBACK} listener
+ * @returns `true` when a socket bound to {@link STACK_PEER} reaches a {@link STACK_LOOPBACK} listener,
+ * `false` when the host refuses the bind with `EADDRNOTAVAIL`
+ * @throws The socket error, for any other refusal
  * @remarks Linux routes all of `127.0.0.0/8` to the loopback interface; a host that routes only
  * `127.0.0.1` refuses the bind with `EADDRNOTAVAIL`, and then the proxy fixture's hop and the
  * server's socket peer are the same address.
@@ -2184,7 +2295,7 @@ export const BODY_CELLS: readonly StackCell[] = Object.freeze([
 export async function probeLoopbackAlias(): Promise<boolean> {
 	const loopback = await createLoopback(createNetServer((socket) => socket.end()))
 	try {
-		return await new Promise<boolean>((resolve) => {
+		return await new Promise<boolean>((resolve, reject) => {
 			const socket = connect({
 				host: STACK_LOOPBACK,
 				port: loopback.port,
@@ -2194,7 +2305,10 @@ export async function probeLoopbackAlias(): Promise<boolean> {
 				socket.destroy()
 				resolve(true)
 			})
-			socket.once('error', () => resolve(false))
+			socket.once('error', (error) => {
+				if (Reflect.get(error, 'code') === 'EADDRNOTAVAIL') resolve(false)
+				else reject(error)
+			})
 		})
 	} finally {
 		await loopback.destroy()
