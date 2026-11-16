@@ -57,7 +57,6 @@ import {
 	isUint8Array,
 	preview,
 } from '@orkestrel/contract'
-import { UPLOADED_FILE_CONTRACT } from './contracts.js'
 import {
 	CHALLENGE_TOKEN,
 	CHALLENGE_VALUE,
@@ -492,23 +491,6 @@ export function parsePartHeaders(block: string): PartHeaders {
 }
 
 /**
- * Builds a frozen {@link UploadedFile} record.
- *
- * @param input - Every field of the record
- * @returns A frozen {@link UploadedFile}
- * @throws {ContractError} Thrown when `input` omits a member, carries an undeclared member, or holds a member outside its range
- *
- * @example
- * ```ts
- * createUploadedFile({ field: 'avatar', name: 'a.png', size: 1024, mime: 'image/png', validated: true, status: 'staged', path: '/tmp/x' })
- * ```
- */
-export function createUploadedFile(input: UploadedFile): UploadedFile {
-	admitOptions('createUploadedFile', UPLOADED_FILE_CONTRACT, input)
-	return Object.freeze({ ...input })
-}
-
-/**
  * Attempts to unlink every still-`'staged'` file in a parsed
  * {@link MultipartBody} — the fail-closed cleanup `createMultipart` runs when
  * its downstream handler throws, mirroring `parseMultipartRequest`'s own
@@ -674,7 +656,7 @@ export async function moveUploadedFile(
 			throw error
 		}
 	}
-	return createUploadedFile({
+	return Object.freeze({
 		field: file.field,
 		name: file.name,
 		size: file.size,

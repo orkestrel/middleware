@@ -4,13 +4,8 @@ import {
 	createContract,
 	functionShape,
 	integerShape,
-	isBoolean,
-	isFiniteNumber,
-	isString,
-	literalOf,
 	literalShape,
 	numberShape,
-	objectOf,
 	objectShape,
 	optionalShape,
 	rawShape,
@@ -18,13 +13,14 @@ import {
 	stringShape,
 	unionShape,
 } from '@orkestrel/contract'
-import { buildForeignContract } from './shapers.js'
+import { buildForeignContract } from './combinators.js'
 
 /**
  * Admits `BoundaryOptions` whole for `createBoundary`: a boolean `expose` and a function `report`.
  *
  * @remarks
- * Every contract in this file refuses an undeclared key and a missing required key.
+ * Every bag contract in this file refuses an undeclared key and a missing required key; a foreign
+ * guard accepts a class instance and unknown members.
  */
 export const BOUNDARY_CONTRACT = createContract(
 	objectShape({
@@ -93,16 +89,16 @@ export const CORS_CONTRACT = createContract(
 )
 
 /**
- * Admits `DeadlineOptions` whole for `createDeadline`: a positive finite `ms` and an integer
- * `status` from 200 through 599.
+ * Admits `DeadlineOptions` whole for `createDeadline`: an integer `ms` from 1 through
+ * 2147483647, the range `@orkestrel/timeout` enforces, and an integer `status` from 200 through 599.
  *
  * @remarks
  * The shape has no exclusive bound, so `Number.MIN_VALUE`, the smallest positive number, is the
- * inclusive minimum of every positive range in this file.
+ * inclusive minimum of every other positive range in this file.
  */
 export const DEADLINE_CONTRACT = createContract(
 	objectShape({
-		ms: numberShape({ min: Number.MIN_VALUE }),
+		ms: integerShape({ min: 1, max: 2_147_483_647 }),
 		status: optionalShape(integerShape({ min: 200, max: 599 })),
 	}),
 )
@@ -176,14 +172,25 @@ export const SESSION_CONTRACT = createContract(
 
 /**
  * Admits `CookieTransportOptions` whole for `createCookieTransport`: a string `name`, a `secret`
- * that is a string or a string array, and a foreign `cookie` that {@link COOKIE_FOREIGN} checks
- * after admission.
+ * that is a string or a string array, and an owned `cookie` record of the six optional members
+ * `@orkestrel/server` declares: string `path` and `domain`, a finite number `maxAge` (a
+ * non-finite value writes `Max-Age=NaN` or `Max-Age=Infinity` into `Set-Cookie`), boolean
+ * `httpOnly` and `secure`, and a `sameSite` of `'Strict'`, `'Lax'`, or `'None'`.
  */
 export const COOKIE_TRANSPORT_CONTRACT = createContract(
 	objectShape({
 		name: optionalShape(stringShape()),
 		secret: unionShape(stringShape(), arrayShape(stringShape())),
-		cookie: optionalShape(rawShape({})),
+		cookie: optionalShape(
+			objectShape({
+				path: optionalShape(stringShape()),
+				domain: optionalShape(stringShape()),
+				maxAge: optionalShape(numberShape()),
+				httpOnly: optionalShape(booleanShape()),
+				secure: optionalShape(booleanShape()),
+				sameSite: optionalShape(literalShape(['Strict', 'Lax', 'None'])),
+			}),
+		),
 	}),
 )
 
@@ -339,23 +346,3 @@ export const ASSET_SOURCE_FOREIGN = buildForeignContract(['read'])
 
 /** Holds the members `AssetOptions.store` declares: `get`, `set`, and `delete`. */
 export const ASSET_STORE_FOREIGN = buildForeignContract(['get', 'set', 'delete'])
-
-/**
- * Holds the optional members the `@orkestrel/server` `CookieOptions` declares, each as its
- * published type declares it, and accepts unknown members.
- */
-export const COOKIE_FOREIGN = Object.freeze({
-	expected:
-		'an object whose path and domain are strings, maxAge a finite number, httpOnly and secure booleans, and sameSite Strict, Lax, or None',
-	is: objectOf(
-		{
-			path: isString,
-			domain: isString,
-			maxAge: isFiniteNumber,
-			httpOnly: isBoolean,
-			secure: isBoolean,
-			sameSite: literalOf('Strict', 'Lax', 'None'),
-		},
-		true,
-	),
-})

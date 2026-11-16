@@ -1,10 +1,11 @@
-import type { Session } from '@src/server'
+import type { Session, UploadedFile } from '@src/server'
 import {
 	createCookieTransport,
 	createDatabaseSessionStore,
 	createHeaderTransport,
 	createMemorySessionStore,
 	createRestoredSession,
+	createUploadedFile,
 	isSession,
 	sessionColumns,
 } from '@src/server'
@@ -196,5 +197,28 @@ describe('createRestoredSession', () => {
 		expect(createRestoredSession({})).toBeUndefined()
 		expect(createRestoredSession({ id: 1, state: {} })).toBeUndefined()
 		expect(createRestoredSession({ id: 'abc', state: 'not-a-record' })).toBeUndefined()
+	})
+})
+
+describe('createUploadedFile', () => {
+	const input: UploadedFile = {
+		field: 'avatar',
+		name: 'a.png',
+		size: 3,
+		mime: 'image/png',
+		validated: true,
+		status: 'staged',
+		path: '/tmp/a',
+	}
+
+	it('returns a frozen copy of the record', () => {
+		const record = createUploadedFile(input)
+		expect(record).toEqual(input)
+		expect(record).not.toBe(input)
+		expect(Object.isFrozen(record)).toBe(true)
+	})
+
+	it('refuses a record with a negative size as a ContractError at the key', () => {
+		expect(() => createUploadedFile({ ...input, size: -1 })).toThrow(ContractError)
 	})
 })

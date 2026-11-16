@@ -32,6 +32,8 @@ import { admitOptions, sessionExpired } from '../helpers.js'
  * on every eviction the store's own policy performs (a capacity eviction or
  * an expired-entry prune), but never for an explicit `delete`.
  *
+ * @throws {ContractError} When the constructor refuses its options bag whole: an undeclared key, a `ttl` or `lifetime` that is not a positive finite number, a `capacity` that is not an integer of at least 1, or an `evict` that is not a function
+ *
  * @example
  * ```ts
  * const store = new MemorySessionStore({ ttl: 60_000, lifetime: 3_600_000 })

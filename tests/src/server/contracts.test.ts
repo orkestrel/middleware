@@ -3,7 +3,6 @@ import {
 	BEARER_CONTRACT,
 	BOUNDARY_CONTRACT,
 	COMPRESSION_CONTRACT,
-	COOKIE_FOREIGN,
 	COOKIE_TRANSPORT_CONTRACT,
 	CORS_CONTRACT,
 	CSRF_CONTRACT,
@@ -37,7 +36,7 @@ import { ADMISSION_DOORS, listAdmissionRows, runAdmission } from '../../setupSer
 // ============================================================================
 
 describe('contracts', () => {
-	it('compiles one contract per options interface at module load', () => {
+	it('compiles each bag contract as a closed object schema and the forwarded contract as two forms', () => {
 		const contracts = [
 			ASSET_CONTRACT,
 			BEARER_CONTRACT,
@@ -63,16 +62,17 @@ describe('contracts', () => {
 			TELEMETRY_CONTRACT,
 			UPLOADED_FILE_CONTRACT,
 		]
-		for (const contract of contracts) expect(typeof contract.is).toBe('function')
+		for (const contract of contracts)
+			expect(contract.schema).toMatchObject(
+				contract === FORWARDED_CONTRACT
+					? { anyOf: [{ additionalProperties: false }, { additionalProperties: false }] }
+					: { type: 'object', additionalProperties: false },
+			)
 	})
 
-	it('accepts a class instance and unknown members for a foreign cookie record', () => {
-		class Cookie {
-			readonly path = '/'
-			readonly unknown = 1
-		}
-		expect(COOKIE_FOREIGN.is(new Cookie())).toBe(true)
-		expect(COOKIE_FOREIGN.is({ path: 1 })).toBe(false)
+	it('refuses a cookie record that names a key the server publishes in another case', () => {
+		expect(COOKIE_TRANSPORT_CONTRACT.is({ secret: 's', cookie: { maxAge: 60 } })).toBe(true)
+		expect(COOKIE_TRANSPORT_CONTRACT.is({ secret: 's', cookie: { maxage: 60 } })).toBe(false)
 	})
 
 	it('refuses every key that its contract does not declare', () => {

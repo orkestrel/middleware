@@ -11,7 +11,8 @@ import {
 } from './constants.js'
 import { MultipartError } from './errors.js'
 import { Upload } from './Upload.js'
-import { createUploadedFile, detectMIME, parsePartHeaders } from './helpers.js'
+import { createUploadedFile } from './factories.js'
+import { detectMIME, parsePartHeaders } from './helpers.js'
 
 export class MultipartParser {
 	static #defaultDirectory: Promise<string> | undefined

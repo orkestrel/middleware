@@ -11,7 +11,7 @@ import type {
 } from '@orkestrel/server'
 
 /**
- * Configures `createBoundary` — the outermost error-rendering battery. The factory admits the bag whole, and a refusal is a `ContractError`.
+ * Configures `createBoundary` — the outermost error-rendering battery. The factory admits the bag whole, and a refusal is a `ContractError`. The bag must be a plain object; a class instance refuses.
  *
  * @remarks
  * - `expose` — when `true`, a non-`HTTPError` throw's `error.message` is
@@ -45,7 +45,7 @@ export interface TelemetryEntry {
 }
 
 /**
- * Configures `createTelemetry` — the request timing/access-log seam. The factory admits the bag whole, and a refusal is a `ContractError`.
+ * Configures `createTelemetry` — the request timing/access-log seam. The factory admits the bag whole, and a refusal is a `ContractError`. The bag must be a plain object; a class instance refuses.
  *
  * @remarks
  * - `record` — invoked once per request with the settled {@link
@@ -57,7 +57,7 @@ export interface TelemetryOptions {
 }
 
 /**
- * Configures `createCompression` — response-body compression. The factory admits the bag whole, and a refusal is a `ContractError`.
+ * Configures `createCompression` — response-body compression. The factory admits the bag whole, and a refusal is a `ContractError`. The bag must be a plain object; a class instance refuses.
  *
  * @remarks
  * - `threshold` — the minimum buffered body size (bytes) worth compressing;
@@ -111,7 +111,7 @@ export interface CompressResponseOptions {
 export type SecurityIdentifierOptions = { readonly trust?: boolean } | false
 
 /**
- * Configures `createSecurity` — the security-headers + request-id battery. The factory admits the bag whole, and a refusal is a `ContractError`.
+ * Configures `createSecurity` — the security-headers + request-id battery. The factory admits the bag whole, and a refusal is a `ContractError`. The bag must be a plain object; a class instance refuses.
  *
  * @remarks
  * Every header option is `string | false` (a custom value replaces the
@@ -146,7 +146,7 @@ export interface SecurityOptions {
 }
 
 /**
- * Configures `createCors` — Cross-Origin Resource Sharing. The factory admits the bag whole, and a refusal is a `ContractError`.
+ * Configures `createCors` — Cross-Origin Resource Sharing. The factory admits the bag whole, and a refusal is a `ContractError`. The bag must be a plain object; a class instance refuses.
  *
  * @remarks
  * - `origin` — the allowed origin(s): `'*'` (default), a single origin
@@ -163,10 +163,11 @@ export interface CorsOptions {
 }
 
 /**
- * Configures `createDeadline` — the application-level per-request deadline. The factory admits the bag whole, and a refusal is a `ContractError`.
+ * Configures `createDeadline` — the application-level per-request deadline. The factory admits the bag whole, and a refusal is a `ContractError`. The bag must be a plain object; a class instance refuses.
  *
  * @remarks
- * - `ms` — the deadline in milliseconds, armed through `@orkestrel/timeout` and
+ * - `ms` — the deadline in milliseconds, an integer from 1 through 2147483647 (the range
+ *   `@orkestrel/timeout` enforces), armed through `@orkestrel/timeout` and
  *   linked to the request's `signal` through `@orkestrel/abort`'s `linkSignal`.
  * - `status` — the response status returned when the deadline fires before
  *   the downstream chain settles; defaults to {@link DEFAULT_DEADLINE_STATUS}.
@@ -177,7 +178,7 @@ export interface DeadlineOptions {
 }
 
 /**
- * Configures `createForwarded` — the trusted-proxy client-IP resolver. The factory admits the bag whole, and a refusal is a `ContractError`.
+ * Configures `createForwarded` — the trusted-proxy client-IP resolver. The factory admits the bag whole, and a refusal is a `ContractError`. The bag must be a plain object; a class instance refuses.
  *
  * @remarks
  * Construction requires either `proxies` or `trusted`, never both and never
@@ -191,7 +192,7 @@ export type ForwardedOptions =
 	| { readonly trusted: readonly string[] }
 
 /**
- * Configures `createETag` — dynamic response ETag + conditional GET. The factory admits the bag whole, and a refusal is a `ContractError`.
+ * Configures `createETag` — dynamic response ETag + conditional GET. The factory admits the bag whole, and a refusal is a `ContractError`. The bag must be a plain object; a class instance refuses.
  *
  * @remarks
  * - `weak` — mint a weak `W/"…"` ETag (default `true`) or a strong `"…"` one
@@ -208,7 +209,7 @@ export type BearerVerifyFunction<TCredential> = (
 ) => TCredential | undefined | Promise<TCredential | undefined>
 
 /**
- * Configures `createBearer` — bearer-token authentication. The factory admits the bag whole, and a refusal is a `ContractError`.
+ * Configures `createBearer` — bearer-token authentication. The factory admits the bag whole, and a refusal is a `ContractError`. The bag must be a plain object; a class instance refuses.
  *
  * @typeParam TCredential - The credential `verify` resolves and `createBearer` stashes on {@link BearerState.token}
  * @remarks
@@ -231,7 +232,7 @@ export interface BearerOptions<TCredential = string> {
 }
 
 /**
- * Configures `createLimiter` — fixed-window rate limiting. The factory admits the bag whole, and a refusal is a `ContractError`.
+ * Configures `createLimiter` — fixed-window rate limiting. The factory admits the bag whole, and a refusal is a `ContractError`. The bag must be a plain object; a class instance refuses.
  *
  * @typeParam TState - The consumer's opaque per-request state type `key` reads
  * @remarks
@@ -318,7 +319,7 @@ export interface LimiterStoreInterface {
 	consume(key: string, now: number, limits: LimiterLimits): Promise<LimiterResult>
 }
 
-/** Configures the in-memory limiter's capacity and eviction observation. The factory admits the bag whole, and a refusal is a `ContractError`. */
+/** Configures the in-memory limiter's capacity and eviction observation. The factory admits the bag whole, and a refusal is a `ContractError`. The bag must be a plain object; a class instance refuses. */
 export interface MemoryLimiterStoreOptions {
 	readonly capacity?: number
 	readonly evict?: (key: string) => void
@@ -480,7 +481,7 @@ export interface SessionStoreInterface<S extends SessionInterface> {
 /**
  * Describes the idle and absolute-lifetime thresholds a session store enforces —
  * `sessionExpired`'s limits argument and both shipped stores' construction
- * options. `createDatabaseSessionStore` admits the bag whole, and a refusal is a `ContractError`.
+ * options. `createDatabaseSessionStore` admits the bag whole, and a refusal is a `ContractError`. The bag must be a plain object; a class instance refuses.
  *
  * @remarks
  * - `ttl` — the idle timeout in milliseconds; absent means no idle expiry.
@@ -601,7 +602,7 @@ export interface SessionTransportInterface {
 }
 
 /**
- * Configures `createSession` — the generic session battery. The factory admits the bag whole, and a refusal is a `ContractError`.
+ * Configures `createSession` — the generic session battery. The factory admits the bag whole, and a refusal is a `ContractError`. The bag must be a plain object; a class instance refuses.
  *
  * @typeParam S - The session entity type `create` produces
  * @typeParam TState - The consumer's opaque per-request state type `mint` reads
@@ -644,14 +645,16 @@ export interface SessionOptions<S extends SessionInterface, TState = unknown> {
 }
 
 /**
- * Configures `createCookieTransport` — the signed-cookie {@link SessionTransportInterface}. The factory admits the bag whole, and a refusal is a `ContractError`.
+ * Configures `createCookieTransport` — the signed-cookie {@link SessionTransportInterface}. The factory admits the bag whole, and a refusal is a `ContractError`. The bag must be a plain object; a class instance refuses.
  *
  * @remarks
  * - `name` — the cookie name; defaults to {@link DEFAULT_SESSION_COOKIE}.
  * - `secret` — the {@link TokenSecret} the session id is signed with (`signToken`).
  * - `cookie` — extra {@link CookieOptions} attributes; `Max-Age` is derived
- *   from `SessionOptions.ttl` unless overridden here. Each member is checked as
- *   `@orkestrel/server` publishes it, and a member this package does not declare passes.
+ *   from `SessionOptions.ttl` unless overridden here. The record is admitted whole: it
+ *   accepts only `path` and `domain` (strings), `maxAge` (a finite number, because a
+ *   non-finite value writes `Max-Age=NaN` or `Max-Age=Infinity`), `httpOnly` and `secure`
+ *   (booleans), and `sameSite` (`'Strict'`, `'Lax'`, or `'None'`), and refuses any other key.
  */
 export interface CookieTransportOptions {
 	readonly name?: string
@@ -660,7 +663,7 @@ export interface CookieTransportOptions {
 }
 
 /**
- * Configures `createHeaderTransport` — the bare-header {@link SessionTransportInterface}. The factory admits the bag whole, and a refusal is a `ContractError`.
+ * Configures `createHeaderTransport` — the bare-header {@link SessionTransportInterface}. The factory admits the bag whole, and a refusal is a `ContractError`. The bag must be a plain object; a class instance refuses.
  *
  * @remarks
  * - `header` — the header carrying the session id; defaults to
@@ -671,7 +674,7 @@ export interface HeaderTransportOptions {
 }
 
 /**
- * Configures `createMemorySessionStore` — the default in-process {@link SessionStoreInterface}. The factory admits the bag whole, and a refusal is a `ContractError`.
+ * Configures `createMemorySessionStore` — the default in-process {@link SessionStoreInterface}. The factory admits the bag whole, and a refusal is a `ContractError`. The bag must be a plain object; a class instance refuses.
  *
  * @remarks
  * - `ttl` — the idle timeout in milliseconds (lazy eviction on `get`).
@@ -700,7 +703,7 @@ export interface CSRFState {
 }
 
 /**
- * Configures `createCSRF` — session-bound double-submit CSRF protection. The factory admits the bag whole, and a refusal is a `ContractError`.
+ * Configures `createCSRF` — session-bound double-submit CSRF protection. The factory admits the bag whole, and a refusal is a `ContractError`. The bag must be a plain object; a class instance refuses.
  *
  * @remarks
  * - `secret` — the {@link TokenSecret} the CSRF token is signed with.
@@ -818,7 +821,7 @@ export interface AssetSourceInterface {
 }
 
 /**
- * Configures `createAssets` — in-memory identity/Brotli asset serving. The factory admits the bag whole, and a refusal is a `ContractError`.
+ * Configures `createAssets` — in-memory identity/Brotli asset serving. The factory admits the bag whole, and a refusal is a `ContractError`. The bag must be a plain object; a class instance refuses.
  *
  * @remarks
  * - `source` — the required in-memory asset reader. The implementation checks only
@@ -868,7 +871,7 @@ export interface AssetStoreInterface {
 }
 
 /**
- * Configures `createStatic` — node `fs`-backed static file serving. The factory admits the bag whole, and a refusal is a `ContractError`.
+ * Configures `createStatic` — node `fs`-backed static file serving. The factory admits the bag whole, and a refusal is a `ContractError`. The bag must be a plain object; a class instance refuses.
  *
  * @remarks
  * - `root` — the required directory every request resolves under, resolved
@@ -943,7 +946,7 @@ export interface MultipartLimits {
 
 /**
  * Configures `createMultipart` — node `fs`/`os`/`crypto`-backed streaming
- * multipart upload parsing. The factory admits the bag whole, and a refusal is a `ContractError`.
+ * multipart upload parsing. The factory admits the bag whole, and a refusal is a `ContractError`. The bag must be a plain object; a class instance refuses.
  *
  * @remarks
  * - `limits` — see {@link MultipartLimitsInput}.
@@ -1033,7 +1036,7 @@ export interface ByteRange {
 }
 
 /**
- * Configures `createNodeCompression` — `node:zlib`-backed response compression. The factory admits the bag whole, and a refusal is a `ContractError`.
+ * Configures `createNodeCompression` — `node:zlib`-backed response compression. The factory admits the bag whole, and a refusal is a `ContractError`. The bag must be a plain object; a class instance refuses.
  *
  * @remarks
  * - `threshold` — the minimum buffered body size (bytes) worth compressing;

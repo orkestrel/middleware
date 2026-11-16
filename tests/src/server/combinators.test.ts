@@ -2,7 +2,7 @@ import { buildForeignContract } from '@src/server'
 import { describe, expect, it } from 'vitest'
 
 // ============================================================================
-//  @orkestrel/middleware — shapers. A foreign contract checks each member a
+//  @orkestrel/middleware — combinators. A foreign contract checks each member a
 //  published interface declares and nothing else.
 // ============================================================================
 

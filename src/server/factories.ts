@@ -10,6 +10,7 @@ import type {
 	SessionStoreInterface,
 	SessionTransportInterface,
 	AssetStoreInterface,
+	UploadedFile,
 } from './types.js'
 import type { Guard } from '@orkestrel/contract'
 import type { TableInterface } from '@orkestrel/database'
@@ -17,11 +18,11 @@ import { isRecord, isString } from '@orkestrel/contract'
 import { clearCookie, readSignedCookie, resolveSecure, writeSignedCookie } from '@orkestrel/server'
 import { DEFAULT_SESSION_COOKIE, DEFAULT_SESSION_HEADER } from './constants.js'
 import {
-	COOKIE_FOREIGN,
 	COOKIE_TRANSPORT_CONTRACT,
 	HEADER_TRANSPORT_CONTRACT,
+	UPLOADED_FILE_CONTRACT,
 } from './contracts.js'
-import { admitForeign, admitOptions } from './helpers.js'
+import { admitOptions } from './helpers.js'
 import { Session } from './Session.js'
 import { DatabaseSessionStore } from './stores/DatabaseSessionStore.js'
 import { MemorySessionStore } from './stores/MemorySessionStore.js'
@@ -46,7 +47,7 @@ export function createMemoryLimiterStore(
  *
  * @param options - See {@link CookieTransportOptions}
  * @returns A {@link SessionTransportInterface}
- * @throws {ContractError} When the bag is refused whole, or when `cookie` carries a member outside its published type
+ * @throws {ContractError} When the bag is refused whole: an undeclared key, a `secret` that is not a string or a string array, or a `cookie` that is not a plain record of `path`, `domain` (strings), `maxAge` (a finite number), `httpOnly`, `secure` (booleans), and `sameSite` (`'Strict'`, `'Lax'`, or `'None'`)
  *
  * @example
  * ```ts
@@ -55,8 +56,6 @@ export function createMemoryLimiterStore(
  */
 export function createCookieTransport(options: CookieTransportOptions): SessionTransportInterface {
 	admitOptions('createCookieTransport', COOKIE_TRANSPORT_CONTRACT, options)
-	if (options.cookie !== undefined)
-		admitForeign('createCookieTransport', ['cookie'], COOKIE_FOREIGN, options.cookie)
 	const name = options.name ?? DEFAULT_SESSION_COOKIE
 	const secret = options.secret
 	const cookie = options.cookie
@@ -186,4 +185,21 @@ export function createRestoredSession(value: unknown): Session | undefined {
  */
 export function createMemoryAssetStore(): AssetStoreInterface {
 	return new MemoryAssetStore()
+}
+
+/**
+ * Builds a frozen {@link UploadedFile} record.
+ *
+ * @param input - Every field of the record
+ * @returns A frozen {@link UploadedFile}
+ * @throws {ContractError} Thrown when `input` omits a member, carries an undeclared member, or holds a member outside its range
+ *
+ * @example
+ * ```ts
+ * createUploadedFile({ field: 'avatar', name: 'a.png', size: 1024, mime: 'image/png', validated: true, status: 'staged', path: '/tmp/x' })
+ * ```
+ */
+export function createUploadedFile(input: UploadedFile): UploadedFile {
+	admitOptions('createUploadedFile', UPLOADED_FILE_CONTRACT, input)
+	return Object.freeze({ ...input })
 }

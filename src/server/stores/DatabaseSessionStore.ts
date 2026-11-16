@@ -39,6 +39,8 @@ import { admitOptions, sessionExpired, snapshotSession } from '../helpers.js'
  * miss. A row that no caller's guard ever accepts again self-heals once its
  * `ttl`/`lifetime` elapses on a later `get`.
  *
+ * @throws {ContractError} When the constructor refuses its options bag whole: an undeclared key, or a `ttl` or `lifetime` that is not a positive finite number
+ *
  * @example
  * ```ts
  * const store = new DatabaseSessionStore(table, isSession, createRestoredSession, {

@@ -15,6 +15,8 @@ import { admitOptions } from '../helpers.js'
  * @remarks
  * A fresh window takes the current max and duration. Active windows retain their budget.
  * Eviction callbacks are isolated from the admission decision.
+ *
+ * @throws {ContractError} When the constructor refuses its options bag whole: an undeclared key, a `capacity` that is not an integer of at least 1, or an `evict` that is not a function
  */
 export class MemoryLimiterStore implements LimiterStoreInterface {
 	readonly #entries = new Map<string, LimiterEntry>()
