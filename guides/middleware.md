@@ -471,10 +471,12 @@ prevents:
    throw `HTTPError` (or anything else) and have it mapped to a `Response`;
    nothing below it needs its own try/catch.
 6. **`createDeadline` sits inside the boundary.** A deadline that fires calls
-   `context.abort(reason)`, so a handler that throws on the aborted `signal`
-   raises a throw the boundary maps cleanly — mounting the deadline outside
-   would skip that rendering. The battery builds no `Request`, so it composes
-   with `createBody` in either order.
+   `context.abort(reason)`, answers `status` with no body, and discards
+   whatever the downstream returns or throws after that. Inside the boundary,
+   a throw a handler raises on the aborted `signal` stops at the deadline;
+   mounted outside, the boundary beneath it reports that throw as a fault. The
+   battery builds no `Request`, so it composes with `createBody` in either
+   order.
 7. **`createSecurity` is a documented tradeoff, not a fixed position.** The
    canonical order places it inside the boundary, so an error `Response` a
    handler explicitly returns still carries security headers, but an error

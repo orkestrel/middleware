@@ -1978,7 +1978,8 @@ describe('createDeadline', () => {
 		})
 		expect(response.status).toBe(503)
 		expect(reasons).toHaveLength(1)
-		expect(reasons[0]).toBeInstanceOf(Error)
+		expect(reasons[0]).toBeInstanceOf(DOMException)
+		expect(reasons[0]).toMatchObject({ name: 'AbortError' })
 	})
 
 	it('a fast handler never aborts the context', async () => {
@@ -2087,7 +2088,8 @@ describe('the exchange seam through a real Server', () => {
 		)
 		const signal = fixture.requests[0]?.signal
 		expect(signal?.aborted).toBe(true)
-		expect(signal?.reason).toBeInstanceOf(Error)
+		expect(signal?.reason).toBeInstanceOf(DOMException)
+		expect(signal?.reason).toMatchObject({ name: 'AbortError' })
 	})
 
 	it('F4: createForwarded resolves the client ip from the socket peer under state: () => ({})', async () => {
