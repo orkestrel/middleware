@@ -3,9 +3,11 @@ import type { ScratchInterface } from '@orkestrel/test/server'
 import type {
 	AssetRepresentation,
 	AssetSourceInterface,
-	ConnectionState,
+	BodyState,
+	MultipartState,
 	SessionState,
 } from '@src/server'
+import type { MiddlewareHandler } from '@orkestrel/server'
 import {
 	createAssets,
 	createBearer,
@@ -41,6 +43,9 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { randomUUID } from 'node:crypto'
 import { createScratch } from '@orkestrel/test/server'
+import { createDispatcher } from '@orkestrel/router'
+import { createServer } from '@orkestrel/server'
+import { waitForDelay } from '@orkestrel/test'
 
 // ── Server-only test harness ─────────────────────────────────────────────────
 //
@@ -55,7 +60,7 @@ import { createScratch } from '@orkestrel/test/server'
 export const PNG_MAGIC = Uint8Array.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a])
 
 /** Carries the real-socket middleware composition's request state. */
-export interface CapstoneState extends ConnectionState, SessionState {
+export interface CapstoneState extends SessionState {
 	readonly identifier?: string
 	readonly client?: { readonly ip?: string }
 	readonly token?: string
@@ -1343,3 +1348,89 @@ export const ADMISSION_DOORS: readonly AdmissionDoorInterface[] = Object.freeze(
 		],
 	},
 ])
+
+/** Carries every state slice a battery under the real-`Server` exchange rows reads or writes. */
+export type ExchangeState = CapstoneState & BodyState & MultipartState
+
+/** Holds one started real `Server` over a real socket and the requests its routes received. */
+export interface ExchangeFixtureInterface {
+	readonly url: string
+	readonly requests: readonly Request[]
+	stop(): Promise<void>
+}
+
+/** Delays the exchange fixture's `/slow` route past a short deadline, in milliseconds. */
+export const EXCHANGE_SLOW_DELAY = 150
+
+/**
+ * Starts a real `Server` from `@orkestrel/server` on a loopback port with the given middleware.
+ *
+ * @remarks
+ * The router answers `POST /echo` with the body a body battery stashed on `state.body`, `GET /plain`
+ * with `plain`, `GET /client` with the `state.client` ip, and `GET /slow` with `late` after {@link EXCHANGE_SLOW_DELAY} milliseconds. Each route
+ * records the `Request` it received. The state factory returns `{}`, so a battery reads connection
+ * facts from `context.connection` alone.
+ *
+ * @param running - The list the fixture joins, so a test stops every started server
+ * @param middleware - The ordered chain, outermost first
+ * @returns The fixture, whose `stop` ends the server
+ *
+ * @example
+ * ```ts
+ * const fixture = await startExchange([], [createDeadline({ ms: 5_000 }), createBody()])
+ * ```
+ */
+export async function startExchange(
+	running: ExchangeFixtureInterface[],
+	middleware: ReadonlyArray<MiddlewareHandler<ExchangeState>>,
+): Promise<ExchangeFixtureInterface> {
+	const requests: Request[] = []
+	const dispatcher = createDispatcher<ExchangeState>()
+	dispatcher.add({
+		method: 'POST',
+		path: '/echo',
+		handler: (request, context) => {
+			requests.push(request)
+			return Response.json({ body: context.state.body })
+		},
+	})
+	dispatcher.add({
+		method: 'GET',
+		path: '/plain',
+		handler: (request) => {
+			requests.push(request)
+			return new Response('plain')
+		},
+	})
+	dispatcher.add({
+		method: 'GET',
+		path: '/client',
+		handler: (request, context) => {
+			requests.push(request)
+			return new Response(context.state.client?.ip ?? 'none')
+		},
+	})
+	dispatcher.add({
+		method: 'GET',
+		path: '/slow',
+		handler: async (request) => {
+			requests.push(request)
+			await waitForDelay(EXCHANGE_SLOW_DELAY)
+			return new Response('late')
+		},
+	})
+	const server = createServer<ExchangeState>({
+		dispatcher,
+		state: () => ({}),
+		host: '127.0.0.1',
+		middleware,
+	})
+	const port = await server.start()
+	const fixture = {
+		url: `http://127.0.0.1:${port}`,
+		requests,
+		stop: server.stop.bind(server),
+	}
+	running.push(fixture)
+	return fixture
+}

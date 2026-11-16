@@ -1,4 +1,9 @@
-import type { MiddlewareContext, MiddlewareHandler, NextFunction } from '@orkestrel/server'
+import type {
+	Connection,
+	MiddlewareContext,
+	MiddlewareHandler,
+	NextFunction,
+} from '@orkestrel/server'
 import type { TableInterface } from '@orkestrel/database'
 import type {
 	SessionInterface,
@@ -57,6 +62,7 @@ export function buildTestRequest(path: string, init?: RequestInit): Request {
  * @typeParam TState - The state slice shape the scenario under test needs
  * @param request - The request the context is derived from
  * @param state - The mutable state object every battery under test reads/writes
+ * @param options - The connection facts (a plain socket by default) and the `abort` observer (a recorder of the exchange's abort)
  * @returns A {@link MiddlewareContext} ready to drive a `MiddlewareHandler`
  *
  * @example
@@ -67,18 +73,31 @@ export function buildTestRequest(path: string, init?: RequestInit): Request {
 export function createTestContext<TState>(
 	request: Request,
 	state: TState,
+	options?: TestContextOptions,
 ): MiddlewareContext<TState> {
 	const url = new URL(request.url)
 	const cached = new MiddlewareValue<Promise<unknown> | undefined>(undefined)
+	const connection = options?.connection ?? { encrypted: false }
+	const abort = options?.abort
 	return {
 		url,
 		method: request.method,
 		state,
+		connection,
 		body() {
 			if (cached.value === undefined) cached.value = readBody(request, { limit: TEST_BODY_LIMIT })
 			return cached.value
 		},
+		abort(reason) {
+			abort?.(reason)
+		},
 	}
+}
+
+/** Configures {@link createTestContext}: the connection facts and the observer of the context's `abort`. */
+export interface TestContextOptions {
+	readonly connection?: Connection
+	readonly abort?: (reason?: unknown) => void
 }
 
 /** Marks {@link createEchoTerminal}'s default `Response` body, for chain-reached assertions. */
@@ -144,9 +163,9 @@ export function createRecordingTerminal<TState>(status = 200): RecordingTerminal
 	}
 }
 
-/** Records each call's substituted `request` before answering with a fixed `Response` — a recording {@link NextFunction}, a real downstream continuation. */
+/** Records each call's argument count before answering with a fixed `Response` — a recording {@link NextFunction}, a real downstream continuation. */
 export interface RecordingNextInterface {
-	readonly calls: ReadonlyArray<Request | undefined>
+	readonly calls: readonly number[]
 	readonly count: number
 	readonly next: NextFunction
 }
@@ -154,7 +173,7 @@ export interface RecordingNextInterface {
 /**
  * Builds a {@link RecordingNextInterface} — a real `NextFunction` recorder for
  * driving a SINGLE middleware in isolation (without a full `compose` chain),
- * recording each call's optional substituted `Request`.
+ * recording each call's argument count.
  *
  * @param response - The `Response` the recorded `next()` resolves with; defaults to a fresh echo `Response`
  * @returns A {@link RecordingNextInterface}
@@ -167,7 +186,7 @@ export interface RecordingNextInterface {
  * ```
  */
 export function createRecordingNext(response?: Response): RecordingNextInterface {
-	const calls: Array<Request | undefined> = []
+	const calls: number[] = []
 	return {
 		get calls() {
 			return calls
@@ -175,8 +194,8 @@ export function createRecordingNext(response?: Response): RecordingNextInterface
 		get count() {
 			return calls.length
 		},
-		async next(request) {
-			calls.push(request)
+		async next(...args: readonly unknown[]) {
+			calls.push(args.length)
 			return response ?? new Response(ECHO_MARKER, { status: 200 })
 		},
 	}
@@ -410,10 +429,12 @@ export function createOversizedContext(request: Request): MiddlewareContext<Reco
 		url: new URL(request.url),
 		method: request.method,
 		state: {},
+		connection: { encrypted: false },
 		body() {
 			cached.value ??= Promise.reject(new ContentTooLargeError(1024))
 			return cached.value
 		},
+		abort() {},
 	}
 }
 

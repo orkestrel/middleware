@@ -1078,51 +1078,48 @@ describe('token extraction', () => {
 describe('resolveKey', () => {
 	it('prefers a bearer token over client and connection facts', () => {
 		expect(
-			resolveKey({
-				token: 'abc',
-				client: { ip: '203.0.113.7' },
-				connection: { ip: '10.0.0.1', encrypted: false },
-			}),
+			resolveKey(
+				{ token: 'abc', client: { ip: '203.0.113.7' } },
+				{ ip: '10.0.0.1', encrypted: false },
+			),
 		).toBe('token:abc')
 	})
 
 	it('falls back to client IP when no token is present', () => {
 		expect(
-			resolveKey({
-				client: { ip: '203.0.113.7' },
-				connection: { ip: '10.0.0.1', encrypted: false },
-			}),
+			resolveKey({ client: { ip: '203.0.113.7' } }, { ip: '10.0.0.1', encrypted: false }),
 		).toBe('ip:203.0.113.7')
 	})
 
 	it('falls back to connection IP when neither token nor client is present', () => {
-		expect(resolveKey({ connection: { ip: '10.0.0.1', encrypted: false } })).toBe('ip:10.0.0.1')
+		expect(resolveKey({}, { ip: '10.0.0.1', encrypted: false })).toBe('ip:10.0.0.1')
 	})
 
 	it('resolves the literal ip:unknown when no identity fact is present', () => {
-		expect(resolveKey({})).toBe('ip:unknown')
+		expect(resolveKey({}, { encrypted: false })).toBe('ip:unknown')
 	})
 
 	it('collapses an IPv6 client IP to its /64 network through computeClientKey', () => {
-		expect(resolveKey({ client: { ip: '2001:db8::1' } })).toBe('ip:2001:db8:0:0::/64')
+		expect(resolveKey({ client: { ip: '2001:db8::1' } }, { encrypted: false })).toBe(
+			'ip:2001:db8:0:0::/64',
+		)
 	})
 
 	it('keys a string credential as token:<value>', () => {
-		expect(resolveKey({ token: 'user-1' })).toBe('token:user-1')
+		expect(resolveKey({ token: 'user-1' }, { encrypted: false })).toBe('token:user-1')
 	})
 
 	it('falls an object credential through to the client address', () => {
 		expect(
-			resolveKey({
-				token: { subject: 'user-1' },
-				client: { ip: '203.0.113.7' },
-				connection: { ip: '10.0.0.1', encrypted: false },
-			}),
+			resolveKey(
+				{ token: { subject: 'user-1' }, client: { ip: '203.0.113.7' } },
+				{ ip: '10.0.0.1', encrypted: false },
+			),
 		).toBe('ip:203.0.113.7')
 	})
 
 	it('falls an object credential with no address through to ip:unknown', () => {
-		expect(resolveKey({ token: { subject: 'user-1' } })).toBe('ip:unknown')
+		expect(resolveKey({ token: { subject: 'user-1' } }, { encrypted: false })).toBe('ip:unknown')
 	})
 })
 
