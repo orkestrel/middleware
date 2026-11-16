@@ -4,6 +4,7 @@ import { open, readFile, realpath, writeFile } from 'node:fs/promises'
 import { randomUUID } from 'node:crypto'
 import { brotliCompressSync, gunzipSync, inflateSync } from 'node:zlib'
 import { describe, expect, it } from 'vitest'
+import { ContractError, attempt } from '@orkestrel/contract'
 import { waitForCondition } from '@orkestrel/test'
 import { createScratch } from '@orkestrel/test/server'
 import {
@@ -29,7 +30,10 @@ import {
 	sessionExpired,
 	snapshotSession,
 	transferSessionState,
-	validateSessionLimits,
+	admitForeign,
+	admitOptions,
+	buildForeignContract,
+	SESSION_LIMITS_CONTRACT,
 	computeFileETag,
 	buildAssetResponse,
 	readAssetRecord,
@@ -1154,30 +1158,30 @@ describe('renderChallenge', () => {
 	it('refuses a value holding a character outside the value set, naming the value', () => {
 		const values = ['a"b', 'a\\b', 'a\rb', 'a\nb', 'a\tb', 'a\u0000b', 'café']
 		for (const value of values) {
-			expect(() => renderChallenge('Bearer', { realm: value })).toThrow(TypeError)
+			expect(() => renderChallenge('Bearer', { realm: value })).toThrow(ContractError)
 			expect(() => renderChallenge('Bearer', { realm: value })).toThrow(JSON.stringify(value))
 		}
-		expect(() => renderChallenge('Bearer', { realm: 'a\u007fb' })).toThrow(TypeError)
+		expect(() => renderChallenge('Bearer', { realm: 'a\u007fb' })).toThrow(ContractError)
 		expect(() => renderChallenge('Bearer', { realm: 'a\u007fb' })).toThrow('"a\\u007fb"')
 	})
 
 	it('refuses a parameter name that is not a token, naming the name', () => {
 		const names = ['', 'two words', 'a=b', 'a"b', 'café']
 		for (const name of names) {
-			expect(() => renderChallenge('Bearer', { [name]: 'x' })).toThrow(TypeError)
+			expect(() => renderChallenge('Bearer', { [name]: 'x' })).toThrow(ContractError)
 			expect(() => renderChallenge('Bearer', { [name]: 'x' })).toThrow(JSON.stringify(name))
 		}
 	})
 
 	it('refuses a scheme that is not a token, naming the scheme', () => {
 		for (const scheme of ['', 'Bad Scheme', 'Bearer,']) {
-			expect(() => renderChallenge(scheme)).toThrow(TypeError)
+			expect(() => renderChallenge(scheme)).toThrow(ContractError)
 			expect(() => renderChallenge(scheme)).toThrow(JSON.stringify(scheme))
 		}
 	})
 
 	it('refuses two parameter names that match ignoring case, naming the later one', () => {
-		expect(() => renderChallenge('Bearer', { realm: 'a', Realm: 'b' })).toThrow(TypeError)
+		expect(() => renderChallenge('Bearer', { realm: 'a', Realm: 'b' })).toThrow(ContractError)
 		expect(() => renderChallenge('Bearer', { realm: 'a', Realm: 'b' })).toThrow('"Realm"')
 	})
 
@@ -1757,25 +1761,76 @@ describe('snapshotSession', () => {
 	})
 })
 
-describe('validateSessionLimits', () => {
+describe('admitOptions', () => {
+	const door = 'SessionLimits'
+
 	it('returns for an absent bag, an absent threshold, or a positive finite one', () => {
-		expect(validateSessionLimits(undefined)).toBeUndefined()
-		expect(validateSessionLimits({})).toBeUndefined()
-		expect(validateSessionLimits({ ttl: 1_000 })).toBeUndefined()
-		expect(validateSessionLimits({ lifetime: 1_000 })).toBeUndefined()
-		expect(validateSessionLimits({ ttl: 1_000, lifetime: 2_000 })).toBeUndefined()
+		expect(admitOptions(door, SESSION_LIMITS_CONTRACT, undefined)).toBeUndefined()
+		expect(admitOptions(door, SESSION_LIMITS_CONTRACT, {})).toBeUndefined()
+		expect(admitOptions(door, SESSION_LIMITS_CONTRACT, { ttl: 1_000 })).toBeUndefined()
+		expect(admitOptions(door, SESSION_LIMITS_CONTRACT, { lifetime: 1_000 })).toBeUndefined()
+		expect(
+			admitOptions(door, SESSION_LIMITS_CONTRACT, { ttl: 1_000, lifetime: 2_000 }),
+		).toBeUndefined()
 	})
 
-	it('throws a TypeError for a non-finite or non-positive ttl', () => {
-		expect(() => validateSessionLimits({ ttl: Number.NaN })).toThrow(TypeError)
-		expect(() => validateSessionLimits({ ttl: Number.POSITIVE_INFINITY })).toThrow(TypeError)
-		expect(() => validateSessionLimits({ ttl: 0 })).toThrow(TypeError)
-		expect(() => validateSessionLimits({ ttl: -1 })).toThrow(TypeError)
+	it('throws a ContractError for a non-finite or non-positive ttl', () => {
+		expect(() => admitOptions(door, SESSION_LIMITS_CONTRACT, { ttl: Number.NaN })).toThrow(
+			ContractError,
+		)
+		expect(() =>
+			admitOptions(door, SESSION_LIMITS_CONTRACT, { ttl: Number.POSITIVE_INFINITY }),
+		).toThrow(ContractError)
+		expect(() => admitOptions(door, SESSION_LIMITS_CONTRACT, { ttl: 0 })).toThrow(ContractError)
+		expect(() => admitOptions(door, SESSION_LIMITS_CONTRACT, { ttl: -1 })).toThrow(ContractError)
 	})
 
-	it('throws a TypeError for a non-finite or non-positive lifetime', () => {
-		expect(() => validateSessionLimits({ lifetime: Number.NaN })).toThrow(TypeError)
-		expect(() => validateSessionLimits({ lifetime: 0 })).toThrow(TypeError)
-		expect(() => validateSessionLimits({ lifetime: -1 })).toThrow(TypeError)
+	it('throws a ContractError for a non-finite or non-positive lifetime', () => {
+		expect(() => admitOptions(door, SESSION_LIMITS_CONTRACT, { lifetime: Number.NaN })).toThrow(
+			ContractError,
+		)
+		expect(() => admitOptions(door, SESSION_LIMITS_CONTRACT, { lifetime: 0 })).toThrow(
+			ContractError,
+		)
+		expect(() => admitOptions(door, SESSION_LIMITS_CONTRACT, { lifetime: -1 })).toThrow(
+			ContractError,
+		)
+	})
+
+	it('names the door and carries the first fault path and every fault as the cause', () => {
+		const outcome = attempt(() =>
+			admitOptions(door, SESSION_LIMITS_CONTRACT, { ttl: -1, undeclared: true }),
+		)
+		expect(outcome.success).toBe(false)
+		if (outcome.success || !(outcome.error instanceof ContractError)) return
+		expect(outcome.error.message).toContain('SessionLimits: ')
+		expect(outcome.error.context?.path).toEqual(['ttl'])
+		expect(outcome.error.cause).toMatchObject({
+			faults: [{ path: ['ttl'] }, { path: ['undeclared'] }],
+		})
+	})
+})
+
+describe('admitForeign', () => {
+	it('returns for a class instance and for unknown members', () => {
+		class Store {
+			readonly extra = 1
+			get(): undefined {
+				return undefined
+			}
+		}
+		const foreign = buildForeignContract(['get'])
+		expect(admitForeign('createSession', ['store'], foreign, new Store())).toBeUndefined()
+		expect(admitForeign('createSession', ['store'], foreign, { get: () => 1 })).toBeUndefined()
+	})
+
+	it('throws a ContractError naming the door, the key, and the expected members', () => {
+		const foreign = buildForeignContract(['get', 'set'])
+		const outcome = attempt(() => admitForeign('createSession', ['store'], foreign, { get: 1 }))
+		expect(outcome.success).toBe(false)
+		if (outcome.success || !(outcome.error instanceof ContractError)) return
+		expect(outcome.error.message).toContain('createSession: options.store must be')
+		expect(outcome.error.message).toContain('get, set')
+		expect(outcome.error.context?.path).toEqual(['store'])
 	})
 })

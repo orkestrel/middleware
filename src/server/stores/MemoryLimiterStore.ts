@@ -6,8 +6,9 @@ import type {
 	MemoryLimiterStoreOptions,
 } from '../types.js'
 import { createBudget } from '@orkestrel/budget'
-import { isFunction, isInteger } from '@orkestrel/contract'
 import { DEFAULT_LIMITER_CAPACITY } from '../constants.js'
+import { MEMORY_LIMITER_STORE_CONTRACT } from '../contracts.js'
+import { admitOptions } from '../helpers.js'
 
 /**
  * Stores fixed-window budgets with atomic admission and bounded LRU retention.
@@ -21,10 +22,7 @@ export class MemoryLimiterStore implements LimiterStoreInterface {
 	readonly #evict: ((key: string) => void) | undefined
 
 	constructor(options?: MemoryLimiterStoreOptions) {
-		if (options?.capacity !== undefined && (!isInteger(options.capacity) || options.capacity <= 0))
-			throw new TypeError('MemoryLimiterStore requires a positive integer capacity')
-		if (options?.evict !== undefined && !isFunction(options.evict))
-			throw new TypeError('MemoryLimiterStore requires a function evict callback')
+		admitOptions('MemoryLimiterStore', MEMORY_LIMITER_STORE_CONTRACT, options)
 		this.#capacity = options?.capacity ?? DEFAULT_LIMITER_CAPACITY
 		this.#evict = options?.evict
 	}

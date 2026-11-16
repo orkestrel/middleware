@@ -7,6 +7,7 @@ import type {
 	ClientState,
 	CompressResponseOptions,
 	ConnectionState,
+	ForeignContract,
 	ForwardedOptions,
 	MultipartBody,
 	SessionCursors,
@@ -39,8 +40,13 @@ import { copyFile, open, readFile, realpath, rename, stat, unlink } from 'node:f
 import { extname, isAbsolute, join, normalize, relative, resolve, sep } from 'node:path'
 import { promisify } from 'node:util'
 import { brotliDecompressSync, deflate as zlibDeflate, gzip as zlibGzip } from 'node:zlib'
+import type { ContractInterface } from '@orkestrel/contract'
 import {
+	admitValue,
 	attempt,
+	ContractError,
+	describeFaults,
+	extractPath,
 	isArrayBuffer,
 	isError,
 	isFiniteNumber,
@@ -51,6 +57,7 @@ import {
 	isUint8Array,
 	preview,
 } from '@orkestrel/contract'
+import { UPLOADED_FILE_CONTRACT } from './contracts.js'
 import {
 	CHALLENGE_TOKEN,
 	CHALLENGE_VALUE,
@@ -489,6 +496,7 @@ export function parsePartHeaders(block: string): PartHeaders {
  *
  * @param input - Every field of the record
  * @returns A frozen {@link UploadedFile}
+ * @throws {ContractError} Thrown when `input` omits a member, carries an undeclared member, or holds a member outside its range
  *
  * @example
  * ```ts
@@ -496,6 +504,7 @@ export function parsePartHeaders(block: string): PartHeaders {
  * ```
  */
 export function createUploadedFile(input: UploadedFile): UploadedFile {
+	admitOptions('createUploadedFile', UPLOADED_FILE_CONTRACT, input)
 	return Object.freeze({ ...input })
 }
 
@@ -891,8 +900,9 @@ export function extractBearerToken(raw: string, scheme: string): string | undefi
  *
  * @param scheme - The authentication scheme, an RFC 9110 `token`
  * @param parameters - The auth-params, each name an RFC 9110 `token` and each value limited to the RFC 6750 § 3 character set
+ * @param door - The factory name a refusal message leads with; defaults to `'renderChallenge'`
  * @returns The challenge header value
- * @throws {TypeError} Thrown when the scheme or a parameter name is not a `token`, when two names match ignoring case, or when a value holds a character outside `%x20-21 / %x23-5B / %x5D-7E`; the message names the offending piece through `preview`, JSON-encoded and capped
+ * @throws {ContractError} Thrown when the scheme or a parameter name is not a `token`, when two names match ignoring case, or when a value holds a character outside `%x20-21 / %x23-5B / %x5D-7E`; the message names the offending piece through `preview`, JSON-encoded and capped
  *
  * @example
  * ```ts
@@ -902,20 +912,38 @@ export function extractBearerToken(raw: string, scheme: string): string | undefi
 export function renderChallenge(
 	scheme: string,
 	parameters?: Readonly<Record<string, string>>,
+	door = 'renderChallenge',
 ): string {
 	if (!CHALLENGE_TOKEN.test(scheme))
-		throw new TypeError(`challenge scheme ${preview(scheme)} must be an RFC 9110 token`)
+		throw new ContractError(
+			`${door}: challenge scheme ${preview(scheme)} must be an RFC 9110 token`,
+			{ code: 'pattern', context: { path: ['scheme'], shape: door, received: preview(scheme) } },
+		)
 	const entries = Object.entries(parameters ?? {})
 	const rendered = entries.map(([name, value], index) => {
 		if (!CHALLENGE_TOKEN.test(name))
-			throw new TypeError(`challenge parameter name ${preview(name)} must be an RFC 9110 token`)
+			throw new ContractError(
+				`${door}: challenge parameter name ${preview(name)} must be an RFC 9110 token`,
+				{
+					code: 'pattern',
+					context: { path: ['challenge', name], shape: door, received: preview(name) },
+				},
+			)
 		if (entries.findIndex(([other]) => other.toLowerCase() === name.toLowerCase()) !== index)
-			throw new TypeError(
-				`challenge parameter name ${preview(name)} repeats an earlier name ignoring case`,
+			throw new ContractError(
+				`${door}: challenge parameter name ${preview(name)} repeats an earlier name ignoring case`,
+				{
+					code: 'structure',
+					context: { path: ['challenge', name], shape: door, received: preview(name) },
+				},
 			)
 		if (!isString(value) || !CHALLENGE_VALUE.test(value))
-			throw new TypeError(
-				`challenge parameter ${preview(name)} value ${preview(value)} must hold only the RFC 6750 § 3 characters %x20-21, %x23-5B, and %x5D-7E`,
+			throw new ContractError(
+				`${door}: challenge parameter ${preview(name)} value ${preview(value)} must hold only the RFC 6750 § 3 characters %x20-21, %x23-5B, and %x5D-7E`,
+				{
+					code: 'pattern',
+					context: { path: ['challenge', name], shape: door, received: preview(value) },
+				},
 			)
 		return `${name}="${value}"`
 	})
@@ -1429,26 +1457,66 @@ export function sessionExpired(
 }
 
 /**
- * Validates a store's idle and absolute-lifetime thresholds, throwing when
- * either is present and malformed — the shared construction gate
- * {@link MemorySessionStore} and {@link DatabaseSessionStore} both apply, so
- * one malformed `ttl` is refused identically by whichever store receives it.
+ * Admits an options bag whole against its compiled contract, refusing a missing
+ * required key, an undeclared key, and a value outside a declared range.
  *
- * @param limits - See {@link SessionLimits}
- * @returns Nothing; a successful return means both thresholds are usable
- * @throws {TypeError} Thrown when `ttl` or `lifetime` is present and is not a
- * positive finite number
+ * @typeParam T - The type the contract admits
+ * @param door - The factory name a refusal message leads with
+ * @param contract - The compiled contract that declares the bag
+ * @param value - The caller's bag, before any default or projection; an absent bag (`undefined`) admits as `{}`
+ * @returns Nothing; a successful return means the bag is whole
+ * @throws {ContractError} Thrown when the bag is refused; `context.path` holds the first fault's
+ * path and `cause` holds the refusal with every fault
  *
  * @example
  * ```ts
- * validateSessionLimits({ ttl: 60_000 }) // returns; the thresholds are usable
+ * admitOptions('createETag', ETAG_CONTRACT, { weak: false }) // returns
+ * admitOptions('createETag', ETAG_CONTRACT, { strong: true }) // throws a ContractError at ['strong']
  * ```
  */
-export function validateSessionLimits(limits: SessionLimits | undefined): void {
-	if (limits?.ttl !== undefined && (!isFiniteNumber(limits.ttl) || limits.ttl <= 0))
-		throw new TypeError('SessionLimits.ttl must be a positive finite number when provided')
-	if (limits?.lifetime !== undefined && (!isFiniteNumber(limits.lifetime) || limits.lifetime <= 0))
-		throw new TypeError('SessionLimits.lifetime must be a positive finite number when provided')
+export function admitOptions<T>(
+	door: string,
+	contract: ContractInterface<T>,
+	value: unknown,
+): void {
+	const outcome = admitValue(contract, value === undefined ? {} : value)
+	if (outcome.success) return
+	const first = outcome.error.faults[0]
+	throw new ContractError(`${door}: ${describeFaults(outcome.error.faults, contract.schema)}`, {
+		code: 'structure',
+		context: { path: first === undefined ? [] : extractPath(first), shape: door },
+		cause: outcome.error,
+	})
+}
+
+/**
+ * Admits one foreign implementation key against the members its published interface
+ * declares, accepting a class instance and unknown members.
+ *
+ * @param door - The factory name a refusal message leads with
+ * @param path - The key's path inside the options bag
+ * @param foreign - The {@link ForeignContract} the key's interface declares
+ * @param value - The caller's implementation
+ * @returns Nothing; a successful return means every declared member is present
+ * @throws {ContractError} Thrown when `value` lacks a declared member; `context.path` holds `path`
+ *
+ * @example
+ * ```ts
+ * admitForeign('createSession', ['store'], SESSION_STORE_FOREIGN, new MemorySessionStore()) // returns
+ * admitForeign('createSession', ['store'], SESSION_STORE_FOREIGN, {}) // throws a ContractError at ['store']
+ * ```
+ */
+export function admitForeign(
+	door: string,
+	path: readonly string[],
+	foreign: ForeignContract,
+	value: unknown,
+): void {
+	if (foreign.is(value)) return
+	throw new ContractError(
+		`${door}: options.${path.join('.')} must be ${foreign.expected}; received ${preview(value)}`,
+		{ code: 'structure', context: { path, shape: door, received: preview(value) } },
+	)
 }
 
 /**

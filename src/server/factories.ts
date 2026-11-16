@@ -13,9 +13,15 @@ import type {
 } from './types.js'
 import type { Guard } from '@orkestrel/contract'
 import type { TableInterface } from '@orkestrel/database'
-import { isArray, isRecord, isString } from '@orkestrel/contract'
+import { isRecord, isString } from '@orkestrel/contract'
 import { clearCookie, readSignedCookie, resolveSecure, writeSignedCookie } from '@orkestrel/server'
 import { DEFAULT_SESSION_COOKIE, DEFAULT_SESSION_HEADER } from './constants.js'
+import {
+	COOKIE_FOREIGN,
+	COOKIE_TRANSPORT_CONTRACT,
+	HEADER_TRANSPORT_CONTRACT,
+} from './contracts.js'
+import { admitForeign, admitOptions } from './helpers.js'
 import { Session } from './Session.js'
 import { DatabaseSessionStore } from './stores/DatabaseSessionStore.js'
 import { MemorySessionStore } from './stores/MemorySessionStore.js'
@@ -26,6 +32,7 @@ import { MemoryAssetStore } from './stores/MemoryAssetStore.js'
  * Creates a bounded in-memory atomic limiter store.
  * @param options - The capacity and eviction callback.
  * @returns An atomic limiter store.
+ * @throws {ContractError} When the bag is refused whole: an undeclared key, a `capacity` that is not an integer of at least 1, or an `evict` that is not a function.
  */
 export function createMemoryLimiterStore(
 	options?: MemoryLimiterStoreOptions,
@@ -39,7 +46,7 @@ export function createMemoryLimiterStore(
  *
  * @param options - See {@link CookieTransportOptions}
  * @returns A {@link SessionTransportInterface}
- * @throws {TypeError} When `options.secret` or `options.name` is malformed
+ * @throws {ContractError} When the bag is refused whole, or when `cookie` carries a member outside its published type
  *
  * @example
  * ```ts
@@ -47,10 +54,9 @@ export function createMemoryLimiterStore(
  * ```
  */
 export function createCookieTransport(options: CookieTransportOptions): SessionTransportInterface {
-	if (!isString(options.secret) && (!isArray(options.secret) || !options.secret.every(isString)))
-		throw new TypeError('CookieTransportOptions.secret must be a string or string array')
-	if (options.name !== undefined && !isString(options.name))
-		throw new TypeError('CookieTransportOptions.name must be a string when provided')
+	admitOptions('createCookieTransport', COOKIE_TRANSPORT_CONTRACT, options)
+	if (options.cookie !== undefined)
+		admitForeign('createCookieTransport', ['cookie'], COOKIE_FOREIGN, options.cookie)
 	const name = options.name ?? DEFAULT_SESSION_COOKIE
 	const secret = options.secret
 	const cookie = options.cookie
@@ -74,7 +80,7 @@ export function createCookieTransport(options: CookieTransportOptions): SessionT
  *
  * @param options - See {@link HeaderTransportOptions}
  * @returns A {@link SessionTransportInterface}
- * @throws {TypeError} When `options.header` is malformed
+ * @throws {ContractError} When the bag is refused whole: an undeclared key, or a `header` that is not a string
  *
  * @example
  * ```ts
@@ -82,8 +88,7 @@ export function createCookieTransport(options: CookieTransportOptions): SessionT
  * ```
  */
 export function createHeaderTransport(options?: HeaderTransportOptions): SessionTransportInterface {
-	if (options?.header !== undefined && !isString(options.header))
-		throw new TypeError('HeaderTransportOptions.header must be a string when provided')
+	admitOptions('createHeaderTransport', HEADER_TRANSPORT_CONTRACT, options)
 	const header = options?.header ?? DEFAULT_SESSION_HEADER
 	return {
 		read(request) {
@@ -105,7 +110,7 @@ export function createHeaderTransport(options?: HeaderTransportOptions): Session
  * @typeParam S - The session entity type
  * @param options - See {@link MemorySessionStoreOptions}
  * @returns A {@link SessionStoreInterface}
- * @throws {TypeError} When `options.ttl` or `options.lifetime` is malformed
+ * @throws {ContractError} When the bag is refused whole: an undeclared key, a `ttl` or `lifetime` that is not a positive finite number, or a `capacity` that is not an integer of at least 1
  *
  * @remarks
  * The store holds whatever {@link SessionInterface} entity `createSession`'s
@@ -132,7 +137,7 @@ export function createMemorySessionStore<S extends SessionInterface>(
  * @param guard - A {@link Guard} narrowing a restored snapshot to `S`
  * @param options - See {@link SessionLimits}
  * @returns A {@link SessionStoreInterface}
- * @throws {TypeError} When `options.ttl` or `options.lifetime` is malformed
+ * @throws {ContractError} When the bag is refused whole: an undeclared key, or a `ttl` or `lifetime` that is not a positive finite number
  *
  * @remarks
  * This factory only wraps `new DatabaseSessionStore(...)` — it never opens a

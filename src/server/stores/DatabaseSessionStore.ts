@@ -8,7 +8,8 @@ import type {
 import type { Guard } from '@orkestrel/contract'
 import type { TableInterface } from '@orkestrel/database'
 import type { Session } from '../Session.js'
-import { sessionExpired, snapshotSession, validateSessionLimits } from '../helpers.js'
+import { SESSION_LIMITS_CONTRACT } from '../contracts.js'
+import { admitOptions, sessionExpired, snapshotSession } from '../helpers.js'
 
 /**
  * Implements a durable {@link SessionStoreInterface} over an `@orkestrel/database`
@@ -61,7 +62,7 @@ export class DatabaseSessionStore<
 		restore: SessionRestoreFunction,
 		options?: SessionLimits,
 	) {
-		validateSessionLimits(options)
+		admitOptions('DatabaseSessionStore', SESSION_LIMITS_CONTRACT, options)
 		this.#table = table
 		this.#guard = guard
 		this.#restore = restore
@@ -72,7 +73,12 @@ export class DatabaseSessionStore<
 	async get(id: string, now: number): Promise<S | undefined> {
 		const row = await this.#table.get(id)
 		if (row === undefined) return undefined
-		if (sessionExpired(row, now, { ttl: this.#ttl, lifetime: this.#lifetime })) {
+		if (
+			sessionExpired(row, now, {
+				...(this.#ttl === undefined ? {} : { ttl: this.#ttl }),
+				...(this.#lifetime === undefined ? {} : { lifetime: this.#lifetime }),
+			})
+		) {
 			await this.#table.remove(id)
 			return undefined
 		}

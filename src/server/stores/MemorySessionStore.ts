@@ -5,8 +5,8 @@ import type {
 	SessionStoreInterface,
 } from '../types.js'
 import { DEFAULT_SESSION_CAPACITY } from '../constants.js'
-import { sessionExpired, validateSessionLimits } from '../helpers.js'
-import { isFunction, isInteger } from '@orkestrel/contract'
+import { MEMORY_SESSION_STORE_CONTRACT } from '../contracts.js'
+import { admitOptions, sessionExpired } from '../helpers.js'
 
 /**
  * Implements the default in-process {@link SessionStoreInterface} — a `Map`-backed store
@@ -46,15 +46,7 @@ export class MemorySessionStore<S extends SessionInterface> implements SessionSt
 	readonly #evict: ((id: string) => void) | undefined
 
 	constructor(options?: MemorySessionStoreOptions) {
-		validateSessionLimits(options)
-		if (options?.capacity !== undefined && (!isInteger(options.capacity) || options.capacity <= 0))
-			throw new TypeError(
-				'MemorySessionStore requires options.capacity to be a positive integer when provided',
-			)
-		if (options?.evict !== undefined && !isFunction(options.evict))
-			throw new TypeError(
-				'MemorySessionStore requires options.evict to be a function when provided',
-			)
+		admitOptions('MemorySessionStore', MEMORY_SESSION_STORE_CONTRACT, options)
 		this.#entries = new Map()
 		this.#ttl = options?.ttl
 		this.#lifetime = options?.lifetime
@@ -89,7 +81,10 @@ export class MemorySessionStore<S extends SessionInterface> implements SessionSt
 
 	// Whether `entry` has aged past its idle timeout or absolute lifetime as of `now`.
 	#expired(entry: SessionEntry<S>, now: number): boolean {
-		return sessionExpired(entry, now, { ttl: this.#ttl, lifetime: this.#lifetime })
+		return sessionExpired(entry, now, {
+			...(this.#ttl === undefined ? {} : { ttl: this.#ttl }),
+			...(this.#lifetime === undefined ? {} : { lifetime: this.#lifetime }),
+		})
 	}
 
 	// Makes room for a brand-new id: prunes expired entries, then evicts the

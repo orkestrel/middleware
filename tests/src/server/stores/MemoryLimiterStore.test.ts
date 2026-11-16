@@ -1,4 +1,5 @@
 import { createLimiter, createMemoryLimiterStore, MemoryLimiterStore } from '@src/server'
+import { ContractError } from '@orkestrel/contract'
 import { createRecorder } from '@orkestrel/test'
 import { describe, expect, it } from 'vitest'
 import { buildTestRequest, createTestContext } from '../../../setup.js'
@@ -58,7 +59,7 @@ describe('MemoryLimiterStore', () => {
 	})
 
 	it('refuses zero capacity and shares a supplied store across middleware instances', async () => {
-		expect(() => new MemoryLimiterStore({ capacity: 0 })).toThrow(TypeError)
+		expect(() => new MemoryLimiterStore({ capacity: 0 })).toThrow(ContractError)
 		const store = new MemoryLimiterStore()
 		const first = createLimiter({ max: 1, window: 100, store, clock: () => 0 })
 		const second = createLimiter({ max: 1, window: 100, store, clock: () => 0 })

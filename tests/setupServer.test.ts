@@ -11,7 +11,7 @@ import { open } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
-import { waitForCondition } from '@orkestrel/test'
+import { requireValue, waitForCondition } from '@orkestrel/test'
 import { createScratch } from '@orkestrel/test/server'
 import {
 	buildCancelTrackingMultipartRequest,
@@ -26,8 +26,16 @@ import {
 	detectClosedHandle,
 	JPEG_MAGIC,
 	PNG_MAGIC,
+	ADMISSION_DOORS,
+	describeAdmissionValue,
+	listAdmissionRows,
+	locateRefusal,
+	placeValue,
 	resolveSecondDevicePath,
+	runAdmission,
 	SECOND_DEVICE_CANDIDATES,
+	spreadBag,
+	withoutKey,
 } from './setupServer.js'
 
 // ── tests/setupServer.ts — the Node-only fixtures ─────────────────────────────
@@ -348,5 +356,79 @@ describe('resolveSecondDevicePath', () => {
 		} finally {
 			root.destroy()
 		}
+	})
+})
+
+describe('the admission tables', () => {
+	const cors = requireValue(
+		ADMISSION_DOORS.find((door) => door.name === 'createCors'),
+		'Missing door: createCors',
+	)
+	const deadline = requireValue(
+		ADMISSION_DOORS.find((door) => door.name === 'createDeadline'),
+		'Missing door: createDeadline',
+	)
+	const only = requireValue(
+		ADMISSION_DOORS.find((door) => door.name === 'only'),
+		'Missing door: only',
+	)
+	const forwarded = requireValue(
+		ADMISSION_DOORS.find((door) => door.name === 'createForwarded (proxies)'),
+		'Missing door: createForwarded',
+	)
+
+	it('places a value at a nested path and leaves the base untouched', () => {
+		const base = { a: 1 }
+		expect(placeValue(base, ['b', 'c'], 2)).toEqual({ a: 1, b: { c: 2 } })
+		expect(placeValue(base, ['a'], 3)).toEqual({ a: 3 })
+		expect(base).toEqual({ a: 1 })
+	})
+
+	it('copies a record without one key', () => {
+		expect(withoutKey({ a: 1, b: 2 }, 'a')).toEqual({ b: 2 })
+	})
+
+	it('describes each kind of value as a short title segment', () => {
+		expect(describeAdmissionValue(Number.NaN)).toBe('NaN')
+		expect(describeAdmissionValue(() => 1)).toBe('a function')
+		expect(describeAdmissionValue(new Map())).toBe('a class instance')
+		expect(describeAdmissionValue({ a: 1 })).toBe('{"a":1}')
+		expect(describeAdmissionValue(undefined)).toBe('undefined')
+	})
+
+	it('hands a bag to its door as the one argument unless the door spreads it', () => {
+		expect(spreadBag(deadline, { ms: 1 })).toEqual([{ ms: 1 }])
+		expect(spreadBag(only, { paths: '/a', handler: 1 })).toEqual(['/a', 1])
+	})
+
+	it('locates a refusal at the key path, or at the root for a union contract', () => {
+		expect(locateRefusal(deadline, ['ms'])).toEqual(['ms'])
+		expect(locateRefusal(forwarded, ['proxies'])).toEqual([])
+	})
+
+	it('lists the misspelled key, the undeclared key, and each neighbor of a range', () => {
+		const titles = listAdmissionRows(cors).map((row) => row.title)
+		expect(titles).toContain('refuses the misspelled key origins')
+		expect(titles).toContain('refuses an undeclared key')
+		const range = listAdmissionRows(deadline).map((row) => row.title)
+		expect(range).toContain('refuses status at 199')
+		expect(range).toContain('refuses status at 600')
+		expect(range).toContain('refuses status at 1000')
+		expect(range).toContain('refuses ms absent')
+	})
+
+	it('reports an admitted case and a refused case, and names the refusal class', () => {
+		const rows = listAdmissionRows(deadline)
+		const admitted = requireValue(
+			rows.find((row) => row.title === 'admits the base bag'),
+			'Missing case',
+		)
+		const refused = requireValue(
+			rows.find((row) => row.title === 'refuses status at 1000'),
+			'Missing case',
+		)
+		expect(runAdmission(deadline, admitted).refusal).toBeUndefined()
+		expect(runAdmission(deadline, refused).refusal).toBe('ContractError')
+		expect(runAdmission(deadline, refused).path).toEqual(['status'])
 	})
 })

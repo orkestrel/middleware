@@ -1,4 +1,4 @@
-import { integerShape, jsonShape, stringShape } from '@orkestrel/contract'
+import { ContractError, integerShape, jsonShape, stringShape } from '@orkestrel/contract'
 import { createDatabase, createMemoryDriver } from '@orkestrel/database'
 import {
 	DatabaseSessionStore,
@@ -44,39 +44,39 @@ describe('DatabaseSessionStore construction', () => {
 		).not.toThrow()
 	})
 
-	it('throws a TypeError when ttl is non-finite or not positive', () => {
+	it('throws a ContractError when ttl is non-finite or not positive', () => {
 		const { table } = buildStore()
 		expect(
 			() => new DatabaseSessionStore(table, isSession, createRestoredSession, { ttl: Number.NaN }),
-		).toThrow(TypeError)
+		).toThrow(ContractError)
 		expect(
 			() =>
 				new DatabaseSessionStore(table, isSession, createRestoredSession, {
 					ttl: Number.POSITIVE_INFINITY,
 				}),
-		).toThrow(TypeError)
+		).toThrow(ContractError)
 		expect(
 			() => new DatabaseSessionStore(table, isSession, createRestoredSession, { ttl: 0 }),
-		).toThrow(TypeError)
+		).toThrow(ContractError)
 		expect(
 			() => new DatabaseSessionStore(table, isSession, createRestoredSession, { ttl: -1 }),
-		).toThrow(TypeError)
+		).toThrow(ContractError)
 	})
 
-	it('throws a TypeError when lifetime is non-finite or not positive', () => {
+	it('throws a ContractError when lifetime is non-finite or not positive', () => {
 		const { table } = buildStore()
 		expect(
 			() =>
 				new DatabaseSessionStore(table, isSession, createRestoredSession, {
 					lifetime: Number.NaN,
 				}),
-		).toThrow(TypeError)
+		).toThrow(ContractError)
 		expect(
 			() => new DatabaseSessionStore(table, isSession, createRestoredSession, { lifetime: 0 }),
-		).toThrow(TypeError)
+		).toThrow(ContractError)
 		expect(
 			() => new DatabaseSessionStore(table, isSession, createRestoredSession, { lifetime: -1 }),
-		).toThrow(TypeError)
+		).toThrow(ContractError)
 	})
 })
 

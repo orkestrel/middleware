@@ -1,4 +1,5 @@
 import type { MemorySessionStoreOptions, Session } from '@src/server'
+import { ContractError } from '@orkestrel/contract'
 import { DEFAULT_SESSION_CAPACITY, MemorySessionStore } from '@src/server'
 import { describe, expect, it } from 'vitest'
 import { buildSession } from '../../../setup.js'
@@ -16,27 +17,27 @@ describe('MemorySessionStore construction', () => {
 		expect(() => new MemorySessionStore({ ttl: 1_000, lifetime: 2_000 })).not.toThrow()
 	})
 
-	it('throws a TypeError when ttl is non-finite', () => {
-		expect(() => new MemorySessionStore({ ttl: Number.NaN })).toThrow(TypeError)
-		expect(() => new MemorySessionStore({ ttl: Number.POSITIVE_INFINITY })).toThrow(TypeError)
+	it('throws a ContractError when ttl is non-finite', () => {
+		expect(() => new MemorySessionStore({ ttl: Number.NaN })).toThrow(ContractError)
+		expect(() => new MemorySessionStore({ ttl: Number.POSITIVE_INFINITY })).toThrow(ContractError)
 	})
 
-	it('throws a TypeError when ttl is not positive', () => {
-		expect(() => new MemorySessionStore({ ttl: 0 })).toThrow(TypeError)
-		expect(() => new MemorySessionStore({ ttl: -1 })).toThrow(TypeError)
+	it('throws a ContractError when ttl is not positive', () => {
+		expect(() => new MemorySessionStore({ ttl: 0 })).toThrow(ContractError)
+		expect(() => new MemorySessionStore({ ttl: -1 })).toThrow(ContractError)
 	})
 
-	it('throws a TypeError when lifetime is non-finite or not positive', () => {
-		expect(() => new MemorySessionStore({ lifetime: Number.NaN })).toThrow(TypeError)
-		expect(() => new MemorySessionStore({ lifetime: 0 })).toThrow(TypeError)
-		expect(() => new MemorySessionStore({ lifetime: -1 })).toThrow(TypeError)
+	it('throws a ContractError when lifetime is non-finite or not positive', () => {
+		expect(() => new MemorySessionStore({ lifetime: Number.NaN })).toThrow(ContractError)
+		expect(() => new MemorySessionStore({ lifetime: 0 })).toThrow(ContractError)
+		expect(() => new MemorySessionStore({ lifetime: -1 })).toThrow(ContractError)
 	})
 
-	it('throws a TypeError when evict is provided but not a function', () => {
+	it('throws a ContractError when evict is provided but not a function', () => {
 		// JSON.parse yields a structurally-invalid options bag (evict is a
 		// string, not a function) without resorting to `as`/`any`/`!`.
 		const invalid: MemorySessionStoreOptions = JSON.parse('{"evict":"not-a-function"}')
-		expect(() => new MemorySessionStore(invalid)).toThrow(TypeError)
+		expect(() => new MemorySessionStore(invalid)).toThrow(ContractError)
 	})
 })
 
@@ -172,10 +173,10 @@ describe('MemorySessionStore capacity', () => {
 		expect((await store.get('b', 0))?.state.get('mark')).toBe('2')
 	})
 
-	it('throws a TypeError for capacity 0, negative, or non-integer', () => {
-		expect(() => new MemorySessionStore({ capacity: 0 })).toThrow(TypeError)
-		expect(() => new MemorySessionStore({ capacity: -1 })).toThrow(TypeError)
-		expect(() => new MemorySessionStore({ capacity: 1.5 })).toThrow(TypeError)
+	it('throws a ContractError for capacity 0, negative, or non-integer', () => {
+		expect(() => new MemorySessionStore({ capacity: 0 })).toThrow(ContractError)
+		expect(() => new MemorySessionStore({ capacity: -1 })).toThrow(ContractError)
+		expect(() => new MemorySessionStore({ capacity: 1.5 })).toThrow(ContractError)
 	})
 })
 

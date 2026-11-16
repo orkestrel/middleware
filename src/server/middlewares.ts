@@ -30,17 +30,7 @@ import type {
 import type { CookieOptions, MiddlewareHandler } from '@orkestrel/server'
 import { realpath } from 'node:fs/promises'
 import { relative, resolve as resolvePath } from 'node:path'
-import {
-	isBoolean,
-	isError,
-	isFiniteNumber,
-	isFunction,
-	isInteger,
-	isArray,
-	isObject,
-	isRecord,
-	isString,
-} from '@orkestrel/contract'
+import { ContractError, isArray, isError, isRecord, isString } from '@orkestrel/contract'
 import { linkSignal } from '@orkestrel/abort'
 import {
 	clearCookie,
@@ -86,8 +76,34 @@ import {
 	DEFAULT_STATIC_INDEX,
 	NODE_COMPRESSION_ENCODINGS,
 } from './constants.js'
+import {
+	ASSET_CONTRACT,
+	ASSET_SOURCE_FOREIGN,
+	ASSET_STORE_FOREIGN,
+	BEARER_CONTRACT,
+	BOUNDARY_CONTRACT,
+	COMPRESSION_CONTRACT,
+	CORS_CONTRACT,
+	CSRF_CONTRACT,
+	DEADLINE_CONTRACT,
+	ETAG_CONTRACT,
+	FORWARDED_CONTRACT,
+	LIMITER_CONTRACT,
+	LIMITER_STORE_FOREIGN,
+	MULTIPART_CONTRACT,
+	NODE_COMPRESSION_CONTRACT,
+	SCOPE_CONTRACT,
+	SECURITY_CONTRACT,
+	SESSION_CONTRACT,
+	SESSION_STORE_FOREIGN,
+	SESSION_TRANSPORT_FOREIGN,
+	STATIC_CONTRACT,
+	TELEMETRY_CONTRACT,
+} from './contracts.js'
 import { isMultipartError } from './errors.js'
 import {
+	admitForeign,
+	admitOptions,
 	buildAssetResponse,
 	buildClient,
 	buildRateLimitField,
@@ -133,7 +149,7 @@ import { computeBodyETag, matchesETag } from '@orkestrel/server'
  * @typeParam TState - The consumer's opaque per-request state type
  * @param options - See {@link BoundaryOptions}
  * @returns A `MiddlewareHandler<TState>`
- * @throws {TypeError} When `options.expose` or `options.report` is malformed
+ * @throws {ContractError} When the bag is refused whole: an undeclared key, or a value outside its declared type
  *
  * @example Mount a battery
  * ```ts
@@ -152,10 +168,7 @@ import { computeBodyETag, matchesETag } from '@orkestrel/server'
  * ```
  */
 export function createBoundary<TState>(options?: BoundaryOptions): MiddlewareHandler<TState> {
-	if (options?.expose !== undefined && !isBoolean(options.expose))
-		throw new TypeError('BoundaryOptions.expose must be a boolean when provided')
-	if (options?.report !== undefined && !isFunction(options.report))
-		throw new TypeError('BoundaryOptions.report must be a function when provided')
+	admitOptions('createBoundary', BOUNDARY_CONTRACT, options)
 	const expose = options?.expose ?? false
 	const report = options?.report
 	// The boundary reads only what `next` throws, so the leading two positions of the
@@ -189,7 +202,7 @@ export function createBoundary<TState>(options?: BoundaryOptions): MiddlewareHan
  * @typeParam TState - The consumer's opaque per-request state type
  * @param options - See {@link TelemetryOptions}
  * @returns A `MiddlewareHandler<TState>`
- * @throws {TypeError} When `options.record` is not a function
+ * @throws {ContractError} When the bag is refused whole: an undeclared key, a missing `record`, or a `record` that is not a function
  *
  * @example
  * ```ts
@@ -197,7 +210,7 @@ export function createBoundary<TState>(options?: BoundaryOptions): MiddlewareHan
  * ```
  */
 export function createTelemetry<TState>(options: TelemetryOptions): MiddlewareHandler<TState> {
-	if (!isFunction(options.record)) throw new TypeError('TelemetryOptions.record must be a function')
+	admitOptions('createTelemetry', TELEMETRY_CONTRACT, options)
 	const record = options.record
 	// The entry is built from `context` alone, so the first position is conformance-only.
 	return async (_request, context, next) => {
@@ -224,7 +237,7 @@ export function createTelemetry<TState>(options: TelemetryOptions): MiddlewareHa
  * @typeParam TState - The consumer's opaque per-request state type
  * @param options - See {@link CompressionOptions}
  * @returns A `MiddlewareHandler<TState>`
- * @throws {TypeError} When `options.threshold` or `options.filter` is malformed
+ * @throws {ContractError} When the bag is refused whole: an undeclared key, a `threshold` that is negative or not finite, an `encodings` entry outside `Encoding`, or a `filter` that is not a function
  *
  * @example
  * ```ts
@@ -232,15 +245,7 @@ export function createTelemetry<TState>(options: TelemetryOptions): MiddlewareHa
  * ```
  */
 export function createCompression<TState>(options?: CompressionOptions): MiddlewareHandler<TState> {
-	if (
-		options?.threshold !== undefined &&
-		(!isFiniteNumber(options.threshold) || options.threshold < 0)
-	)
-		throw new TypeError('CompressionOptions.threshold must be a finite number when provided')
-	if (options?.filter !== undefined && !isFunction(options.filter))
-		throw new TypeError('CompressionOptions.filter must be a function when provided')
-	if (options?.encodings !== undefined && !isArray(options.encodings))
-		throw new TypeError('CompressionOptions.encodings must be an array when provided')
+	admitOptions('createCompression', COMPRESSION_CONTRACT, options)
 	const threshold = options?.threshold ?? DEFAULT_COMPRESSION_THRESHOLD
 	const encodings = detectEncodings(options?.encodings ?? DEFAULT_COMPRESSION_ENCODINGS)
 	const filter = options?.filter
@@ -262,7 +267,7 @@ export function createCompression<TState>(options?: CompressionOptions): Middlew
  * @typeParam TState - The consumer's opaque per-request state type, must carry {@link IdentifierState}
  * @param options - See {@link SecurityOptions}
  * @returns A `MiddlewareHandler<TState>`
- * @throws {TypeError} When any option is malformed
+ * @throws {ContractError} When the bag is refused whole: an undeclared key, or a value outside its declared type
  *
  * @example
  * ```ts
@@ -272,48 +277,7 @@ export function createCompression<TState>(options?: CompressionOptions): Middlew
 export function createSecurity<TState extends IdentifierState>(
 	options?: SecurityOptions,
 ): MiddlewareHandler<TState> {
-	if (
-		options?.frame !== undefined &&
-		options.frame !== false &&
-		options.frame !== 'DENY' &&
-		options.frame !== 'SAMEORIGIN'
-	)
-		throw new TypeError(
-			"SecurityOptions.frame must be 'DENY', 'SAMEORIGIN', or false when provided",
-		)
-	if (options?.csp !== undefined && options.csp !== false && !isString(options.csp))
-		throw new TypeError('SecurityOptions.csp must be a string or false when provided')
-	if (options?.referrer !== undefined && options.referrer !== false && !isString(options.referrer))
-		throw new TypeError('SecurityOptions.referrer must be a string or false when provided')
-	if (
-		options?.permissions !== undefined &&
-		options.permissions !== false &&
-		!isString(options.permissions)
-	)
-		throw new TypeError('SecurityOptions.permissions must be a string or false when provided')
-	if (options?.coop !== undefined && options.coop !== false && !isString(options.coop))
-		throw new TypeError('SecurityOptions.coop must be a string or false when provided')
-	if (options?.corp !== undefined && options.corp !== false && !isString(options.corp))
-		throw new TypeError('SecurityOptions.corp must be a string or false when provided')
-	if (options?.cluster !== undefined && options.cluster !== false && !isString(options.cluster))
-		throw new TypeError('SecurityOptions.cluster must be a string or false when provided')
-	if (options?.coep !== undefined && !isBoolean(options.coep) && !isString(options.coep))
-		throw new TypeError('SecurityOptions.coep must be a string or boolean when provided')
-	if (options?.hsts !== undefined && !isBoolean(options.hsts) && !isString(options.hsts))
-		throw new TypeError('SecurityOptions.hsts must be a string or boolean when provided')
-	if (
-		options?.identifier !== undefined &&
-		options.identifier !== false &&
-		!isRecord(options.identifier)
-	)
-		throw new TypeError('SecurityOptions.identifier must be an options bag or false when provided')
-	if (
-		isRecord(options?.identifier) &&
-		options.identifier.trust !== undefined &&
-		!isBoolean(options.identifier.trust)
-	)
-		throw new TypeError('SecurityOptions.identifier.trust must be a boolean when provided')
-
+	admitOptions('createSecurity', SECURITY_CONTRACT, options)
 	const frame = options?.frame
 	const csp = options?.csp
 	const referrer = options?.referrer
@@ -363,7 +327,7 @@ export function createSecurity<TState extends IdentifierState>(
  * @typeParam TState - The consumer's opaque per-request state type
  * @param options - See {@link CorsOptions}
  * @returns A `MiddlewareHandler<TState>`
- * @throws {TypeError} When any option is malformed
+ * @throws {ContractError} When the bag is refused whole: an undeclared key such as `origins`, or a non-string `origin`, `methods`, or `headers` entry
  *
  * @example
  * ```ts
@@ -371,12 +335,7 @@ export function createSecurity<TState extends IdentifierState>(
  * ```
  */
 export function createCors<TState>(options?: CorsOptions): MiddlewareHandler<TState> {
-	if (options?.origin !== undefined && !isString(options.origin) && !isArray(options.origin))
-		throw new TypeError('CorsOptions.origin must be a string or string array when provided')
-	if (options?.methods !== undefined && !isArray(options.methods))
-		throw new TypeError('CorsOptions.methods must be an array when provided')
-	if (options?.headers !== undefined && !isArray(options.headers))
-		throw new TypeError('CorsOptions.headers must be an array when provided')
+	admitOptions('createCors', CORS_CONTRACT, options)
 	const origin = options?.origin ?? '*'
 	const methods = options?.methods ?? DEFAULT_CORS_METHODS
 	const headers = options?.headers ?? DEFAULT_CORS_HEADERS
@@ -408,7 +367,7 @@ export function createCors<TState>(options?: CorsOptions): MiddlewareHandler<TSt
  * @typeParam TState - The consumer's opaque per-request state type
  * @param options - See {@link DeadlineOptions}
  * @returns A `MiddlewareHandler<TState>`
- * @throws {TypeError} When `options.ms` or `options.status` is malformed
+ * @throws {ContractError} When the bag is refused whole: an undeclared key, an `ms` that is not a positive finite number, or a `status` that is not an integer from 200 through 599
  *
  * @remarks
  * Mount this battery outside `createBody` in the chain — it reconstructs the inbound
@@ -421,10 +380,7 @@ export function createCors<TState>(options?: CorsOptions): MiddlewareHandler<TSt
  * ```
  */
 export function createDeadline<TState>(options: DeadlineOptions): MiddlewareHandler<TState> {
-	if (!isFiniteNumber(options.ms) || options.ms <= 0)
-		throw new TypeError('DeadlineOptions.ms must be a finite number')
-	if (options.status !== undefined && !isFiniteNumber(options.status))
-		throw new TypeError('DeadlineOptions.status must be a finite number when provided')
+	admitOptions('createDeadline', DEADLINE_CONTRACT, options)
 	const ms = options.ms
 	const status = options.status ?? DEFAULT_DEADLINE_STATUS
 	// The deadline links signals off `request` alone, so the second position is
@@ -461,7 +417,7 @@ export function createDeadline<TState>(options: DeadlineOptions): MiddlewareHand
  * @typeParam TState - The consumer's opaque per-request state type, must carry {@link ClientState} and {@link ConnectionState}
  * @param options - See {@link ForwardedOptions}
  * @returns A `MiddlewareHandler<TState>`
- * @throws {TypeError} When neither or both of `proxies`/`trusted` are provided, or either is malformed
+ * @throws {ContractError} When the bag is refused whole: neither or both of `proxies` and `trusted`, a `proxies` that is not an integer of at least 1, or a non-string `trusted` entry
  *
  * @example
  * ```ts
@@ -471,20 +427,8 @@ export function createDeadline<TState>(options: DeadlineOptions): MiddlewareHand
 export function createForwarded<TState extends ClientState & ConnectionState>(
 	options: ForwardedOptions,
 ): MiddlewareHandler<TState> {
-	const hasProxies = isRecord(options) && 'proxies' in options
-	const hasTrusted = isRecord(options) && 'trusted' in options
-	if (!isRecord(options) || hasProxies === hasTrusted)
-		throw new TypeError('ForwardedOptions requires exactly one of proxies or trusted')
-	if (hasProxies) {
-		const proxies = options.proxies
-		if (!isInteger(proxies) || proxies < 1)
-			throw new TypeError('ForwardedOptions.proxies must be a positive integer')
-	} else {
-		const trusted = options.trusted
-		if (!isArray(trusted))
-			throw new TypeError('ForwardedOptions.trusted must be an array when provided')
-	}
-	const trust = hasProxies ? { proxies: options.proxies } : { trusted: options.trusted }
+	admitOptions('createForwarded', FORWARDED_CONTRACT, options)
+	const trust = 'proxies' in options ? { proxies: options.proxies } : { trusted: options.trusted }
 	return async (request, context, next) => {
 		const header = request.headers.get('x-forwarded-for') ?? undefined
 		const resolved = resolveForwardedFor(header, trust)
@@ -500,7 +444,7 @@ export function createForwarded<TState extends ClientState & ConnectionState>(
  * @typeParam TState - The consumer's opaque per-request state type
  * @param options - See {@link ETagOptions}
  * @returns A `MiddlewareHandler<TState>`
- * @throws {TypeError} When `options.weak` is not a boolean
+ * @throws {ContractError} When the bag is refused whole: an undeclared key, or a `weak` that is not a boolean
  *
  * @example
  * ```ts
@@ -508,8 +452,7 @@ export function createForwarded<TState extends ClientState & ConnectionState>(
  * ```
  */
 export function createETag<TState>(options?: ETagOptions): MiddlewareHandler<TState> {
-	if (options?.weak !== undefined && !isBoolean(options.weak))
-		throw new TypeError('ETagOptions.weak must be a boolean when provided')
+	admitOptions('createETag', ETAG_CONTRACT, options)
 	const weak = options?.weak ?? true
 	return async (request, context, next) => {
 		const response = await next()
@@ -539,7 +482,7 @@ export function createETag<TState>(options?: ETagOptions): MiddlewareHandler<TSt
  * @typeParam TCredential - The credential `verify` resolves; default `string`
  * @param options - See {@link BearerOptions}
  * @returns A `MiddlewareHandler<TState>`
- * @throws {TypeError} Thrown when any option is malformed, or when `challenge` names `error` in any case
+ * @throws {ContractError} Thrown when the bag is refused whole, when `challenge` names `error` in any case, or when `scheme` or a `challenge` entry breaks the RFC 9110 and RFC 6750 forms
  *
  * @example
  * ```ts
@@ -549,24 +492,23 @@ export function createETag<TState>(options?: ETagOptions): MiddlewareHandler<TSt
 export function createBearer<TState extends BearerState<TCredential>, TCredential = string>(
 	options: BearerOptions<TCredential>,
 ): MiddlewareHandler<TState> {
-	if (!isFunction(options.verify)) throw new TypeError('BearerOptions.verify must be a function')
-	if (options.header !== undefined && !isString(options.header))
-		throw new TypeError('BearerOptions.header must be a string when provided')
-	if (options.scheme !== undefined && !isString(options.scheme))
-		throw new TypeError('BearerOptions.scheme must be a string when provided')
-	if (
-		options.challenge !== undefined &&
-		(!isRecord(options.challenge) || !Object.values(options.challenge).every(isString))
-	)
-		throw new TypeError('BearerOptions.challenge must be a record of string values when provided')
-	if (Object.keys(options.challenge ?? {}).some((name) => name.toLowerCase() === 'error'))
-		throw new TypeError('BearerOptions.challenge must not name error; the battery owns it')
+	admitOptions('createBearer', BEARER_CONTRACT, options)
+	const owned = Object.keys(options.challenge ?? {}).find((name) => name.toLowerCase() === 'error')
+	if (owned !== undefined)
+		throw new ContractError(
+			'createBearer: options.challenge must not name error; the battery owns it',
+			{ code: 'structure', context: { path: ['challenge', owned], shape: 'createBearer' } },
+		)
 	const verify = options.verify
 	const header = (options.header ?? DEFAULT_BEARER_HEADER).toLowerCase()
 	const scheme = options.scheme ?? DEFAULT_BEARER_SCHEME
 	const name = scheme === '' ? DEFAULT_BEARER_SCHEME : scheme
-	const missing = renderChallenge(name, options.challenge)
-	const invalid = renderChallenge(name, { ...options.challenge, error: 'invalid_token' })
+	const missing = renderChallenge(name, options.challenge, 'createBearer')
+	const invalid = renderChallenge(
+		name,
+		{ ...options.challenge, error: 'invalid_token' },
+		'createBearer',
+	)
 	return async (request, context, next) => {
 		const raw = request.headers.get(header)
 		const token = raw === null ? undefined : extractBearerToken(raw, scheme)
@@ -596,7 +538,7 @@ export function createBearer<TState extends BearerState<TCredential>, TCredentia
  * @typeParam TState - The consumer's opaque per-request state type, must carry {@link BearerState}, {@link ClientState}, and {@link ConnectionState}
  * @param options - See {@link LimiterOptions}
  * @returns A `MiddlewareHandler<TState>`
- * @throws {TypeError} When any option is malformed
+ * @throws {ContractError} When the bag is refused whole, or when `store` lacks `consume`
  *
  * @example
  * ```ts
@@ -606,22 +548,9 @@ export function createBearer<TState extends BearerState<TCredential>, TCredentia
 export function createLimiter<TState extends BearerState<unknown> & ClientState & ConnectionState>(
 	options: LimiterOptions<TState>,
 ): MiddlewareHandler<TState> {
-	if (!isInteger(options.max) || options.max <= 0)
-		throw new TypeError('LimiterOptions.max must be a positive integer')
-	if (!isFiniteNumber(options.window) || options.window <= 0)
-		throw new TypeError('LimiterOptions.window must be a positive finite number')
-	if (options.capacity !== undefined && (!isInteger(options.capacity) || options.capacity <= 0))
-		throw new TypeError('LimiterOptions.capacity must be a positive integer when provided')
-	if (options.key !== undefined && !isFunction(options.key))
-		throw new TypeError('LimiterOptions.key must be a function when provided')
-	if (options.message !== undefined && !isString(options.message))
-		throw new TypeError('LimiterOptions.message must be a string when provided')
-	if (options.clock !== undefined && !isFunction(options.clock))
-		throw new TypeError('LimiterOptions.clock must be a function when provided')
-	if (options.policy !== undefined && !isBoolean(options.policy))
-		throw new TypeError('LimiterOptions.policy must be a boolean when provided')
-	if (options.evict !== undefined && !isFunction(options.evict))
-		throw new TypeError('LimiterOptions.evict must be a function when provided')
+	admitOptions('createLimiter', LIMITER_CONTRACT, options)
+	if (options.store !== undefined)
+		admitForeign('createLimiter', ['store'], LIMITER_STORE_FOREIGN, options.store)
 	const max = options.max
 	const window = options.window
 	const capacity = options.capacity ?? DEFAULT_LIMITER_CAPACITY
@@ -630,8 +559,6 @@ export function createLimiter<TState extends BearerState<unknown> & ClientState 
 	const clock = options.clock ?? Date.now
 	const policy = options.policy ?? false
 	const evict = options.evict
-	if (options.store !== undefined && !isFunction(options.store.consume))
-		throw new TypeError('LimiterOptions.store must implement LimiterStoreInterface')
 	const store =
 		options.store ??
 		new MemoryLimiterStore({
@@ -701,7 +628,7 @@ export function createBody<TState extends BodyState = BodyState>(): MiddlewareHa
  * @typeParam TState - The consumer's opaque per-request state type, must carry {@link SessionState} and {@link ConnectionState}
  * @param options - See {@link SessionOptions}
  * @returns A `MiddlewareHandler<TState>`
- * @throws {TypeError} When any option is malformed
+ * @throws {ContractError} When the bag is refused whole, or when `transport` or `store` lacks a member its interface declares
  * @throws {HTTPError} `404` when `required` is set and no session resolves or mints
  *
  * @example
@@ -713,31 +640,10 @@ export function createSession<
 	S extends SessionInterface = SessionInterface,
 	TState extends SessionState & ConnectionState = SessionState & ConnectionState,
 >(options: SessionOptions<S, TState>): MiddlewareHandler<TState> {
-	if (
-		!isFunction(options.transport.read) ||
-		!isFunction(options.transport.write) ||
-		!isFunction(options.transport.clear)
-	)
-		throw new TypeError('SessionOptions.transport must implement SessionTransportInterface')
-	if (
-		options.store !== undefined &&
-		(!isFunction(options.store.get) ||
-			!isFunction(options.store.set) ||
-			!isFunction(options.store.delete))
-	)
-		throw new TypeError('SessionOptions.store must implement SessionStoreInterface when provided')
-	if (options.ttl !== undefined && !isFiniteNumber(options.ttl))
-		throw new TypeError('SessionOptions.ttl must be a finite number when provided')
-	if (options.lifetime !== undefined && !isFiniteNumber(options.lifetime))
-		throw new TypeError('SessionOptions.lifetime must be a finite number when provided')
-	if (options.create !== undefined && !isFunction(options.create))
-		throw new TypeError('SessionOptions.create must be a function when provided')
-	if (options.mint !== undefined && !isFunction(options.mint))
-		throw new TypeError('SessionOptions.mint must be a function when provided')
-	if (options.required !== undefined && !isBoolean(options.required))
-		throw new TypeError('SessionOptions.required must be a boolean when provided')
-	if (options.clock !== undefined && !isFunction(options.clock))
-		throw new TypeError('SessionOptions.clock must be a function when provided')
+	admitOptions('createSession', SESSION_CONTRACT, options)
+	admitForeign('createSession', ['transport'], SESSION_TRANSPORT_FOREIGN, options.transport)
+	if (options.store !== undefined)
+		admitForeign('createSession', ['store'], SESSION_STORE_FOREIGN, options.store)
 
 	const transport = options.transport
 	const clock = options.clock ?? Date.now
@@ -803,7 +709,7 @@ export function createSession<
  * @typeParam TState - The consumer's opaque per-request state type, must carry {@link CSRFState}, {@link SessionState}, and {@link ConnectionState}
  * @param options - See {@link CSRFOptions}
  * @returns A `MiddlewareHandler<TState>`
- * @throws {TypeError} When any option is malformed
+ * @throws {ContractError} When the bag is refused whole: an undeclared key, a missing `secret`, or a value outside its declared type
  * @throws {HTTPError} `403` when the submitted token is missing, mismatched, or bound to a different session
  *
  * @example
@@ -814,16 +720,7 @@ export function createSession<
 export function createCSRF<TState extends CSRFState & SessionState & ConnectionState>(
 	options: CSRFOptions,
 ): MiddlewareHandler<TState> {
-	if (!isString(options.secret) && (!isArray(options.secret) || !options.secret.every(isString)))
-		throw new TypeError('CSRFOptions.secret must be a string or string array')
-	if (options.cookie !== undefined && !isString(options.cookie))
-		throw new TypeError('CSRFOptions.cookie must be a string when provided')
-	if (options.header !== undefined && !isString(options.header))
-		throw new TypeError('CSRFOptions.header must be a string when provided')
-	if (options.field !== undefined && !isString(options.field))
-		throw new TypeError('CSRFOptions.field must be a string when provided')
-	if (options.safe !== undefined && !isArray(options.safe))
-		throw new TypeError('CSRFOptions.safe must be an array when provided')
+	admitOptions('createCSRF', CSRF_CONTRACT, options)
 
 	const secret = options.secret
 	const cookieName = options.cookie ?? DEFAULT_CSRF_COOKIE
@@ -887,6 +784,7 @@ export function createCSRF<TState extends CSRFState & SessionState & ConnectionS
  * @param paths - One pathname, or a set of pathnames, matched exactly against `context.url.pathname`
  * @param handler - The battery to run when `paths` matches
  * @returns A `MiddlewareHandler<TState>`
+ * @throws {ContractError} When `paths` is not a string or a string array, or `handler` is not a function
  *
  * @example
  * ```ts
@@ -897,6 +795,7 @@ export function only<TState>(
 	paths: string | readonly string[],
 	handler: MiddlewareHandler<TState>,
 ): MiddlewareHandler<TState> {
+	admitOptions('only', SCOPE_CONTRACT, { paths, handler })
 	const matches = new Set(isString(paths) ? [paths] : paths)
 	return async (request, context, next) => {
 		if (matches.has(context.url.pathname)) return handler(request, context, next)
@@ -912,6 +811,7 @@ export function only<TState>(
  * @param paths - One pathname, or a set of pathnames, matched exactly against `context.url.pathname`
  * @param handler - The battery to run when `paths` does not match
  * @returns A `MiddlewareHandler<TState>`
+ * @throws {ContractError} When `paths` is not a string or a string array, or `handler` is not a function
  *
  * @example
  * ```ts
@@ -922,6 +822,7 @@ export function except<TState>(
 	paths: string | readonly string[],
 	handler: MiddlewareHandler<TState>,
 ): MiddlewareHandler<TState> {
+	admitOptions('except', SCOPE_CONTRACT, { paths, handler })
 	const matches = new Set(isString(paths) ? [paths] : paths)
 	return async (request, context, next) => {
 		if (matches.has(context.url.pathname)) return next()
@@ -946,8 +847,8 @@ export function except<TState>(
  * @typeParam TState - The consumer's opaque per-request state type
  * @param options - See {@link AssetOptions}
  * @returns A `MiddlewareHandler<TState>`
- * @throws {TypeError} When `options.source` does not implement
- * {@link AssetSourceInterface}, or when it returns malformed asset data
+ * @throws {ContractError} When the bag is refused whole, or when `source` or `store` lacks a member its interface declares
+ * @throws {TypeError} When the source returns malformed asset data
  * @throws {Error} When a source marks bytes as Brotli but they cannot be decompressed
  *
  * @example
@@ -965,15 +866,10 @@ export function except<TState>(
  * ```
  */
 export function createAssets<TState>(options: AssetOptions): MiddlewareHandler<TState> {
-	if (!isObject(options?.source) || !('read' in options.source) || !isFunction(options.source.read))
-		throw new TypeError('AssetOptions.source must implement AssetSourceInterface')
-	if (
-		options.store !== undefined &&
-		(!isFunction(options.store.get) ||
-			!isFunction(options.store.set) ||
-			!isFunction(options.store.delete))
-	)
-		throw new TypeError('AssetOptions.store must implement AssetStoreInterface')
+	admitOptions('createAssets', ASSET_CONTRACT, options)
+	admitForeign('createAssets', ['source'], ASSET_SOURCE_FOREIGN, options.source)
+	if (options.store !== undefined)
+		admitForeign('createAssets', ['store'], ASSET_STORE_FOREIGN, options.store)
 	const store = options.store ?? new MemoryAssetStore()
 
 	return async (request, context, next) => {
@@ -1011,7 +907,7 @@ export function createAssets<TState>(options: AssetOptions): MiddlewareHandler<T
  * @typeParam TState - The consumer's opaque per-request state type
  * @param options - See {@link StaticOptions}
  * @returns A `MiddlewareHandler<TState>`
- * @throws {TypeError} When `options.root` is not a non-empty string
+ * @throws {ContractError} When the bag is refused whole: an undeclared key, a `root` that is not a non-empty string, or a `cache` that is negative or not finite
  *
  * @example
  * ```ts
@@ -1021,8 +917,7 @@ export function createAssets<TState>(options: AssetOptions): MiddlewareHandler<T
  * ```
  */
 export function createStatic<TState>(options: StaticOptions): MiddlewareHandler<TState> {
-	if (!isString(options.root) || options.root.length === 0)
-		throw new TypeError('createStatic requires options.root to be a non-empty string')
+	admitOptions('createStatic', STATIC_CONTRACT, options)
 	const root = resolvePath(options.root)
 	const index = options.index ?? DEFAULT_STATIC_INDEX
 	const dotfiles = options.dotfiles ?? DEFAULT_STATIC_DOTFILES
@@ -1111,6 +1006,7 @@ export function createStatic<TState>(options: StaticOptions): MiddlewareHandler<
  * @typeParam TState - The consumer's state type, extending {@link MultipartState}
  * @param options - See {@link MultipartOptions}
  * @returns A `MiddlewareHandler<TState>`
+ * @throws {ContractError} When the bag is refused whole: an undeclared key, a size or total that is negative or not finite, or a count that is not a non-negative integer
  * @throws {HTTPError} When the underlying parse throws a {@link MultipartError}
  * (limit breach → 413, malformed structure → 400, rejected file type → 415)
  *
@@ -1124,6 +1020,7 @@ export function createStatic<TState>(options: StaticOptions): MiddlewareHandler<
 export function createMultipart<TState extends MultipartState>(
 	options: MultipartOptions = {},
 ): MiddlewareHandler<TState> {
+	admitOptions('createMultipart', MULTIPART_CONTRACT, options)
 	return async (request, context, next) => {
 		const [outcome] = await Promise.allSettled([parseMultipartRequest(request, options)])
 		if (outcome.status === 'rejected') {
@@ -1160,8 +1057,7 @@ export function createMultipart<TState extends MultipartState>(
  * @typeParam TState - The consumer's opaque per-request state type
  * @param options - See {@link NodeCompressionOptions}
  * @returns A `MiddlewareHandler<TState>`
- * @throws {TypeError} When `options.threshold` is provided and is not a
- * finite number, or `options.filter` is provided and is not a function
+ * @throws {ContractError} When the bag is refused whole: an undeclared key, a `threshold` that is negative or not finite, or a `filter` that is not a function
  *
  * @example
  * ```ts
@@ -1173,10 +1069,7 @@ export function createMultipart<TState extends MultipartState>(
 export function createNodeCompression<TState>(
 	options?: NodeCompressionOptions,
 ): MiddlewareHandler<TState> {
-	if (options?.threshold !== undefined && !isFiniteNumber(options.threshold))
-		throw new TypeError('NodeCompressionOptions.threshold must be a finite number when provided')
-	if (options?.filter !== undefined && !isFunction(options.filter))
-		throw new TypeError('NodeCompressionOptions.filter must be a function when provided')
+	admitOptions('createNodeCompression', NODE_COMPRESSION_CONTRACT, options)
 	const threshold = options?.threshold ?? DEFAULT_COMPRESSION_THRESHOLD
 	const filter = options?.filter
 	const encodings = NODE_COMPRESSION_ENCODINGS

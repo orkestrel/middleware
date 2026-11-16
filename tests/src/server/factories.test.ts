@@ -8,6 +8,7 @@ import {
 	isSession,
 	sessionColumns,
 } from '@src/server'
+import { ContractError } from '@orkestrel/contract'
 import { createDatabase, createMemoryDriver } from '@orkestrel/database'
 import { describe, expect, it } from 'vitest'
 import { buildSession, TEST_SECRET } from '../../setup.js'
@@ -152,22 +153,24 @@ describe('createMemorySessionStore', () => {
 		await expect(store.delete('missing')).resolves.toBeUndefined()
 	})
 
-	it('throws a TypeError when ttl is malformed', () => {
-		expect(() => createMemorySessionStore({ ttl: Number.NaN })).toThrow(TypeError)
+	it('throws a ContractError when ttl is malformed', () => {
+		expect(() => createMemorySessionStore({ ttl: Number.NaN })).toThrow(ContractError)
 	})
 })
 
 describe('createDatabaseSessionStore', () => {
-	it('throws a TypeError when ttl or lifetime is malformed', () => {
+	it('throws a ContractError when ttl or lifetime is malformed', () => {
 		const db = createDatabase({
 			driver: createMemoryDriver(),
 			tables: { sessions: sessionColumns },
 		})
 		const table = db.table('sessions')
 		expect(() => createDatabaseSessionStore(table, isSession, { ttl: Number.NaN })).toThrow(
-			TypeError,
+			ContractError,
 		)
-		expect(() => createDatabaseSessionStore(table, isSession, { lifetime: 0 })).toThrow(TypeError)
+		expect(() => createDatabaseSessionStore(table, isSession, { lifetime: 0 })).toThrow(
+			ContractError,
+		)
 	})
 })
 

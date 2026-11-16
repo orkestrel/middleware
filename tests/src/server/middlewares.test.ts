@@ -1,3 +1,4 @@
+import { ContractError } from '@orkestrel/contract'
 import type { CapstoneState } from '../../setupServer.js'
 import { MiddlewareValue, createOversizedContext, createCountedStore } from '../../setup.js'
 import type {
@@ -1244,9 +1245,12 @@ describe('createNodeCompression (node face)', () => {
 
 	it('refuses a threshold that is not a finite number', () => {
 		expect(() => createNodeCompression({ threshold: Number.NaN })).toThrow(
-			'NodeCompressionOptions.threshold must be a finite number when provided',
+			'createNodeCompression: threshold',
 		)
-		expect(() => createNodeCompression({ threshold: Number.POSITIVE_INFINITY })).toThrow(TypeError)
+		expect(() => createNodeCompression({ threshold: Number.POSITIVE_INFINITY })).toThrow(
+			ContractError,
+		)
+		expect(() => createNodeCompression({ threshold: -1 })).toThrow(ContractError)
 	})
 })
 
@@ -1729,7 +1733,7 @@ describe('createCompression', () => {
 	})
 
 	it('rejects a negative threshold at construction', () => {
-		expect(() => createCompression({ threshold: -1 })).toThrow(TypeError)
+		expect(() => createCompression({ threshold: -1 })).toThrow(ContractError)
 	})
 
 	it('rejects a q=0 coding through negotiation (nothing negotiated)', async () => {
@@ -1988,12 +1992,12 @@ describe('createDeadline', () => {
 	})
 
 	it('rejects a non-finite ms at construction', () => {
-		expect(() => createDeadline({ ms: Number.NaN })).toThrow(TypeError)
+		expect(() => createDeadline({ ms: Number.NaN })).toThrow(ContractError)
 	})
 
 	it('rejects a non-positive ms at construction', () => {
-		expect(() => createDeadline({ ms: 0 })).toThrow(TypeError)
-		expect(() => createDeadline({ ms: -1 })).toThrow(TypeError)
+		expect(() => createDeadline({ ms: 0 })).toThrow(ContractError)
+		expect(() => createDeadline({ ms: -1 })).toThrow(ContractError)
 	})
 
 	it('a downstream throw arriving AFTER the deadline wins never escapes as an unhandled rejection', async () => {
@@ -2043,13 +2047,13 @@ describe('createForwarded', () => {
 	})
 
 	it('requires exactly one of proxies/trusted at construction', () => {
-		expect(() => createForwarded({ proxies: 1, trusted: ['10.0.0.0/8'] })).toThrow(TypeError)
+		expect(() => createForwarded({ proxies: 1, trusted: ['10.0.0.0/8'] })).toThrow(ContractError)
 	})
 
 	it('rejects a non-positive-integer proxies at construction (proxies:0 would trust zero hops, letting an attacker-controlled rightmost hop resolve as the client)', () => {
-		expect(() => createForwarded({ proxies: 0 })).toThrow(TypeError)
-		expect(() => createForwarded({ proxies: 1.5 })).toThrow(TypeError)
-		expect(() => createForwarded({ proxies: -1 })).toThrow(TypeError)
+		expect(() => createForwarded({ proxies: 0 })).toThrow(ContractError)
+		expect(() => createForwarded({ proxies: 1.5 })).toThrow(ContractError)
+		expect(() => createForwarded({ proxies: -1 })).toThrow(ContractError)
 	})
 
 	it('with proxies:1 and a spoofed extra hop, the attacker-injected leftmost value is never selected', async () => {
@@ -2510,16 +2514,16 @@ describe('createBearer', () => {
 	it('refuses a missing or non-function verify at construction', () => {
 		const missing: BearerOptions = JSON.parse('{}')
 		const text: BearerOptions = JSON.parse('{"verify":"not-a-function"}')
-		expect(() => createBearer(missing)).toThrow(TypeError)
-		expect(() => createBearer(text)).toThrow(TypeError)
+		expect(() => createBearer(missing)).toThrow(ContractError)
+		expect(() => createBearer(text)).toThrow(ContractError)
 	})
 
 	it('refuses a non-string header or scheme at construction', () => {
 		// JSON.parse supplies the malformed member, absorbed by the annotated binding.
 		const header: BearerOptions = Object.assign({ verify: () => 'x' }, JSON.parse('{"header":1}'))
 		const scheme: BearerOptions = Object.assign({ verify: () => 'x' }, JSON.parse('{"scheme":1}'))
-		expect(() => createBearer(header)).toThrow(TypeError)
-		expect(() => createBearer(scheme)).toThrow(TypeError)
+		expect(() => createBearer(header)).toThrow(ContractError)
+		expect(() => createBearer(scheme)).toThrow(ContractError)
 	})
 
 	it('refuses a challenge that is not a record of string values at construction', () => {
@@ -2531,25 +2535,29 @@ describe('createBearer', () => {
 			{ verify: () => 'x' },
 			JSON.parse('{"challenge":["realm"]}'),
 		)
-		expect(() => createBearer(number)).toThrow(TypeError)
-		expect(() => createBearer(list)).toThrow(TypeError)
+		expect(() => createBearer(number)).toThrow(ContractError)
+		expect(() => createBearer(list)).toThrow(ContractError)
 	})
 
 	it('refuses a challenge that names error in any case, because the battery owns it', () => {
-		expect(() => createBearer({ verify: () => 'x', challenge: { error: 'x' } })).toThrow(TypeError)
-		expect(() => createBearer({ verify: () => 'x', challenge: { Error: 'x' } })).toThrow(TypeError)
+		expect(() => createBearer({ verify: () => 'x', challenge: { error: 'x' } })).toThrow(
+			ContractError,
+		)
+		expect(() => createBearer({ verify: () => 'x', challenge: { Error: 'x' } })).toThrow(
+			ContractError,
+		)
 	})
 
 	it('refuses a challenge name that is not a token at construction', () => {
 		expect(() => createBearer({ verify: () => 'x', challenge: { 'two words': 'x' } })).toThrow(
-			TypeError,
+			ContractError,
 		)
 	})
 
 	it('refuses a challenge value holding a quote, a backslash, a CR, or an LF at construction', () => {
 		for (const value of ['a"b', 'a\\b', 'a\rb', 'a\nb']) {
 			expect(() => createBearer({ verify: () => 'x', challenge: { realm: value } })).toThrow(
-				TypeError,
+				ContractError,
 			)
 		}
 	})
@@ -2783,12 +2791,12 @@ describe('createLimiter', () => {
 		expect(await second.text()).toBe('slow down')
 	})
 
-	it('rejects malformed construction options with a TypeError', () => {
-		expect(() => createLimiter({ max: 0, window: 1_000 })).toThrow(TypeError)
-		expect(() => createLimiter({ max: 1.5, window: 1_000 })).toThrow(TypeError)
-		expect(() => createLimiter({ max: 1, window: 0 })).toThrow(TypeError)
-		expect(() => createLimiter({ max: 1, window: 1_000, capacity: 0 })).toThrow(TypeError)
-		expect(() => createLimiter({ max: 1, window: 1_000, capacity: 1.5 })).toThrow(TypeError)
+	it('rejects malformed construction options with a ContractError', () => {
+		expect(() => createLimiter({ max: 0, window: 1_000 })).toThrow(ContractError)
+		expect(() => createLimiter({ max: 1.5, window: 1_000 })).toThrow(ContractError)
+		expect(() => createLimiter({ max: 1, window: 0 })).toThrow(ContractError)
+		expect(() => createLimiter({ max: 1, window: 1_000, capacity: 0 })).toThrow(ContractError)
+		expect(() => createLimiter({ max: 1, window: 1_000, capacity: 1.5 })).toThrow(ContractError)
 	})
 
 	it('emits the exact RateLimit/RateLimit-Policy wire shape when policy: true', async () => {
@@ -2926,10 +2934,10 @@ describe('createSession', () => {
 		expect(response.headers.has('x-test-session')).toBe(false)
 	})
 
-	it('rejects a malformed capacity at construction (delegated to the default MemorySessionStore)', () => {
+	it('rejects a malformed capacity at construction (admitted by the session contract)', () => {
 		const transport = createTestTransport()
 		expect(() => createSession<SessionInterface, SessionState>({ transport, capacity: 0 })).toThrow(
-			TypeError,
+			ContractError,
 		)
 	})
 
