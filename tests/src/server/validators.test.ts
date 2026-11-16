@@ -1,4 +1,4 @@
-import { isMultipartBody, isMultipartFile, isSession, isSessionControl, Session } from '@src/core'
+import { isMultipartBody, isMultipartFile, isSession, isSessionControl, Session } from '@src/server'
 import { describe, expect, it } from 'vitest'
 import { buildSession } from '../../setup.js'
 

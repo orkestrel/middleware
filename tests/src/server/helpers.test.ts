@@ -7,6 +7,29 @@ import { describe, expect, it } from 'vitest'
 import { waitForCondition } from '@orkestrel/test'
 import { createScratch } from '@orkestrel/test/server'
 import {
+	buildClient,
+	buildRateLimitField,
+	buildRateLimitPolicyField,
+	buildRetryAfter,
+	compressBytes,
+	compressResponse,
+	detectEncodings,
+	equalsConstantTime,
+	extractBearerToken,
+	extractFieldToken,
+	matchesUnbufferableResponse,
+	isCompressionNegotiated,
+	isPreflight,
+	matchesTrustedEntry,
+	rebuildResponse,
+	renderChallenge,
+	resolveForwardedFor,
+	resolveKey,
+	Session,
+	sessionExpired,
+	snapshotSession,
+	transferSessionState,
+	validateSessionLimits,
 	computeFileETag,
 	buildAssetResponse,
 	readAssetRecord,
@@ -46,6 +69,7 @@ import {
 	detectClosedHandle,
 	resolveSecondDevicePath,
 } from '../../setupServer.js'
+import { buildTestRequest, buildSession, createTestContext, decompress } from '../../setup.js'
 
 // Read once at collection: the host's device layout does not change under the
 // suite, and `it.runIf` needs the answer while the cases are being registered.
@@ -1027,5 +1051,731 @@ describe('resolveMultipartLimits', () => {
 				total: 5,
 			}),
 		).toEqual({ file: { size: 1, count: 2 }, field: { size: 3, count: 4 }, total: 5 })
+	})
+})
+
+describe('token extraction', () => {
+	it('extracts bearer schemes without trimming or changing token case', () => {
+		expect(extractBearerToken('bEaReR A b', 'Bearer')).toBe('A b')
+		expect(extractBearerToken('Bearer ', 'Bearer')).toBe('')
+		expect(extractBearerToken('BearerX value', 'Bearer')).toBeUndefined()
+		expect(extractBearerToken('raw', '')).toBe('raw')
+	})
+
+	it('extracts only string fields from parsed records', () => {
+		expect(extractFieldToken({ csrf: 'token' }, 'csrf')).toBe('token')
+		expect(extractFieldToken({ csrf: '' }, 'csrf')).toBe('')
+		expect(extractFieldToken({ csrf: 1 }, 'csrf')).toBeUndefined()
+		expect(extractFieldToken({}, 'csrf')).toBeUndefined()
+		expect(extractFieldToken(null, 'csrf')).toBeUndefined()
+	})
+})
+
+describe('resolveKey', () => {
+	it('prefers a bearer token over client and connection facts', () => {
+		expect(
+			resolveKey({
+				token: 'abc',
+				client: { ip: '203.0.113.7' },
+				connection: { ip: '10.0.0.1', encrypted: false },
+			}),
+		).toBe('token:abc')
+	})
+
+	it('falls back to client IP when no token is present', () => {
+		expect(
+			resolveKey({
+				client: { ip: '203.0.113.7' },
+				connection: { ip: '10.0.0.1', encrypted: false },
+			}),
+		).toBe('ip:203.0.113.7')
+	})
+
+	it('falls back to connection IP when neither token nor client is present', () => {
+		expect(resolveKey({ connection: { ip: '10.0.0.1', encrypted: false } })).toBe('ip:10.0.0.1')
+	})
+
+	it('resolves the literal ip:unknown when no identity fact is present', () => {
+		expect(resolveKey({})).toBe('ip:unknown')
+	})
+
+	it('collapses an IPv6 client IP to its /64 network through computeClientKey', () => {
+		expect(resolveKey({ client: { ip: '2001:db8::1' } })).toBe('ip:2001:db8:0:0::/64')
+	})
+
+	it('keys a string credential as token:<value>', () => {
+		expect(resolveKey({ token: 'user-1' })).toBe('token:user-1')
+	})
+
+	it('falls an object credential through to the client address', () => {
+		expect(
+			resolveKey({
+				token: { subject: 'user-1' },
+				client: { ip: '203.0.113.7' },
+				connection: { ip: '10.0.0.1', encrypted: false },
+			}),
+		).toBe('ip:203.0.113.7')
+	})
+
+	it('falls an object credential with no address through to ip:unknown', () => {
+		expect(resolveKey({ token: { subject: 'user-1' } })).toBe('ip:unknown')
+	})
+})
+
+describe('renderChallenge', () => {
+	it('renders the scheme alone when no parameter is given', () => {
+		expect(renderChallenge('Bearer')).toBe('Bearer')
+		expect(renderChallenge('Bearer', {})).toBe('Bearer')
+	})
+
+	it('renders one parameter as a quoted auth-param', () => {
+		expect(renderChallenge('Bearer', { realm: 'taverna' })).toBe('Bearer realm="taverna"')
+	})
+
+	it('renders several parameters in the record key order', () => {
+		expect(renderChallenge('Bearer', { scope: 'read write', realm: 'taverna' })).toBe(
+			'Bearer scope="read write", realm="taverna"',
+		)
+	})
+
+	it('renders resource_metadata with an https: URL', () => {
+		expect(
+			renderChallenge('Bearer', {
+				resource_metadata: 'https://api.example/.well-known/oauth-protected-resource',
+			}),
+		).toBe('Bearer resource_metadata="https://api.example/.well-known/oauth-protected-resource"')
+	})
+
+	it('admits the boundary characters of the RFC 6750 § 3 value set', () => {
+		expect(renderChallenge('Bearer', { realm: ' !#[]~' })).toBe('Bearer realm=" !#[]~"')
+		expect(renderChallenge('Bearer', { realm: '' })).toBe('Bearer realm=""')
+	})
+
+	it('refuses a value holding a character outside the value set, naming the value', () => {
+		const values = ['a"b', 'a\\b', 'a\rb', 'a\nb', 'a\tb', 'a\u0000b', 'café']
+		for (const value of values) {
+			expect(() => renderChallenge('Bearer', { realm: value })).toThrow(TypeError)
+			expect(() => renderChallenge('Bearer', { realm: value })).toThrow(JSON.stringify(value))
+		}
+		expect(() => renderChallenge('Bearer', { realm: 'a\u007fb' })).toThrow(TypeError)
+		expect(() => renderChallenge('Bearer', { realm: 'a\u007fb' })).toThrow('"a\\u007fb"')
+	})
+
+	it('refuses a parameter name that is not a token, naming the name', () => {
+		const names = ['', 'two words', 'a=b', 'a"b', 'café']
+		for (const name of names) {
+			expect(() => renderChallenge('Bearer', { [name]: 'x' })).toThrow(TypeError)
+			expect(() => renderChallenge('Bearer', { [name]: 'x' })).toThrow(JSON.stringify(name))
+		}
+	})
+
+	it('refuses a scheme that is not a token, naming the scheme', () => {
+		for (const scheme of ['', 'Bad Scheme', 'Bearer,']) {
+			expect(() => renderChallenge(scheme)).toThrow(TypeError)
+			expect(() => renderChallenge(scheme)).toThrow(JSON.stringify(scheme))
+		}
+	})
+
+	it('refuses two parameter names that match ignoring case, naming the later one', () => {
+		expect(() => renderChallenge('Bearer', { realm: 'a', Realm: 'b' })).toThrow(TypeError)
+		expect(() => renderChallenge('Bearer', { realm: 'a', Realm: 'b' })).toThrow('"Realm"')
+	})
+
+	it('caps a long refused value in the message instead of echoing it whole', () => {
+		const value = 'a"'.repeat(50_000)
+		// The 100,000-character value previews clipped with a closing ellipsis.
+		expect(() => renderChallenge('Bearer', { realm: value })).toThrow(/^(?=[^]*…)[^]{1,300}$/u)
+	})
+})
+
+describe('buildRetryAfter', () => {
+	it('returns whole seconds ceiling to the next second', () => {
+		expect(buildRetryAfter(1_500, 1_000)).toBe('1')
+		expect(buildRetryAfter(3_001, 1_000)).toBe('3')
+	})
+
+	it('floors at a minimum of 1 even when the reset has already passed', () => {
+		expect(buildRetryAfter(500, 1_000)).toBe('1')
+		expect(buildRetryAfter(1_000, 1_000)).toBe('1')
+	})
+})
+
+describe('buildRateLimitField', () => {
+	it('builds the exact draft RateLimit structured-field string', () => {
+		expect(buildRateLimitField(4, 1_500, 1_000)).toBe('"default";r=4;t=1')
+	})
+
+	it('floors its seconds-to-reset at a minimum of 1', () => {
+		expect(buildRateLimitField(0, 1_000, 1_000)).toBe('"default";r=0;t=1')
+	})
+})
+
+describe('buildRateLimitPolicyField', () => {
+	it('builds the exact draft RateLimit-Policy structured-field string', () => {
+		expect(buildRateLimitPolicyField(10, 60_000)).toBe('"default";q=10;w=60')
+	})
+
+	it('ceils a fractional window to whole seconds', () => {
+		expect(buildRateLimitPolicyField(5, 1_500)).toBe('"default";q=5;w=2')
+	})
+})
+
+describe('matchesTrustedEntry', () => {
+	it('matches an exact address', () => {
+		expect(matchesTrustedEntry('203.0.113.7', '203.0.113.7')).toBe(true)
+		expect(matchesTrustedEntry('203.0.113.8', '203.0.113.7')).toBe(false)
+	})
+
+	it('matches an IPv4 CIDR entry within its network', () => {
+		expect(matchesTrustedEntry('10.1.2.3', '10.0.0.0/8')).toBe(true)
+		expect(matchesTrustedEntry('192.168.1.1', '10.0.0.0/8')).toBe(false)
+		expect(matchesTrustedEntry('10.0.0.0', '10.0.0.0/32')).toBe(true)
+		expect(matchesTrustedEntry('10.0.0.1', '10.0.0.0/32')).toBe(false)
+	})
+
+	it('rejects a malformed CIDR total-safely (never throws)', () => {
+		expect(matchesTrustedEntry('10.1.2.3', '10.0.0.0/99')).toBe(false)
+		expect(matchesTrustedEntry('10.1.2.3', 'not-an-address/8')).toBe(false)
+		expect(matchesTrustedEntry('not-an-address', '10.0.0.0/8')).toBe(false)
+		expect(matchesTrustedEntry('2001:db8::1', '10.0.0.0/8')).toBe(false)
+	})
+
+	it('matches an IPv6 entry by exact string only', () => {
+		expect(matchesTrustedEntry('2001:db8::1', '2001:db8::1')).toBe(true)
+		expect(matchesTrustedEntry('2001:db8::2', '2001:db8::1')).toBe(false)
+	})
+
+	it('doc-pin: an IPv6 CIDR-shaped entry is never expanded — no IPv6 CIDR support', () => {
+		expect(matchesTrustedEntry('2001:db8::1', '2001:db8::/32')).toBe(false)
+	})
+})
+
+describe('resolveForwardedFor', () => {
+	it('resolves undefined when the header is absent', () => {
+		expect(resolveForwardedFor(undefined, { proxies: 1 })).toBeUndefined()
+	})
+
+	it('resolves undefined when the header is present but empty', () => {
+		expect(resolveForwardedFor('', { proxies: 1 })).toBeUndefined()
+		expect(resolveForwardedFor('   ', { proxies: 1 })).toBeUndefined()
+	})
+
+	it('with a proxies count, trusts exactly that many hops from the right', () => {
+		expect(resolveForwardedFor('203.0.113.7, 10.0.0.1', { proxies: 1 })).toBe('203.0.113.7')
+		expect(resolveForwardedFor('203.0.113.7, 10.0.0.1, 10.0.0.2', { proxies: 2 })).toBe(
+			'203.0.113.7',
+		)
+	})
+
+	it('with a proxies count, resolves undefined when every hop is claimed as trusted', () => {
+		expect(resolveForwardedFor('10.0.0.1', { proxies: 1 })).toBeUndefined()
+		expect(resolveForwardedFor('10.0.0.1', { proxies: 5 })).toBeUndefined()
+	})
+
+	it('with a trusted roster, walks right-to-left past consecutive matches', () => {
+		expect(resolveForwardedFor('203.0.113.7, 10.0.0.1', { trusted: ['10.0.0.0/8'] })).toBe(
+			'203.0.113.7',
+		)
+		expect(
+			resolveForwardedFor('203.0.113.7, 10.0.0.1, 10.0.0.2', { trusted: ['10.0.0.0/8'] }),
+		).toBe('203.0.113.7')
+	})
+
+	it('with a trusted roster, resolves undefined when every hop is trusted', () => {
+		expect(resolveForwardedFor('10.0.0.1, 10.0.0.2', { trusted: ['10.0.0.0/8'] })).toBeUndefined()
+	})
+
+	it('with a garbage header, remains total-safe and never throws', () => {
+		expect(() => resolveForwardedFor(',,,', { proxies: 1 })).not.toThrow()
+		expect(resolveForwardedFor(',,,', { proxies: 1 })).toBeUndefined()
+		expect(() =>
+			resolveForwardedFor('not-an-ip, also-not', { trusted: ['10.0.0.0/8'] }),
+		).not.toThrow()
+		// The rightmost hop ('also-not') does not match the trusted roster, so the
+		// whole header is untrustworthy — falls back to undefined rather than
+		// returning a client-supplied hop.
+		expect(resolveForwardedFor('not-an-ip, also-not', { trusted: ['10.0.0.0/8'] })).toBeUndefined()
+	})
+
+	it('with a trusted roster, an untrusted rightmost (immediate sender) hop makes the whole header untrustworthy, even when an earlier hop would match', () => {
+		expect(
+			resolveForwardedFor('203.0.113.7, 10.0.0.1, attacker-injected', {
+				trusted: ['10.0.0.0/8'],
+			}),
+		).toBeUndefined()
+	})
+})
+
+describe('detectEncodings', () => {
+	it('returns exactly the runtime-supported subset of a known candidate list, in order', () => {
+		expect(detectEncodings(['gzip', 'deflate'])).toEqual(['gzip', 'deflate'])
+	})
+
+	it('never probes identity and never throws on an empty candidate list', () => {
+		expect(detectEncodings([])).toEqual([])
+		expect(detectEncodings(['identity'])).toEqual([])
+	})
+})
+
+describe('compressBytes', () => {
+	it('compresses bytes with the selected CompressionStream coding', async () => {
+		const bytes = new TextEncoder().encode('compress me'.repeat(100))
+		const compressed = await compressBytes(bytes, 'gzip')
+		expect(compressed.byteLength).toBeLessThan(bytes.byteLength)
+		expect(await decompress(compressed, 'gzip')).toBe('compress me'.repeat(100))
+	})
+})
+
+describe('isBufferingIneligible', () => {
+	it('keeps the buffering decision under the matchesUnbufferableResponse name', () => {
+		const response = new Response('body', { headers: { etag: '"asset"' } })
+		expect(matchesUnbufferableResponse('GET', response, 'etag')).toBe(true)
+		expect(matchesUnbufferableResponse('GET', response, 'content-encoding')).toBe(false)
+	})
+
+	it('is ineligible for a HEAD request', () => {
+		expect(matchesUnbufferableResponse('HEAD', new Response('body'), 'content-encoding')).toBe(true)
+	})
+
+	it('is ineligible for a 204 or 304 response', () => {
+		expect(
+			matchesUnbufferableResponse('GET', new Response(null, { status: 204 }), 'content-encoding'),
+		).toBe(true)
+		expect(
+			matchesUnbufferableResponse('GET', new Response(null, { status: 304 }), 'content-encoding'),
+		).toBe(true)
+	})
+
+	it('is ineligible for a bodyless response', () => {
+		expect(
+			matchesUnbufferableResponse('GET', new Response(null, { status: 200 }), 'content-encoding'),
+		).toBe(true)
+	})
+
+	it('is ineligible for a text/event-stream response', () => {
+		const response = new Response('data: x\n\n', {
+			headers: { 'content-type': 'text/event-stream' },
+		})
+		expect(matchesUnbufferableResponse('GET', response, 'content-encoding')).toBe(true)
+	})
+
+	it('is ineligible when the skip header is already present', () => {
+		const response = new Response('body', { headers: { 'content-encoding': 'gzip' } })
+		expect(matchesUnbufferableResponse('GET', response, 'content-encoding')).toBe(true)
+	})
+
+	it('is eligible for a plain buffered GET response', () => {
+		const response = new Response('body', {
+			status: 200,
+			headers: { 'content-type': 'text/plain' },
+		})
+		expect(matchesUnbufferableResponse('GET', response, 'content-encoding')).toBe(false)
+	})
+})
+
+describe('isCompressionNegotiated', () => {
+	it('is true for an actionable non-identity coding', () => {
+		expect(isCompressionNegotiated('gzip')).toBe(true)
+	})
+
+	it('is false for identity and for undefined', () => {
+		expect(isCompressionNegotiated('identity')).toBe(false)
+		expect(isCompressionNegotiated(undefined)).toBe(false)
+	})
+})
+
+describe('transferSessionState', () => {
+	it('copies every entry from one session state into another', () => {
+		const from = new Session('a')
+		from.set('userId', 'u_1')
+		from.set('role', 'admin')
+		const to = new Session('b')
+		transferSessionState(from, to)
+		expect(to.state.get('userId')).toBe('u_1')
+		expect(to.state.get('role')).toBe('admin')
+		expect(to.state.size).toBe(2)
+	})
+
+	it('leaves the source untouched and overwrites an overlapping destination key', () => {
+		const from = buildSession('a', 'new')
+		const to = buildSession('b', 'old')
+		to.set('extra', 1)
+		transferSessionState(from, to)
+		expect(to.state.get('mark')).toBe('new')
+		expect(to.state.get('extra')).toBe(1)
+		expect(from.state.get('mark')).toBe('new')
+		expect(from.state.size).toBe(1)
+	})
+})
+
+describe('isPreflight', () => {
+	it('is true for an OPTIONS request carrying Access-Control-Request-Method', () => {
+		expect(isPreflight('OPTIONS', new Headers({ 'access-control-request-method': 'POST' }))).toBe(
+			true,
+		)
+	})
+
+	it('is false for a plain OPTIONS request or a non-OPTIONS method', () => {
+		expect(isPreflight('OPTIONS', new Headers())).toBe(false)
+		expect(isPreflight('GET', new Headers({ 'access-control-request-method': 'POST' }))).toBe(false)
+	})
+})
+
+describe('equalsConstantTime', () => {
+	it('is true for equal strings', () => {
+		expect(equalsConstantTime('abc123', 'abc123')).toBe(true)
+	})
+
+	it('is false for different strings of the same length', () => {
+		expect(equalsConstantTime('abc123', 'abc124')).toBe(false)
+		expect(equalsConstantTime('aaaaaa', 'zzzzzz')).toBe(false)
+	})
+
+	it('is false for different-length strings', () => {
+		expect(equalsConstantTime('abc', 'abcd')).toBe(false)
+		expect(equalsConstantTime('', 'a')).toBe(false)
+	})
+
+	it('treats two empty strings as equal', () => {
+		expect(equalsConstantTime('', '')).toBe(true)
+	})
+})
+
+describe('buildClient', () => {
+	it('wraps a resolved IP into a Client slice', () => {
+		expect(buildClient('203.0.113.7')).toEqual({ ip: '203.0.113.7' })
+	})
+
+	it('wraps an undefined IP the same way', () => {
+		expect(buildClient(undefined)).toEqual({})
+	})
+})
+
+describe('rebuildResponse', () => {
+	it('preserves status and statusText and copies the original headers', () => {
+		const original = new Response('old', {
+			status: 201,
+			statusText: 'Created',
+			headers: { 'content-type': 'text/plain', 'x-custom': 'yes' },
+		})
+		const rebuilt = rebuildResponse('new body', original)
+		expect(rebuilt.status).toBe(201)
+		expect(rebuilt.statusText).toBe('Created')
+		expect(rebuilt.headers.get('content-type')).toBe('text/plain')
+		expect(rebuilt.headers.get('x-custom')).toBe('yes')
+	})
+
+	it('overrides the body with the replacement', async () => {
+		const original = new Response('old')
+		const rebuilt = rebuildResponse('new body', original)
+		expect(await rebuilt.text()).toBe('new body')
+	})
+
+	it('applies explicit replacement headers instead of copying the original', () => {
+		const original = new Response('old', { headers: { 'x-original': 'yes' } })
+		const headers = new Headers({ 'x-replacement': 'yes' })
+		const rebuilt = rebuildResponse('new body', original, headers)
+		expect(rebuilt.headers.get('x-replacement')).toBe('yes')
+		expect(rebuilt.headers.has('x-original')).toBe(false)
+	})
+
+	it('accepts a null body', async () => {
+		const original = new Response(null, { status: 304 })
+		const rebuilt = rebuildResponse(null, original)
+		expect(rebuilt.status).toBe(304)
+		expect(rebuilt.body).toBeNull()
+	})
+})
+
+describe('compressResponse', () => {
+	it('compresses an above-threshold compressible body and sets the coding headers', async () => {
+		const body = 'x'.repeat(2_000)
+		const response = new Response(body, { headers: { 'content-type': 'text/plain' } })
+		const request = new Request('https://example.test/', {
+			headers: { 'accept-encoding': 'gzip' },
+		})
+		const result = await compressResponse(
+			request,
+			createTestContext(buildTestRequest('/'), {}),
+			response,
+			{
+				threshold: 100,
+				encodings: ['gzip'],
+				compress: compressBytes,
+			},
+		)
+		expect(result.headers.get('content-encoding')).toBe('gzip')
+		expect(result.headers.get('vary')).toBe('Accept-Encoding')
+		const buffer = await result.arrayBuffer()
+		expect(result.headers.get('content-length')).toBe(String(buffer.byteLength))
+		expect(await decompress(new Uint8Array(buffer), 'gzip')).toBe(body)
+	})
+
+	it('passes through unchanged when the buffered body is below threshold', async () => {
+		const response = new Response('short', { headers: { 'content-type': 'text/plain' } })
+		const request = new Request('https://example.test/', {
+			headers: { 'accept-encoding': 'gzip' },
+		})
+		const result = await compressResponse(
+			request,
+			createTestContext(buildTestRequest('/'), {}),
+			response,
+			{
+				threshold: 100_000,
+				encodings: ['gzip'],
+				compress: compressBytes,
+			},
+		)
+		expect(result.headers.has('content-encoding')).toBe(false)
+		expect(await result.text()).toBe('short')
+	})
+
+	it('passes through an incompressible content-type unchanged', async () => {
+		const response = new Response('x'.repeat(2_000), {
+			headers: { 'content-type': 'image/png' },
+		})
+		const request = new Request('https://example.test/', {
+			headers: { 'accept-encoding': 'gzip' },
+		})
+		const result = await compressResponse(
+			request,
+			createTestContext(buildTestRequest('/'), {}),
+			response,
+			{
+				threshold: 100,
+				encodings: ['gzip'],
+				compress: compressBytes,
+			},
+		)
+		expect(result.headers.has('content-encoding')).toBe(false)
+	})
+
+	it('passes through an already-encoded response unchanged', async () => {
+		const response = new Response('x'.repeat(2_000), {
+			headers: { 'content-type': 'text/plain', 'content-encoding': 'br' },
+		})
+		const request = new Request('https://example.test/', {
+			headers: { 'accept-encoding': 'gzip' },
+		})
+		const result = await compressResponse(
+			request,
+			createTestContext(buildTestRequest('/'), {}),
+			response,
+			{
+				threshold: 100,
+				encodings: ['gzip'],
+				compress: compressBytes,
+			},
+		)
+		expect(result).toBe(response)
+	})
+
+	it('passes through an SSE response unchanged', async () => {
+		const response = new Response('data: x\n\n', {
+			headers: { 'content-type': 'text/event-stream' },
+		})
+		const request = new Request('https://example.test/', {
+			headers: { 'accept-encoding': 'gzip' },
+		})
+		const result = await compressResponse(
+			request,
+			createTestContext(buildTestRequest('/'), {}),
+			response,
+			{
+				threshold: 1,
+				encodings: ['gzip'],
+				compress: compressBytes,
+			},
+		)
+		expect(result).toBe(response)
+	})
+
+	it('fast-skips without buffering when Content-Length is already below threshold', async () => {
+		const body = 'short'
+		const response = new Response(body, {
+			headers: { 'content-type': 'text/plain', 'content-length': String(body.length) },
+		})
+		const request = new Request('https://example.test/', {
+			headers: { 'accept-encoding': 'gzip' },
+		})
+		const result = await compressResponse(
+			request,
+			createTestContext(buildTestRequest('/'), {}),
+			response,
+			{
+				threshold: 100_000,
+				encodings: ['gzip'],
+				compress: compressBytes,
+			},
+		)
+		expect(result).toBe(response)
+	})
+
+	it('stamps Vary: Accept-Encoding when there is no Accept-Encoding header at all', async () => {
+		const response = new Response('x'.repeat(2_000), { headers: { 'content-type': 'text/plain' } })
+		const request = new Request('https://example.test/')
+		const result = await compressResponse(
+			request,
+			createTestContext(buildTestRequest('/'), {}),
+			response,
+			{
+				threshold: 100,
+				encodings: ['gzip'],
+				compress: compressBytes,
+			},
+		)
+		expect(result.headers.get('vary')).toBe('Accept-Encoding')
+	})
+
+	it('stamps Vary: Accept-Encoding even when the body is below threshold', async () => {
+		const response = new Response('short', { headers: { 'content-type': 'text/plain' } })
+		const request = new Request('https://example.test/', {
+			headers: { 'accept-encoding': 'gzip' },
+		})
+		const result = await compressResponse(
+			request,
+			createTestContext(buildTestRequest('/'), {}),
+			response,
+			{
+				threshold: 100_000,
+				encodings: ['gzip'],
+				compress: compressBytes,
+			},
+		)
+		expect(result.headers.get('vary')).toBe('Accept-Encoding')
+	})
+
+	it('stamps Vary: Accept-Encoding even for a non-compressible content type', async () => {
+		const response = new Response('x'.repeat(2_000), { headers: { 'content-type': 'image/png' } })
+		const request = new Request('https://example.test/', {
+			headers: { 'accept-encoding': 'gzip' },
+		})
+		const result = await compressResponse(
+			request,
+			createTestContext(buildTestRequest('/'), {}),
+			response,
+			{
+				threshold: 100,
+				encodings: ['gzip'],
+				compress: compressBytes,
+			},
+		)
+		expect(result.headers.get('vary')).toBe('Accept-Encoding')
+	})
+
+	it('stamps Vary: Accept-Encoding on the actually-compressed path', async () => {
+		const response = new Response('x'.repeat(2_000), { headers: { 'content-type': 'text/plain' } })
+		const request = new Request('https://example.test/', {
+			headers: { 'accept-encoding': 'gzip' },
+		})
+		const result = await compressResponse(
+			request,
+			createTestContext(buildTestRequest('/'), {}),
+			response,
+			{
+				threshold: 100,
+				encodings: ['gzip'],
+				compress: compressBytes,
+			},
+		)
+		expect(result.headers.get('content-encoding')).toBe('gzip')
+		expect(result.headers.get('vary')).toBe('Accept-Encoding')
+	})
+
+	it('never adds Vary to a buffering-ineligible response (already content-encoded)', async () => {
+		const response = new Response('x'.repeat(2_000), {
+			headers: { 'content-type': 'text/plain', 'content-encoding': 'br' },
+		})
+		const request = new Request('https://example.test/', {
+			headers: { 'accept-encoding': 'gzip' },
+		})
+		const result = await compressResponse(
+			request,
+			createTestContext(buildTestRequest('/'), {}),
+			response,
+			{
+				threshold: 100,
+				encodings: ['gzip'],
+				compress: compressBytes,
+			},
+		)
+		expect(result.headers.has('vary')).toBe(false)
+	})
+})
+
+describe('sessionExpired', () => {
+	it('is false when neither ttl nor lifetime is configured', () => {
+		expect(sessionExpired({ seen: 0, created: 0 }, 1_000_000, {})).toBe(false)
+	})
+
+	it('is true once idle time reaches ttl (boundary >=)', () => {
+		expect(sessionExpired({ seen: 0, created: 0 }, 999, { ttl: 1_000 })).toBe(false)
+		expect(sessionExpired({ seen: 0, created: 0 }, 1_000, { ttl: 1_000 })).toBe(true)
+	})
+
+	it('is true once absolute lifetime reaches its threshold (boundary >=)', () => {
+		expect(sessionExpired({ seen: 500, created: 0 }, 1_999, { lifetime: 2_000 })).toBe(false)
+		expect(sessionExpired({ seen: 500, created: 0 }, 2_000, { lifetime: 2_000 })).toBe(true)
+	})
+
+	it('is true when either ttl or lifetime independently elapses (both configured)', () => {
+		expect(sessionExpired({ seen: 0, created: 0 }, 1_000, { ttl: 1_000, lifetime: 5_000 })).toBe(
+			true,
+		)
+		expect(
+			sessionExpired({ seen: 4_000, created: 0 }, 5_000, { ttl: 2_000, lifetime: 5_000 }),
+		).toBe(true)
+	})
+
+	it('is false when neither threshold has elapsed (both configured)', () => {
+		expect(sessionExpired({ seen: 100, created: 0 }, 500, { ttl: 1_000, lifetime: 5_000 })).toBe(
+			false,
+		)
+	})
+})
+
+describe('snapshotSession', () => {
+	it('projects a session state into a plain record', () => {
+		const session = new Session('abc')
+		session.set('userId', 'u_1')
+		session.set('count', 3)
+		expect(snapshotSession(session)).toEqual({ id: 'abc', state: { userId: 'u_1', count: 3 } })
+	})
+
+	it('snapshots an empty session state to an empty record', () => {
+		expect(snapshotSession(new Session('x'))).toEqual({ id: 'x', state: {} })
+	})
+
+	it('carries a "__proto__"-named state key without polluting Object.prototype', () => {
+		const session = new Session('x')
+		session.set('__proto__', 'evil')
+		const snapshot = snapshotSession(session)
+		expect(Object.getPrototypeOf(snapshot.state)).toBeNull()
+		expect(Object.prototype.hasOwnProperty.call(snapshot.state, '__proto__')).toBe(true)
+		expect(snapshot.state['__proto__']).toBe('evil')
+		expect(Object.getPrototypeOf({})).toBe(Object.prototype)
+	})
+})
+
+describe('validateSessionLimits', () => {
+	it('returns for an absent bag, an absent threshold, or a positive finite one', () => {
+		expect(validateSessionLimits(undefined)).toBeUndefined()
+		expect(validateSessionLimits({})).toBeUndefined()
+		expect(validateSessionLimits({ ttl: 1_000 })).toBeUndefined()
+		expect(validateSessionLimits({ lifetime: 1_000 })).toBeUndefined()
+		expect(validateSessionLimits({ ttl: 1_000, lifetime: 2_000 })).toBeUndefined()
+	})
+
+	it('throws a TypeError for a non-finite or non-positive ttl', () => {
+		expect(() => validateSessionLimits({ ttl: Number.NaN })).toThrow(TypeError)
+		expect(() => validateSessionLimits({ ttl: Number.POSITIVE_INFINITY })).toThrow(TypeError)
+		expect(() => validateSessionLimits({ ttl: 0 })).toThrow(TypeError)
+		expect(() => validateSessionLimits({ ttl: -1 })).toThrow(TypeError)
+	})
+
+	it('throws a TypeError for a non-finite or non-positive lifetime', () => {
+		expect(() => validateSessionLimits({ lifetime: Number.NaN })).toThrow(TypeError)
+		expect(() => validateSessionLimits({ lifetime: 0 })).toThrow(TypeError)
+		expect(() => validateSessionLimits({ lifetime: -1 })).toThrow(TypeError)
 	})
 })

@@ -1,4 +1,4 @@
-import { Session } from '@src/core'
+import { Session } from '@src/server'
 import { describe, expect, it } from 'vitest'
 
 // ============================================================================

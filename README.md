@@ -4,9 +4,9 @@
 > `create{Noun}(options) => MiddlewareHandler<TState>` factories for error
 > boundaries, telemetry, compression, security headers, CORS, deadlines,
 > trusted-proxy client facts, ETag, bearer authentication, rate limiting, body
-> parsing, sessions, and CSRF in the fetch-native core, plus in-memory assets,
-> static files, streaming multipart uploads, and a `node:zlib` compression
-> sibling in the node face.
+> parsing, sessions, and CSRF over web-standard `Request` and `Response`, plus
+> in-memory assets, static files, streaming multipart uploads, and a
+> `node:zlib` compression sibling on Node.
 
 Mount the batteries your threat model needs over the `compose` seam: each one
 closes over its guarded options and returns a `MiddlewareHandler<TState>`, and
@@ -26,8 +26,8 @@ npm install @orkestrel/middleware @orkestrel/server
 - Node.js >= 22.12.0
 - `@orkestrel/server` as a peer dependency (the seam and substrate are
   imported, never bundled)
-- Dual ESM and CommonJS entries: the core (`.`) and the node face (`./server`),
-  which carries the node-bound batteries
+- Dual ESM and CommonJS entry: one server-only entry (`.`) that carries every
+  battery, including the node-bound ones
 
 ## Usage
 

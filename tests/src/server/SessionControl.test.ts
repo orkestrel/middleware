@@ -1,4 +1,4 @@
-import { Session, SessionControl } from '@src/core'
+import { Session, SessionControl } from '@src/server'
 import { createRecorder } from '@orkestrel/test'
 import { describe, expect, it } from 'vitest'
 

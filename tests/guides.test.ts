@@ -2,7 +2,7 @@
 // this repo's own `guides/README.md` manifest. The constants that follow are this
 // package's own, as is the executed section that closes the file.
 
-import type { IdentifierState } from '@src/core'
+import type { IdentifierState } from '@src/server'
 import { GuideCommand } from '@orkestrel/guide/server'
 import { readInventory } from '@orkestrel/test/server'
 import { createVitest } from 'vitest/node'
@@ -17,9 +17,7 @@ const PACKAGE_NAME = '@orkestrel/middleware'
 const GUIDE_SPEC = 'guides/middleware.md'
 /** Each import specifier this package's own guides may resolve against. */
 const MODULES = Object.freeze({
-	[PACKAGE_NAME]: 'src/core',
-	'@orkestrel/middleware/server': 'src/server',
-	'@src/core': 'src/core',
+	[PACKAGE_NAME]: 'src/server',
 	'@src/server': 'src/server',
 })
 /**
@@ -54,7 +52,7 @@ await new GuideCommand({
 	} = await import('@orkestrel/guide')
 	const { compose } = await import('@orkestrel/server')
 	const { requireValue } = await import('@orkestrel/test')
-	const { createBoundary, createSecurity } = await import('@src/core')
+	const { createBoundary, createSecurity } = await import('@src/server')
 	const { buildTestRequest, createTestContext } = await import('./setup.js')
 	const { describe, expect, it } = await import('vitest')
 	const sources = createSourceManager({ files, modules: MODULES })
@@ -223,7 +221,7 @@ await new GuideCommand({
 	// beside it, so a fence whose comment claims a value the code contradicts passes
 	// all of them. The cases here run the flagship fences and assert the values their
 	// comments claim. Change a fence, change the transcription beside it. Each
-	// transcription imports through `@src/core` where the fence imports through
+	// transcription imports through `@src/server` where the fence imports through
 	// `@orkestrel/middleware`: the barrel is the same surface, and the published
 	// specifier is this package's own name.
 	describe('flagship fences', () => {

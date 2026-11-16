@@ -20,8 +20,8 @@ import {
 
 // ── tests/setup.ts — the host-independent middleware harness ──────────────────
 //
-// Proves the exported behavior `tests/src/core/middlewares.test.ts` and
-// `tests/src/server/middlewares.test.ts` drive their scenarios with: the fixed
+// Proves the exported behavior `tests/src/server/middlewares.test.ts`
+// drives its scenarios with: the fixed
 // request origin, the context derivation and its cached capped body, the
 // marker terminals, the recording continuation, the composition order, and the
 // manual clock. Every expectation is derived by a route this module cannot

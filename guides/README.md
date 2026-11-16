@@ -5,15 +5,14 @@ directory.
 
 ## By concept
 
-| Concept    | Spec                             | Source                                                   | Tests                                                                            |
-| ---------- | -------------------------------- | -------------------------------------------------------- | -------------------------------------------------------------------------------- |
-| Middleware | [`middleware.md`](middleware.md) | [`src/core`](../src/core), [`src/server`](../src/server) | [`tests/src/core`](../tests/src/core), [`tests/src/server`](../tests/src/server) |
+| Concept    | Spec                             | Source                        | Tests                                     |
+| ---------- | -------------------------------- | ----------------------------- | ----------------------------------------- |
+| Middleware | [`middleware.md`](middleware.md) | [`src/server`](../src/server) | [`tests/src/server`](../tests/src/server) |
 
 ## By directory
 
 | Directory    | Guide                            |
 | ------------ | -------------------------------- |
-| `src/core`   | [`middleware.md`](middleware.md) |
 | `src/server` | [`middleware.md`](middleware.md) |
 
 ## Dependency reference

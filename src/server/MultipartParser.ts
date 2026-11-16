@@ -1,5 +1,4 @@
-import type { MultipartBody, MultipartFile } from '@src/core'
-import type { MultipartLimits } from './types.js'
+import type { MultipartBody, MultipartFile, MultipartLimits } from './types.js'
 import { randomUUID } from 'node:crypto'
 import { chmod, mkdtemp, open, unlink } from 'node:fs/promises'
 import { tmpdir } from 'node:os'

@@ -27,7 +27,7 @@ import { MULTIPART_ERROR_BRAND, MULTIPART_STATUS } from './constants.js'
  *
  * @example
  * ```ts
- * import { MultipartError } from '@orkestrel/middleware/server'
+ * import { MultipartError } from '@orkestrel/middleware'
  *
  * throw new MultipartError('limit', 'too many files')
  * ```
@@ -62,7 +62,7 @@ export class MultipartError extends HTTPError {
  *
  * @example
  * ```ts
- * import { isMultipartError } from '@orkestrel/middleware/server'
+ * import { isMultipartError } from '@orkestrel/middleware'
  *
  * try {
  * 	await parse(request)

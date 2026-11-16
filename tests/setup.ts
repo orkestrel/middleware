@@ -6,7 +6,7 @@ import type {
 	SessionRow,
 	SessionStoreInterface,
 	SessionTransportInterface,
-} from '@src/core'
+} from '@src/server'
 import { ContentTooLargeError, compose, readBody } from '@orkestrel/server'
 import { createDatabase, createMemoryDriver } from '@orkestrel/database'
 import {
@@ -15,14 +15,13 @@ import {
 	isSession,
 	Session,
 	sessionColumns,
-} from '@src/core'
+} from '@src/server'
 
 // ── Middleware test harness ──────────────────────────────────────────────────
 //
 // Loaded first by every test project (`vite.config.ts` `setupFiles[0]`). Holds
-// ONLY helpers with no `node:*` / DOM / Vue dependency, so it is safe for
-// `src:core`, `src:browser`, and `src:server` alike. Environment-specific
-// helpers live in their own matching setup file. This harness composes the
+// ONLY helpers with no `node:*` / DOM / Vue dependency. Helpers that read
+// the filesystem or a socket live in `setupServer.ts`. This harness composes the
 // primitives `@orkestrel/server` and vitest already provide (`compose`,
 // `readBody`) rather than re-deriving them.
 

@@ -1,5 +1,5 @@
-import type { MemorySessionStoreOptions, Session } from '@src/core'
-import { DEFAULT_SESSION_CAPACITY, MemorySessionStore } from '@src/core'
+import type { MemorySessionStoreOptions, Session } from '@src/server'
+import { DEFAULT_SESSION_CAPACITY, MemorySessionStore } from '@src/server'
 import { describe, expect, it } from 'vitest'
 import { buildSession } from '../../../setup.js'
 

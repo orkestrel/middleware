@@ -942,9 +942,9 @@ describe('middleware error brands', () => {
 			driver,
 			`import assert from 'node:assert/strict'
 import { createRequire } from 'node:module'
-import * as imported from '@orkestrel/middleware/server'
+import * as imported from '@orkestrel/middleware'
 import * as copied from './node_modules/@orkestrel/middleware-copy/dist/src/server/index.js'
-const required = createRequire(import.meta.url)('@orkestrel/middleware/server')
+const required = createRequire(import.meta.url)('@orkestrel/middleware')
 const copies = [imported, required, copied]
 assert.equal(new Set(copies.map((entry) => entry.MultipartError)).size, copies.length)
 for (const source of copies) {

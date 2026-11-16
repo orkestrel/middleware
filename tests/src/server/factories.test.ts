@@ -1,4 +1,4 @@
-import type { Session } from '@src/core'
+import type { Session } from '@src/server'
 import {
 	createCookieTransport,
 	createDatabaseSessionStore,
@@ -7,7 +7,7 @@ import {
 	createRestoredSession,
 	isSession,
 	sessionColumns,
-} from '@src/core'
+} from '@src/server'
 import { createDatabase, createMemoryDriver } from '@orkestrel/database'
 import { describe, expect, it } from 'vitest'
 import { buildSession, TEST_SECRET } from '../../setup.js'

@@ -1,5 +1,4 @@
-import type { MultipartBody } from '@src/core'
-import type { MultipartOptions } from './types.js'
+import type { MultipartBody, MultipartOptions } from './types.js'
 import { MultipartError } from './errors.js'
 import { extractMultipartBoundary, resolveMultipartLimits } from './helpers.js'
 import { MultipartParser } from './MultipartParser.js'

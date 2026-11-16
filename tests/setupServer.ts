@@ -1,7 +1,11 @@
 import type { FileHandle } from 'node:fs/promises'
 import type { ScratchInterface } from '@orkestrel/test/server'
-import type { AssetRepresentation, AssetSourceInterface } from '@src/server'
-import type { ConnectionState, SessionState } from '@src/core'
+import type {
+	AssetRepresentation,
+	AssetSourceInterface,
+	ConnectionState,
+	SessionState,
+} from '@src/server'
 import { attempt } from '@orkestrel/contract'
 import { MiddlewareValue } from './setup.js'
 import { statSync, writeFileSync } from 'node:fs'

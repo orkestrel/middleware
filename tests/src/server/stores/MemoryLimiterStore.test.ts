@@ -1,4 +1,4 @@
-import { createLimiter, createMemoryLimiterStore, MemoryLimiterStore } from '@src/core'
+import { createLimiter, createMemoryLimiterStore, MemoryLimiterStore } from '@src/server'
 import { createRecorder } from '@orkestrel/test'
 import { describe, expect, it } from 'vitest'
 import { buildTestRequest, createTestContext } from '../../../setup.js'

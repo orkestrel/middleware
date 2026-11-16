@@ -21,10 +21,8 @@
 		"skipLibCheck": true,
 		"noEmit": true,
 		"paths": {
-			"@src/core": ["./src/core/index.ts"],
 			"@src/server": ["./src/server/index.ts"],
-			"@orkestrel/middleware/server": ["./src/server/index.ts"],
-			"@orkestrel/middleware": ["./src/core/index.ts"]
+			"@orkestrel/middleware": ["./src/server/index.ts"]
 		}
 	},
 	"exclude": ["node_modules", "dist", "tmp"]

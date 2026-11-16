@@ -138,35 +138,7 @@ function isNamedPlugin(plugin: PluginOption): plugin is { name: string } {
 }
 
 function resolveSourceExternal(id: string): boolean {
-	return (
-		id === '@src/core' ||
-		resolveExternal(id, {
-			peers,
-			refused: [],
-			siblings: [resolveWorkspacePath('src/core/index.ts')],
-		})
-	)
-}
-
-export function srcCore(override?: UserConfig): UserConfig {
-	const project: UserConfig = {
-		resolve,
-		publicDir: false,
-		build: {
-			emptyOutDir: true,
-			sourcemap: true,
-			minify: false,
-			rolldownOptions: { onLog: enforceBuildLog },
-		},
-		test: {
-			name: { label: 'src:core', color: 'magenta' },
-			include: ['tests/src/core/**/*.test.ts'],
-			setupFiles: ['./tests/setup.ts'],
-			environment: 'node',
-			browser: { enabled: false },
-		},
-	}
-	return mergeOverride(project, override)
+	return resolveExternal(id, { peers, refused: [], siblings: [] })
 }
 
 function resolveServerFilename(format: string): string {
@@ -193,24 +165,12 @@ export function srcServer(override?: UserConfig): UserConfig {
 				onLog: enforceBuildLog,
 				platform: 'node',
 				external: resolveSourceExternal,
-				output: [
-					{
-						format: 'es',
-						entryFileNames: 'index.js',
-						paths: { '@src/core': '../core/index.js' },
-					},
-					{
-						format: 'cjs',
-						entryFileNames: 'index.cjs',
-						paths: { '@src/core': '../core/index.cjs' },
-					},
-				],
+				output: {},
 			},
 		},
 		test: {
 			name: { label: 'src:server', color: 'red' },
 			include: ['tests/src/server/**/*.test.ts'],
-			exclude: ['tests/src/core/**/*.test.ts'],
 			setupFiles: ['./tests/setup.ts', './tests/setupServer.ts'],
 			environment: 'node',
 			browser: { enabled: false },
@@ -328,6 +288,6 @@ export default defineConfig({
 	test: {
 		// Vitest 5.0.5 hands cached code to the module runner as bytes, which breaks stack mapping.
 		fsModuleCache: false,
-		projects: [srcCore, srcServer, policy, config, setup, guides, distribution, probe],
+		projects: [srcServer, policy, config, setup, guides, distribution, probe],
 	},
 })

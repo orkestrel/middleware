@@ -7,7 +7,7 @@ import {
 	createRestoredSession,
 	isSession,
 	sessionColumns,
-} from '@src/core'
+} from '@src/server'
 import { describe, expect, it } from 'vitest'
 import { buildStore, restoreMarkedSession, isAuthorizedSession } from '../../../setup.js'
 
