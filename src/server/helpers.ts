@@ -24,6 +24,7 @@ import type {
 } from './types.js'
 import type { Stats } from 'node:fs'
 import type { FileHandle } from 'node:fs/promises'
+import type { CompiledPath } from '@orkestrel/router'
 import type { Connection, Encoding, MiddlewareContext } from '@orkestrel/server'
 import { createReadStream } from 'node:fs'
 import {
@@ -39,6 +40,7 @@ import { copyFile, open, readFile, realpath, rename, stat, unlink } from 'node:f
 import { extname, isAbsolute, join, normalize, relative, resolve, sep } from 'node:path'
 import { promisify } from 'node:util'
 import { brotliDecompressSync, deflate as zlibDeflate, gzip as zlibGzip } from 'node:zlib'
+import { matchPath } from '@orkestrel/router'
 import type { ContractInterface } from '@orkestrel/contract'
 import {
 	admitValue,
@@ -90,6 +92,26 @@ export function isUnderPath(pathname: string, prefix: string): boolean {
 	if (pathname === prefix) return true
 	const boundary = prefix.endsWith('/') ? prefix : `${prefix}/`
 	return pathname.startsWith(boundary)
+}
+
+/**
+ * Checks whether a request pathname matches any compiled scope pattern — the test
+ * `only` and `except` apply, through the router's own `matchPath`.
+ *
+ * @param patterns - The patterns, each compiled by the router's `compilePath`
+ * @param pathname - The request pathname, `context.url.pathname`
+ * @returns True if any pattern matches `pathname`; false otherwise
+ *
+ * @example
+ * ```ts
+ * import { compilePath } from '@orkestrel/router'
+ *
+ * matchesScope([compilePath('/admin')], '/admin/') // true
+ * matchesScope([compilePath('/admin')], '/admin/users') // false
+ * ```
+ */
+export function matchesScope(patterns: readonly CompiledPath[], pathname: string): boolean {
+	return patterns.some((pattern) => matchPath(pattern, pathname) !== undefined)
 }
 
 /**
@@ -1055,52 +1077,51 @@ export function matchesTrustedEntry(address: string, entry: string): boolean {
 }
 
 /**
- * Walks `X-Forwarded-For` right-to-left and resolves the first untrusted hop
- * address — `createForwarded`'s core algorithm.
+ * Resolves the client address from `X-Forwarded-For` and the socket peer —
+ * `createForwarded`'s core algorithm.
  *
  * @remarks
- * Parses `X-Forwarded-For` only. With `proxies` set, trusts exactly that
- * many hops counted from the right (the closest to this server) and returns
- * the next one left of them; with `trusted` set, trusts every consecutive
- * hop from the right that matches one of the roster
- * ({@link matchesTrustedEntry}) and returns the first hop that does not. If
- * the rightmost hop (the immediate sender) does not match the roster, the
- * whole header is untrustworthy and this returns `undefined` rather than
- * returning any client-supplied hop value. When every hop is trusted, or the
- * header is absent/empty, returns `undefined` (the caller falls back to the
- * socket peer).
+ * Reads `X-Forwarded-For` only, and skips its empty entries. With `proxies`
+ * set, each of that many proxies appended one hop, so the client is the hop
+ * at index `length − proxies`: one proxy resolves the rightmost hop. A header
+ * with fewer hops than `proxies` resolves the socket peer. With `trusted` set,
+ * the walk starts at the socket peer and moves left through every address
+ * that matches the roster ({@link matchesTrustedEntry}); the first address
+ * that does not match is the client. An untrusted or unknown socket peer is
+ * therefore the client, and its header is never read. When the peer and every
+ * hop match, the leftmost hop is the client.
  *
  * @param header - The raw `X-Forwarded-For` header value (comma-separated hops), if present
  * @param trust - The {@link ForwardedOptions} form in force — a trusted hop count or a `trusted` CIDR/exact roster
- * @returns The first untrusted hop address, or `undefined` when none qualifies
+ * @param peer - The socket peer address, `context.connection.ip`, if known
+ * @returns The resolved client address, or `undefined` when the resolution reaches an unknown socket peer
  *
  * @example
  * ```ts
- * resolveForwardedFor('203.0.113.7, 10.0.0.1', { proxies: 1 }) // '203.0.113.7'
+ * resolveForwardedFor('203.0.113.7, 10.0.0.1', { proxies: 1 }, '10.0.0.2') // '10.0.0.1'
+ * resolveForwardedFor('203.0.113.7, 10.0.0.1', { trusted: ['10.0.0.0/8'] }, '10.0.0.2') // '203.0.113.7'
+ * resolveForwardedFor('203.0.113.7, 10.0.0.1', { trusted: ['10.0.0.0/8'] }, '198.51.100.9') // '198.51.100.9'
  * ```
  */
 export function resolveForwardedFor(
 	header: string | undefined,
 	trust: ForwardedOptions,
+	peer: string | undefined,
 ): string | undefined {
-	if (header === undefined) return undefined
-	const hops = header
+	const hops = (header ?? '')
 		.split(',')
 		.map((hop) => hop.trim())
 		.filter((hop) => hop.length > 0)
-	if (hops.length === 0) return undefined
 	if ('proxies' in trust) {
-		const index = hops.length - trust.proxies - 1
-		return index >= 0 ? hops[index] : undefined
+		const index = hops.length - trust.proxies
+		return index >= 0 ? hops[index] : peer
 	}
-	const rightmost = hops[hops.length - 1]
-	if (rightmost === undefined) return undefined
-	const rightmostTrusted = trust.trusted.some((entry) => matchesTrustedEntry(rightmost, entry))
-	if (!rightmostTrusted) return undefined
-	return hops
-		.slice(0, -1)
-		.reverse()
-		.find((hop) => !trust.trusted.some((entry) => matchesTrustedEntry(hop, entry)))
+	const chain = [peer, ...hops.toReversed()]
+	const index = chain.findIndex(
+		(address) =>
+			address === undefined || !trust.trusted.some((entry) => matchesTrustedEntry(address, entry)),
+	)
+	return index === -1 ? chain.at(-1) : chain[index]
 }
 
 /**

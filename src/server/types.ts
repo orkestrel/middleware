@@ -176,10 +176,15 @@ export interface DeadlineOptions {
  *
  * @remarks
  * Construction requires either `proxies` or `trusted`, never both and never
- * neither (a `ContractError` guards each):
- * - `proxies` — trust exactly this many hops from the right of
- *   `X-Forwarded-For` / `Forwarded`.
- * - `trusted` — trust every hop matching one of these CIDR entries.
+ * neither (a `ContractError` guards each). Only `X-Forwarded-For` is read; a
+ * `Forwarded` header is ignored.
+ * - `proxies` — the count of proxies that each append one hop to
+ *   `X-Forwarded-For`; the client is the hop at index `length − proxies`, so
+ *   `1` resolves the rightmost hop. Fit it only when every request arrives
+ *   through exactly that many proxies.
+ * - `trusted` — the exact addresses and IPv4 CIDR entries of the trusted
+ *   proxies; the walk starts at the socket peer and the first address outside
+ *   the roster is the client.
  */
 export type ForwardedOptions =
 	| { readonly proxies: number }
@@ -323,9 +328,9 @@ export interface MemoryLimiterStoreOptions {
  * Describes the resolved client connection facts `createForwarded` stashes.
  *
  * @remarks
- * `ip` is the first untrusted address walking `X-Forwarded-For` /
- * `Forwarded` right-to-left past the configured trusted hops, falling back
- * to the socket peer when no proxy hop qualifies.
+ * `ip` is the client address `resolveForwardedFor` resolves from
+ * `X-Forwarded-For` and the socket peer under the configured trust, or the
+ * socket peer itself when the header names no hop the trust admits.
  */
 export interface Client {
 	readonly ip?: string

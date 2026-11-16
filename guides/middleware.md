@@ -59,8 +59,8 @@ const handle = compose<State>([boundary, security], async (_request, context) =>
 | `createBody`        | function | `<TState extends BodyState = BodyState>() => MiddlewareHandler<TState>`                                                                                        | Creates the body-driving battery — eagerly awaits the cached `context.body()` so its throws (or a malformed-JSON `undefined`) surface before the handler runs, and stashes the resolved value onto `BodyState.body`. |
 | `createSession`     | function | `<S extends SessionInterface = SessionInterface, TState extends SessionState = SessionState>(options: SessionOptions<S, TState>) => MiddlewareHandler<TState>` | Creates the generic session battery — resolves, mints, and persists a session across the request, with a mid-handler `regenerate`/`destroy` control handle.                                                          |
 | `createCSRF`        | function | `<TState extends CSRFState & SessionState>(options: CSRFOptions) => MiddlewareHandler<TState>`                                                                 | Creates the session-bound double-submit CSRF protection battery.                                                                                                                                                     |
-| `only`              | function | `<TState>(paths: string \| readonly string[], handler: MiddlewareHandler<TState>) => MiddlewareHandler<TState>`                                                | Scopes a battery to a set of exact pathnames and nowhere else — outside that set it steps aside through `next()`.                                                                                                    |
-| `except`            | function | `<TState>(paths: string \| readonly string[], handler: MiddlewareHandler<TState>) => MiddlewareHandler<TState>`                                                | Scopes a battery to every pathname outside a set of exact ones — on that set it steps aside through `next()`.                                                                                                        |
+| `only`              | function | `<TState>(paths: string \| readonly string[], handler: MiddlewareHandler<TState>) => MiddlewareHandler<TState>`                                                | Scopes a battery to the paths its route patterns match and nowhere else — outside them it steps aside through `next()`.                                                                                              |
+| `except`            | function | `<TState>(paths: string \| readonly string[], handler: MiddlewareHandler<TState>) => MiddlewareHandler<TState>`                                                | Scopes a battery to every path its route patterns do not match — on the matched paths it steps aside through `next()`.                                                                                               |
 
 ### Middlewares — node
 
@@ -267,7 +267,8 @@ const handle = compose<State>([boundary, security], async (_request, context) =>
 | `buildRateLimitField`         | function | `(remaining: number, expiry: number, now: number) => string`                                                                            | Builds the draft `RateLimit` structured header field — emitted only when `createLimiter`'s `policy` option is `true`.                                                                                                                                                                                                                                             |
 | `buildRateLimitPolicyField`   | function | `(max: number, window: number) => string`                                                                                               | Builds the draft `RateLimit-Policy` structured header field — emitted only when `createLimiter`'s `policy` option is `true`.                                                                                                                                                                                                                                      |
 | `matchesTrustedEntry`         | function | `(address: string, entry: string) => boolean`                                                                                           | Checks whether a candidate address is a bare (non-CIDR) trusted-hop match — an exact string match, or a simple prefix-CIDR match for IPv4 (`/8`–`/32`). An IPv6 entry matches by exact string only — there is no IPv6 CIDR support.                                                                                                                               |
-| `resolveForwardedFor`         | function | `(header: string \| undefined, trust: ForwardedOptions) => string \| undefined`                                                         | Walks `X-Forwarded-For` right-to-left and resolves the first untrusted hop address — `createForwarded`'s core algorithm.                                                                                                                                                                                                                                          |
+| `resolveForwardedFor`         | function | `(header: string \| undefined, trust: ForwardedOptions, peer: string \| undefined) => string \| undefined`                              | Resolves the client address from `X-Forwarded-For` and the socket peer — `createForwarded`'s core algorithm.                                                                                                                                                                                                                                                      |
+| `matchesScope`                | function | `(patterns: readonly CompiledPath[], pathname: string) => boolean`                                                                      | Checks whether a request pathname matches any compiled scope pattern — the test `only` and `except` apply, through the router's own `matchPath`.                                                                                                                                                                                                                  |
 | `detectEncodings`             | function | `(candidates: readonly Encoding[]) => readonly Encoding[]`                                                                              | Feature-detects which of `candidates` the runtime's `CompressionStream` actually supports — `createCompression`'s construction-time intersection.                                                                                                                                                                                                                 |
 | `compressBytes`               | function | `(bytes: Uint8Array<ArrayBuffer>, encoding: Exclude<Encoding, 'identity'>) => Promise<Uint8Array<ArrayBuffer>>`                         | Compresses bytes with the host-independent `CompressionStream` primitive.                                                                                                                                                                                                                                                                                         |
 | `matchesUnbufferableResponse` | function | `(method: string, response: Response, skipHeader: string) => boolean`                                                                   | Checks whether a response must skip the compression and ETag buffering pipeline — the shared cheap-skip predicate both batteries apply before ever touching `response.arrayBuffer()`, true for a `HEAD` request, a `204`/`304` or otherwise bodyless response, an `event-stream` response, and a response already carrying the header the caller is about to set. |
@@ -290,9 +291,11 @@ Each guard in the following table is total: it accepts any input, returns `false
 | Name               | Kind     | Signature                                              | Summary                                                                                                                                                                                                                                                                                                                                                                       |
 | ------------------ | -------- | ------------------------------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `isSession`        | function | `(value: unknown) => value is SessionInterface`        | Determines whether a value implements `SessionInterface` — a total structural guard: an `id` string, a `state` `Map`, and the `set`, `delete`, and `clear` mutators. Prototype-agnostic — accepts a plain object, a null-prototype object, and a class instance (a real `Session`), because a restored or stored session is routinely a class instance rather than a literal. |
-| `isSessionControl` | function | `(value: unknown) => value is SessionControlInterface` | Determines whether a value implements `SessionControlInterface` — a total structural guard: callable `regenerate` and `destroy`.                                                                                                                                                                                                                                              |
+| `isSessionControl` | function | `(value: unknown) => value is SessionControlInterface` | Determines whether a value implements `SessionControlInterface` — a total structural guard: callable `regenerate` and `destroy`. Prototype-agnostic — accepts a plain object, a callable object, and a class instance (a real `SessionControl`). A member read that throws, as on a revoked proxy, answers false.                                                             |
 | `isMultipartFile`  | function | `(value: unknown) => value is MultipartFile`           | Determines whether a value is one staged `MultipartFile` record — a total structural guard checking every required field's shape.                                                                                                                                                                                                                                             |
 | `isMultipartBody`  | function | `(value: unknown) => value is MultipartBody`           | Determines whether a value implements `MultipartBody` — a total structural guard: `files` keyed by field name to arrays of `MultipartFile`, and a `fields` string record.                                                                                                                                                                                                     |
+
+Before 0.0.35, `isSessionControl` refused every class instance, a real `SessionControl` included.
 
 ### Helpers — node
 
@@ -490,7 +493,20 @@ prevents:
    slot).
 9. **`createForwarded` resolves client facts before anything keys off
    them.** `createLimiter`'s default key and any session/telemetry logic
-   that wants `ClientState.client.ip` must run downstream of it.
+   that wants `ClientState.client.ip` must run downstream of it. It reads
+   `X-Forwarded-For` only and ignores a `Forwarded` header. With
+   `proxies: N`, each of the `N` proxies appends one hop, and the client is
+   the hop at index `length − N`: `proxies: 1` behind one appending proxy
+   resolves the rightmost hop, the address that proxy saw. A header with fewer
+   than `N` hops resolves the socket peer. `proxies` fits only when every
+   request arrives through exactly `N` proxies, because a request that reaches
+   the server directly names its own client. With `trusted`, the walk starts
+   at the socket peer, `context.connection.ip`, and moves left through every
+   address the roster matches; the first address outside the roster is the
+   client. An untrusted socket peer is the client, whatever its header says,
+   and when the peer and every hop match, the leftmost hop is the client.
+   Before 0.0.35, `proxies: 1` resolved the hop left of the rightmost one, and
+   `trusted` began its walk at the rightmost hop instead of the socket peer.
 10. **`createETag` sits inside `createCompression`.** The hash is computed
     over the uncompressed representation — hashing the compressed bytes
     would break revalidation the instant the negotiated coding changes.
@@ -606,17 +622,23 @@ prevents:
     message never reaches the body); an `HTTPError`'s own `message` always
     surfaces (it is the handler's deliberate signal); a `report` sink's own
     throw is swallowed and can never alter the response.
-25. **`only`/`except` are not a security boundary.** Both match
-    `context.url.pathname` exactly — a trailing slash (`/login/` vs `/login`),
-    a case variant, or a percent-encoded path silently falls outside an
-    `only()`-scoped path set, and a security battery scoped that way goes
-    dark on that request with no signal. Prefer `except()` for security
-    batteries (CSRF, bearer, rate limiting) — its failure mode is fail-closed
-    (an unlisted or misspelled path still gets the battery; only the
-    explicitly excluded paths lose it), where `only()`'s failure mode is
-    fail-open. Whichever combinator is used, keep its path set in lockstep
-    with the router's actual routes — a route added after the fact and not
-    added to the set is silently unscoped.
+25. **`only`/`except` match as the router does.** Each path is a route
+    pattern compiled by `@orkestrel/router`'s `compilePath` and matched
+    against `context.url.pathname` by its `matchPath`, the matcher the
+    dispatcher routes with. A pattern matches case-sensitively, with one
+    trailing slash optional, so `/admin` covers `/admin` and `/admin/`. A
+    pattern covers no path beneath it: `/admin` does not cover `/admin/users`.
+    To scope a subtree, list `/admin` and `/admin/*rest`; a `*name` wildcard
+    matches one or more characters across segments and must be the final
+    segment, and `:name` matches one segment. A wildcard before the final
+    segment refuses at construction with a `ContractError`. Before 0.0.35,
+    both compared the pathname by string equality, so `/admin/` fell outside
+    `only('/admin', …)` while the router still dispatched it. Prefer
+    `except()` for security batteries (CSRF, bearer, rate limiting): an
+    unlisted path still gets the battery, where an unlisted path under
+    `only()` goes without it. Keep the pattern set in lockstep with the
+    router's routes, because a route added later and left out of the set is
+    unscoped.
 26. **Challenge.** Every `401` `createBearer` returns carries a `WWW-Authenticate`
     challenge (RFC 9110 § 15.5.2). A missing, wrong-scheme, or empty token renders
     the configured `challenge` auth-params, and a refused credential adds

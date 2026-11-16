@@ -2156,26 +2156,54 @@ describe('the exchange seam through a real Server', () => {
 // ── createForwarded ───────────────────────────────────────────────────────
 
 describe('createForwarded', () => {
-	it('proxies-count walk: trusts exactly N hops from the right', async () => {
+	it('with one proxy, resolves the hop that proxy appended', async () => {
 		const forwarded = createForwarded<ClientState>({ proxies: 1 })
 		const request = buildTestRequest('/', {
 			headers: { 'x-forwarded-for': '203.0.113.7, 10.0.0.1' },
 		})
 		const state: ClientState = {}
-		const context = createTestContext(request, state)
+		const context = createTestContext(request, state, {
+			connection: { ip: '10.0.0.2', encrypted: false },
+		})
+		await runChain([forwarded], createEchoTerminal(), request, context)
+		expect(state.client?.ip).toBe('10.0.0.1')
+	})
+
+	it('with a trusted roster, walks left from a trusted socket peer to the first untrusted hop', async () => {
+		const forwarded = createForwarded<ClientState>({ trusted: ['10.0.0.0/8'] })
+		const request = buildTestRequest('/', {
+			headers: { 'x-forwarded-for': '198.51.100.66, 203.0.113.7, 10.0.0.1' },
+		})
+		const state: ClientState = {}
+		const context = createTestContext(request, state, {
+			connection: { ip: '10.0.0.2', encrypted: false },
+		})
 		await runChain([forwarded], createEchoTerminal(), request, context)
 		expect(state.client?.ip).toBe('203.0.113.7')
 	})
 
-	it('trusted-list walk: trusts consecutive hops matching the CIDR roster', async () => {
+	it('with a trusted roster, resolves an untrusted socket peer that names a trusted hop', async () => {
 		const forwarded = createForwarded<ClientState>({ trusted: ['10.0.0.0/8'] })
 		const request = buildTestRequest('/', {
-			headers: { 'x-forwarded-for': '203.0.113.7, 10.0.0.1' },
+			headers: { 'x-forwarded-for': '198.51.100.66, 10.0.0.1' },
 		})
 		const state: ClientState = {}
-		const context = createTestContext(request, state)
+		const context = createTestContext(request, state, {
+			connection: { ip: '192.0.2.55', encrypted: false },
+		})
 		await runChain([forwarded], createEchoTerminal(), request, context)
-		expect(state.client?.ip).toBe('203.0.113.7')
+		expect(state.client?.ip).toBe('192.0.2.55')
+	})
+
+	it('reads no Forwarded header: a Forwarded hop alone resolves the socket peer', async () => {
+		const forwarded = createForwarded<ClientState>({ proxies: 1 })
+		const request = buildTestRequest('/', { headers: { forwarded: 'for=198.51.100.66' } })
+		const state: ClientState = {}
+		const context = createTestContext(request, state, {
+			connection: { ip: '10.0.0.2', encrypted: false },
+		})
+		await runChain([forwarded], createEchoTerminal(), request, context)
+		expect(state.client?.ip).toBe('10.0.0.2')
 	})
 
 	it('requires exactly one of proxies/trusted at construction', () => {
@@ -2188,40 +2216,28 @@ describe('createForwarded', () => {
 		expect(() => createForwarded({ proxies: -1 })).toThrow(ContractError)
 	})
 
-	it('with proxies:1 and a spoofed extra hop, the attacker-injected leftmost value is never selected', async () => {
+	it('with one proxy, never resolves a hop the client wrote ahead of the appended one', async () => {
 		const forwarded = createForwarded<ClientState>({ proxies: 1 })
 		const request = buildTestRequest('/', {
-			headers: { 'x-forwarded-for': 'attacker-injected-spoof, 203.0.113.7, 10.0.0.1' },
-		})
-		const state: ClientState = {}
-		const context = createTestContext(request, state)
-		await runChain([forwarded], createEchoTerminal(), request, context)
-		expect(state.client?.ip).toBe('203.0.113.7')
-		expect(state.client?.ip).not.toBe('attacker-injected-spoof')
-	})
-
-	it('with a trusted roster, an untrusted rightmost (immediate sender) hop makes the whole header untrustworthy and falls back to the socket peer, never a client-supplied hop', async () => {
-		const forwarded = createForwarded<ClientState>({ trusted: ['10.0.0.0/8'] })
-		const request = buildTestRequest('/', {
-			headers: { 'x-forwarded-for': 'attacker-injected-spoof, 203.0.113.7, 198.51.100.9' },
+			headers: { 'x-forwarded-for': '198.51.100.66, 203.0.113.7, 10.0.0.1' },
 		})
 		const state: ClientState = {}
 		const context = createTestContext(request, state, {
-			connection: { ip: '192.0.2.55', encrypted: false },
+			connection: { ip: '10.0.0.2', encrypted: false },
 		})
 		await runChain([forwarded], createEchoTerminal(), request, context)
-		expect(state.client?.ip).toBe('192.0.2.55')
-		expect(state.client?.ip).not.toBe('attacker-injected-spoof')
-		expect(state.client?.ip).not.toBe('203.0.113.7')
+		expect(state.client?.ip).toBe('10.0.0.1')
 	})
 
-	it('a spoofed hop beyond the trusted count is ignored', async () => {
-		const forwarded = createForwarded<ClientState>({ proxies: 1 })
-		const request = buildTestRequest('/', { headers: { 'x-forwarded-for': 'evil-spoofed-ip' } })
+	it('with a proxies count longer than the header, resolves the socket peer', async () => {
+		const forwarded = createForwarded<ClientState>({ proxies: 2 })
+		const request = buildTestRequest('/', { headers: { 'x-forwarded-for': '198.51.100.66' } })
 		const state: ClientState = {}
-		const context = createTestContext(request, state)
+		const context = createTestContext(request, state, {
+			connection: { ip: '10.0.0.2', encrypted: false },
+		})
 		await runChain([forwarded], createEchoTerminal(), request, context)
-		expect(state.client?.ip).toBeUndefined()
+		expect(state.client?.ip).toBe('10.0.0.2')
 	})
 
 	it('falls back to the connection ip when no forwarded hop qualifies', async () => {
@@ -4064,6 +4080,85 @@ describe('only', () => {
 		)
 		expect(await response.text()).toBe('reached')
 	})
+
+	it('runs the handler on the trailing-slash form of a pattern, as the router dispatches it', async () => {
+		const scoped = only('/admin', createEchoTerminal())
+		const response = await runChain(
+			[scoped],
+			async () => new Response('reached'),
+			buildTestRequest('/admin/'),
+			createTestContext(buildTestRequest('/admin/'), {}),
+		)
+		expect(await response.text()).toBe(ECHO_MARKER)
+	})
+
+	it('runs the handler on the bare form of a pattern written with a trailing slash', async () => {
+		const scoped = only('/admin/', createEchoTerminal())
+		const response = await runChain(
+			[scoped],
+			async () => new Response('reached'),
+			buildTestRequest('/admin'),
+			createTestContext(buildTestRequest('/admin'), {}),
+		)
+		expect(await response.text()).toBe(ECHO_MARKER)
+	})
+
+	it('skips the paths beneath a literal pattern and a case variant of it', async () => {
+		const scoped = only('/admin', createEchoTerminal())
+		const beneath = await runChain(
+			[scoped],
+			async () => new Response('reached'),
+			buildTestRequest('/admin/users'),
+			createTestContext(buildTestRequest('/admin/users'), {}),
+		)
+		const folded = await runChain(
+			[scoped],
+			async () => new Response('reached'),
+			buildTestRequest('/Admin'),
+			createTestContext(buildTestRequest('/Admin'), {}),
+		)
+		expect(await beneath.text()).toBe('reached')
+		expect(await folded.text()).toBe('reached')
+	})
+
+	it('runs the handler on every path a param or a wildcard pattern matches', async () => {
+		const scoped = only(['/users/:id', '/admin/*rest'], createEchoTerminal())
+		const paths = ['/users/7', '/users/7/', '/admin/users', '/admin/users/7/']
+		const texts = await Promise.all(
+			paths.map(async (path) => {
+				const response = await runChain(
+					[scoped],
+					async () => new Response('reached'),
+					buildTestRequest(path),
+					createTestContext(buildTestRequest(path), {}),
+				)
+				return response.text()
+			}),
+		)
+		expect(texts).toEqual([ECHO_MARKER, ECHO_MARKER, ECHO_MARKER, ECHO_MARKER])
+	})
+
+	it('skips the paths a param or a wildcard pattern does not match', async () => {
+		const scoped = only(['/users/:id', '/admin/*rest'], createEchoTerminal())
+		const paths = ['/users', '/users/7/posts', '/admin', '/admin/']
+		const texts = await Promise.all(
+			paths.map(async (path) => {
+				const response = await runChain(
+					[scoped],
+					async () => new Response('reached'),
+					buildTestRequest(path),
+					createTestContext(buildTestRequest(path), {}),
+				)
+				return response.text()
+			}),
+		)
+		expect(texts).toEqual(['reached', 'reached', 'reached', 'reached'])
+	})
+
+	it('refuses a wildcard segment that is not the final segment at construction', () => {
+		expect(() => only('/files/*rest/edit', createEchoTerminal())).toThrow(ContractError)
+		expect(() => only(['/a', '/files/*rest/edit'], createEchoTerminal())).toThrow(ContractError)
+	})
 })
 
 describe('except', () => {
@@ -4109,5 +4204,42 @@ describe('except', () => {
 			createTestContext(buildTestRequest('/c'), {}),
 		)
 		expect(await response.text()).toBe(ECHO_MARKER)
+	})
+
+	it('skips the trailing-slash form of a pattern, as the router dispatches it', async () => {
+		const scoped = except('/health', createEchoTerminal())
+		const response = await runChain(
+			[scoped],
+			async () => new Response('reached'),
+			buildTestRequest('/health/'),
+			createTestContext(buildTestRequest('/health/'), {}),
+		)
+		expect(await response.text()).toBe('reached')
+	})
+
+	it('runs the handler on the paths beneath a literal pattern', async () => {
+		const scoped = except('/health', createEchoTerminal())
+		const response = await runChain(
+			[scoped],
+			async () => new Response('unreached'),
+			buildTestRequest('/health/deep'),
+			createTestContext(buildTestRequest('/health/deep'), {}),
+		)
+		expect(await response.text()).toBe(ECHO_MARKER)
+	})
+
+	it('skips every path a param pattern matches', async () => {
+		const scoped = except('/files/:name', createEchoTerminal())
+		const response = await runChain(
+			[scoped],
+			async () => new Response('reached'),
+			buildTestRequest('/files/report.txt'),
+			createTestContext(buildTestRequest('/files/report.txt'), {}),
+		)
+		expect(await response.text()).toBe('reached')
+	})
+
+	it('refuses a wildcard segment that is not the final segment at construction', () => {
+		expect(() => except('/files/*rest/edit', createEchoTerminal())).toThrow(ContractError)
 	})
 })

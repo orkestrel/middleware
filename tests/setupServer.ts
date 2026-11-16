@@ -1893,7 +1893,6 @@ export const ARM_CELLS: readonly StackCell[] = Object.freeze([
 	},
 	{
 		title: 'GET /admin/, the bearer token on the trailing-slash form the router dispatches',
-		closer: 'M2',
 		build: (token) => ({
 			path: '/admin/',
 			headers: token === undefined ? {} : { authorization: `Bearer ${STACK_BEARER}` },
@@ -1916,7 +1915,6 @@ export const FORWARDED_CELLS: readonly StackForwardedCell[] = Object.freeze([
 		proxied: true,
 		headers: {},
 		expect: 'hop',
-		closer: 'M2',
 	},
 	{
 		title: 'proxies: 1, a client-written X-Forwarded-For hop through the proxy never resolves',
@@ -1924,7 +1922,6 @@ export const FORWARDED_CELLS: readonly StackForwardedCell[] = Object.freeze([
 		proxied: true,
 		headers: { 'x-forwarded-for': STACK_CLIENT_HOP },
 		expect: 'hop',
-		closer: 'M2',
 	},
 	{
 		title: 'proxies: 1, two client-written X-Forwarded-For hops through the proxy never resolve',
@@ -1932,7 +1929,6 @@ export const FORWARDED_CELLS: readonly StackForwardedCell[] = Object.freeze([
 		proxied: true,
 		headers: { 'x-forwarded-for': `${STACK_CLIENT_HOP}, 203.0.113.7` },
 		expect: 'hop',
-		closer: 'M2',
 	},
 	{
 		title: 'proxies: 1, a client-written Forwarded hop through the proxy never resolves',
@@ -1940,7 +1936,6 @@ export const FORWARDED_CELLS: readonly StackForwardedCell[] = Object.freeze([
 		proxied: true,
 		headers: { forwarded: `for=${STACK_CLIENT_HOP}` },
 		expect: 'hop',
-		closer: 'M2',
 	},
 	{
 		title: 'trusted, a direct request with no forwarding header resolves the socket peer',
@@ -1956,7 +1951,6 @@ export const FORWARDED_CELLS: readonly StackForwardedCell[] = Object.freeze([
 		proxied: false,
 		headers: { 'x-forwarded-for': `${STACK_CLIENT_HOP}, ${STACK_PEER}` },
 		expect: 'peer',
-		closer: 'M2',
 	},
 	{
 		title: 'trusted, a request through the trusted proxy resolves the hop it appended',
@@ -1964,7 +1958,6 @@ export const FORWARDED_CELLS: readonly StackForwardedCell[] = Object.freeze([
 		proxied: true,
 		headers: {},
 		expect: 'hop',
-		closer: 'M2',
 	},
 	{
 		title: 'trusted, a client-written hop through the trusted proxy never resolves',
@@ -1972,7 +1965,6 @@ export const FORWARDED_CELLS: readonly StackForwardedCell[] = Object.freeze([
 		proxied: true,
 		headers: { 'x-forwarded-for': STACK_CLIENT_HOP },
 		expect: 'hop',
-		closer: 'M2',
 	},
 	{
 		title: 'trusted, a client-written hop naming the trusted proxy through it never resolves',
@@ -1980,7 +1972,6 @@ export const FORWARDED_CELLS: readonly StackForwardedCell[] = Object.freeze([
 		proxied: true,
 		headers: { 'x-forwarded-for': `${STACK_CLIENT_HOP}, ${STACK_PEER}` },
 		expect: 'hop',
-		closer: 'M2',
 	},
 ])
 

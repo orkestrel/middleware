@@ -5,6 +5,7 @@ import type {
 	SessionInterface,
 } from './types.js'
 import {
+	holds,
 	isArray,
 	isBoolean,
 	isFunction,
@@ -44,7 +45,9 @@ export function isSession(value: unknown): value is SessionInterface {
 
 /**
  * Determines whether a value implements {@link SessionControlInterface} — a
- * total structural guard: callable `regenerate` and `destroy`.
+ * total structural guard: callable `regenerate` and `destroy`. Prototype-agnostic
+ * — accepts a plain object, a callable object, and a class instance (a real
+ * `SessionControl`). A member read that throws, as on a revoked proxy, answers false.
  *
  * @param value - The candidate value
  * @returns True if `value` is shaped like a {@link SessionControlInterface}; false otherwise
@@ -52,11 +55,14 @@ export function isSession(value: unknown): value is SessionInterface {
  * @example
  * ```ts
  * isSessionControl({ regenerate() {}, destroy() {} }) // true
+ * isSessionControl(new SessionControl(new Session('a'))) // true
  * ```
  */
 export function isSessionControl(value: unknown): value is SessionControlInterface {
-	if (!isRecord(value)) return false
-	return isFunction(value.regenerate) && isFunction(value.destroy)
+	if (!isObject(value) && !isFunction(value)) return false
+	return holds(
+		() => isFunction(Reflect.get(value, 'regenerate')) && isFunction(Reflect.get(value, 'destroy')),
+	)
 }
 
 /**

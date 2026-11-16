@@ -5,6 +5,7 @@ import { randomUUID } from 'node:crypto'
 import { brotliCompressSync, gunzipSync, inflateSync } from 'node:zlib'
 import { describe, expect, it } from 'vitest'
 import { ContractError, attempt } from '@orkestrel/contract'
+import { compilePath } from '@orkestrel/router'
 import { waitForCondition } from '@orkestrel/test'
 import { createScratch } from '@orkestrel/test/server'
 import {
@@ -18,6 +19,7 @@ import {
 	equalsConstantTime,
 	extractBearerToken,
 	extractFieldToken,
+	matchesScope,
 	matchesUnbufferableResponse,
 	isCompressionNegotiated,
 	isPreflight,
@@ -331,6 +333,36 @@ describe('isUnderPath', () => {
 
 	it('does not match an unrelated path', () => {
 		expect(isUnderPath('/other', '/api')).toBe(false)
+	})
+})
+
+describe('matchesScope', () => {
+	it('matches a literal pattern on its bare and trailing-slash forms only', () => {
+		const patterns = [compilePath('/admin')]
+		expect(
+			['/admin', '/admin/', '/admin//', '/admin/users', '/Admin', '/adminx'].map((path) =>
+				matchesScope(patterns, path),
+			),
+		).toEqual([true, true, false, false, false, false])
+	})
+
+	it('matches a param segment and a final wildcard as the router compiles them', () => {
+		const patterns = [compilePath('/users/:id'), compilePath('/files/*rest')]
+		expect(
+			[
+				'/users/7',
+				'/users/7/',
+				'/users',
+				'/users/7/posts',
+				'/files/a/b.png',
+				'/files',
+				'/files/',
+			].map((path) => matchesScope(patterns, path)),
+		).toEqual([true, true, false, false, true, false, false])
+	})
+
+	it('matches no path against an empty pattern list', () => {
+		expect(matchesScope([], '/')).toBe(false)
 	})
 })
 
@@ -1252,58 +1284,85 @@ describe('matchesTrustedEntry', () => {
 })
 
 describe('resolveForwardedFor', () => {
-	it('resolves undefined when the header is absent', () => {
-		expect(resolveForwardedFor(undefined, { proxies: 1 })).toBeUndefined()
+	it('resolves the socket peer when the header is absent', () => {
+		expect(resolveForwardedFor(undefined, { proxies: 1 }, '192.0.2.55')).toBe('192.0.2.55')
+		expect(resolveForwardedFor(undefined, { trusted: ['10.0.0.0/8'] }, '10.0.0.2')).toBe('10.0.0.2')
 	})
 
-	it('resolves undefined when the header is present but empty', () => {
-		expect(resolveForwardedFor('', { proxies: 1 })).toBeUndefined()
-		expect(resolveForwardedFor('   ', { proxies: 1 })).toBeUndefined()
+	it('resolves the socket peer when the header holds no hop', () => {
+		expect(resolveForwardedFor('', { proxies: 1 }, '192.0.2.55')).toBe('192.0.2.55')
+		expect(resolveForwardedFor('   ', { proxies: 1 }, '192.0.2.55')).toBe('192.0.2.55')
+		expect(resolveForwardedFor(',,,', { proxies: 1 }, '192.0.2.55')).toBe('192.0.2.55')
 	})
 
-	it('with a proxies count, trusts exactly that many hops from the right', () => {
-		expect(resolveForwardedFor('203.0.113.7, 10.0.0.1', { proxies: 1 })).toBe('203.0.113.7')
-		expect(resolveForwardedFor('203.0.113.7, 10.0.0.1, 10.0.0.2', { proxies: 2 })).toBe(
+	it('with one proxy, resolves the rightmost hop, the one that proxy appended', () => {
+		expect(resolveForwardedFor('203.0.113.7, 10.0.0.1', { proxies: 1 }, '10.0.0.2')).toBe(
+			'10.0.0.1',
+		)
+		expect(resolveForwardedFor('10.0.0.1', { proxies: 1 }, '10.0.0.2')).toBe('10.0.0.1')
+	})
+
+	it('with a proxies count, resolves the hop at index length minus the count', () => {
+		expect(resolveForwardedFor('203.0.113.7, 10.0.0.1, 10.0.0.2', { proxies: 2 }, '10.0.0.3')).toBe(
+			'10.0.0.1',
+		)
+		expect(resolveForwardedFor('203.0.113.7, 10.0.0.1, 10.0.0.2', { proxies: 3 }, '10.0.0.3')).toBe(
 			'203.0.113.7',
 		)
 	})
 
-	it('with a proxies count, resolves undefined when every hop is claimed as trusted', () => {
-		expect(resolveForwardedFor('10.0.0.1', { proxies: 1 })).toBeUndefined()
-		expect(resolveForwardedFor('10.0.0.1', { proxies: 5 })).toBeUndefined()
+	it('with a proxies count longer than the header, resolves the socket peer', () => {
+		expect(resolveForwardedFor('10.0.0.1', { proxies: 2 }, '10.0.0.2')).toBe('10.0.0.2')
+		expect(resolveForwardedFor('10.0.0.1', { proxies: 5 }, '10.0.0.2')).toBe('10.0.0.2')
 	})
 
-	it('with a trusted roster, walks right-to-left past consecutive matches', () => {
-		expect(resolveForwardedFor('203.0.113.7, 10.0.0.1', { trusted: ['10.0.0.0/8'] })).toBe(
-			'203.0.113.7',
+	it('with a proxies count, skips the empty entries a client writes without shifting the appended hops', () => {
+		expect(resolveForwardedFor('198.51.100.66,, 10.0.0.1', { proxies: 1 }, '10.0.0.2')).toBe(
+			'10.0.0.1',
 		)
+		expect(resolveForwardedFor('198.51.100.66,, 10.0.0.1', { proxies: 2 }, '10.0.0.2')).toBe(
+			'198.51.100.66',
+		)
+	})
+
+	it('with a trusted roster, resolves an untrusted socket peer and reads no hop', () => {
 		expect(
-			resolveForwardedFor('203.0.113.7, 10.0.0.1, 10.0.0.2', { trusted: ['10.0.0.0/8'] }),
+			resolveForwardedFor('198.51.100.66, 10.0.0.1', { trusted: ['10.0.0.0/8'] }, '192.0.2.55'),
+		).toBe('192.0.2.55')
+		expect(resolveForwardedFor('10.0.0.1', { trusted: ['10.0.0.0/8'] }, '192.0.2.55')).toBe(
+			'192.0.2.55',
+		)
+	})
+
+	it('with a trusted roster and a trusted socket peer, walks left to the first untrusted hop', () => {
+		expect(
+			resolveForwardedFor('198.51.100.66, 203.0.113.7', { trusted: ['10.0.0.0/8'] }, '10.0.0.2'),
+		).toBe('203.0.113.7')
+		expect(
+			resolveForwardedFor(
+				'198.51.100.66, 203.0.113.7, 10.0.0.1',
+				{ trusted: ['10.0.0.0/8'] },
+				'10.0.0.2',
+			),
 		).toBe('203.0.113.7')
 	})
 
-	it('with a trusted roster, resolves undefined when every hop is trusted', () => {
-		expect(resolveForwardedFor('10.0.0.1, 10.0.0.2', { trusted: ['10.0.0.0/8'] })).toBeUndefined()
+	it('with a trusted roster, resolves the leftmost hop when the peer and every hop are trusted', () => {
+		expect(resolveForwardedFor('10.0.0.1, 10.0.0.3', { trusted: ['10.0.0.0/8'] }, '10.0.0.2')).toBe(
+			'10.0.0.1',
+		)
 	})
 
-	it('with a garbage header, remains total-safe and never throws', () => {
-		expect(() => resolveForwardedFor(',,,', { proxies: 1 })).not.toThrow()
-		expect(resolveForwardedFor(',,,', { proxies: 1 })).toBeUndefined()
-		expect(() =>
-			resolveForwardedFor('not-an-ip, also-not', { trusted: ['10.0.0.0/8'] }),
-		).not.toThrow()
-		// The rightmost hop ('also-not') does not match the trusted roster, so the
-		// whole header is untrustworthy — falls back to undefined rather than
-		// returning a client-supplied hop.
-		expect(resolveForwardedFor('not-an-ip, also-not', { trusted: ['10.0.0.0/8'] })).toBeUndefined()
-	})
-
-	it('with a trusted roster, an untrusted rightmost (immediate sender) hop makes the whole header untrustworthy, even when an earlier hop would match', () => {
+	it('with a trusted roster, resolves undefined when the socket peer is unknown', () => {
 		expect(
-			resolveForwardedFor('203.0.113.7, 10.0.0.1, attacker-injected', {
-				trusted: ['10.0.0.0/8'],
-			}),
+			resolveForwardedFor('198.51.100.66, 10.0.0.1', { trusted: ['10.0.0.0/8'] }, undefined),
 		).toBeUndefined()
+	})
+
+	it('with a trusted roster, resolves a malformed hop the trusted peer appended as written', () => {
+		expect(
+			resolveForwardedFor('not-an-ip, also-not', { trusted: ['10.0.0.0/8'] }, '10.0.0.2'),
+		).toBe('also-not')
 	})
 })
 
