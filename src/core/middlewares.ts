@@ -22,7 +22,7 @@ import type {
 	SessionStoreInterface,
 	TelemetryOptions,
 } from './types.js'
-import type { MiddlewareHandler } from '@orkestrel/server'
+import type { CookieOptions, MiddlewareHandler } from '@orkestrel/server'
 import {
 	isBoolean,
 	isError,
@@ -35,6 +35,7 @@ import {
 } from '@orkestrel/contract'
 import { linkSignal } from '@orkestrel/abort'
 import {
+	clearCookie,
 	HTTPError,
 	isHTTPError,
 	isValidRequestId,
@@ -804,32 +805,50 @@ export function createCSRF<TState extends CSRFState & SessionState & ConnectionS
 	const safe = options.safe ?? DEFAULT_CSRF_SAFE_METHODS
 
 	return async (request, context, next) => {
-		if (safe.includes(context.method)) {
-			const bound = context.state.session?.id ?? crypto.randomUUID()
-			const token = await signToken(bound, { secret })
-			Object.assign(context.state, { csrf: token })
-			const response = await next()
-			const secure = resolveSecure(undefined, context.state.connection?.encrypted ?? false)
-			await writeSignedCookie(response.headers, cookieName, token, secret, {
-				sameSite: 'Strict',
-				httpOnly: false,
-				path: '/',
-				secure,
-			})
+		const arrived = context.state.session?.id
+		const unsafe = !safe.includes(context.method)
+		if (unsafe) {
+			const submitted =
+				request.headers.get(header) ?? extractFieldToken(await context.body(), field)
+			if (submitted === undefined) throw new HTTPError(403, 'invalid csrf token')
+			const cookieToken = await readSignedCookie(request, cookieName, secret)
+			if (cookieToken === undefined || !equalsConstantTime(cookieToken, submitted))
+				throw new HTTPError(403, 'invalid csrf token')
+			if (arrived !== undefined) {
+				const boundId = await verifyToken(cookieToken, secret)
+				if (boundId !== arrived) throw new HTTPError(403, 'invalid csrf token')
+			}
+		}
+		const minted = unsafe ? undefined : await signToken(arrived ?? crypto.randomUUID(), { secret })
+		if (minted !== undefined) Object.assign(context.state, { csrf: minted })
+
+		const response = await next()
+
+		// The session the response leaves the client holding: `createSession` keeps the
+		// arrived entity on `state.session` and records a rotation or an end on `control`.
+		const control = context.state.control
+		const current =
+			control?.destroyed === true ? undefined : (control?.successor ?? context.state.session)?.id
+		const cookie: CookieOptions = {
+			sameSite: 'Strict',
+			httpOnly: false,
+			path: '/',
+			secure: resolveSecure(undefined, context.state.connection?.encrypted ?? false),
+		}
+		if (arrived !== undefined && current === undefined) {
+			Object.assign(context.state, { csrf: undefined })
+			clearCookie(response.headers, cookieName, cookie)
 			return response
 		}
-
-		const submitted = request.headers.get(header) ?? extractFieldToken(await context.body(), field)
-		if (submitted === undefined) throw new HTTPError(403, 'invalid csrf token')
-		const cookieToken = await readSignedCookie(request, cookieName, secret)
-		if (cookieToken === undefined || !equalsConstantTime(cookieToken, submitted))
-			throw new HTTPError(403, 'invalid csrf token')
-		const sessionId = context.state.session?.id
-		if (sessionId !== undefined) {
-			const boundId = await verifyToken(cookieToken, secret)
-			if (boundId !== sessionId) throw new HTTPError(403, 'invalid csrf token')
-		}
-		return next()
+		const fresh =
+			current !== undefined && current !== arrived
+				? await signToken(current, { secret })
+				: undefined
+		if (fresh !== undefined) Object.assign(context.state, { csrf: fresh })
+		const token = fresh ?? minted
+		if (token !== undefined)
+			await writeSignedCookie(response.headers, cookieName, token, secret, cookie)
+		return response
 	}
 }
 

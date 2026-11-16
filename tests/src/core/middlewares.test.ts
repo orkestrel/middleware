@@ -2031,6 +2031,273 @@ describe('createCSRF', () => {
 	})
 })
 
+// ── createCSRF across a session rotation ──────────────────────────────────
+
+describe('createCSRF session rotation', () => {
+	it('an unsafe handler that rotates the session leaves a token for the new session on the same response', async () => {
+		const transport = createTestTransport()
+		const session = createSession<SessionInterface, CSRFState & SessionState>({ transport })
+		const csrf = createCSRF<CSRFState & SessionState>({ secret: TEST_SECRET })
+		const mintRequest = buildTestRequest('/')
+		const mintState: CSRFState & SessionState = {}
+		const mintResponse = await runChain(
+			[session, csrf],
+			createEchoTerminal(),
+			mintRequest,
+			createTestContext(mintRequest, mintState),
+		)
+		const sessionId = mintResponse.headers.get('x-test-session') ?? ''
+		const cookieValue = (mintResponse.headers.get('set-cookie') ?? '').split(';')[0] ?? ''
+		const token = mintState.csrf ?? ''
+
+		const loginRequest = buildTestRequest('/login', {
+			method: 'POST',
+			headers: { 'x-test-session': sessionId, 'x-csrf-token': token, cookie: cookieValue },
+		})
+		const loginState: CSRFState & SessionState = {}
+		const loginResponse = await runChain(
+			[session, csrf],
+			async (_request, context) => {
+				context.state.control?.regenerate()
+				const successor = context.state.control?.successor?.id ?? ''
+				return new Response(await signToken(successor, { secret: TEST_SECRET }))
+			},
+			loginRequest,
+			createTestContext(loginRequest, loginState),
+		)
+		const rotatedId = loginResponse.headers.get('x-test-session') ?? ''
+		expect(rotatedId).not.toBe('')
+		expect(rotatedId).not.toBe(sessionId)
+		const rotatedCookies = loginResponse.headers.getSetCookie()
+		expect(rotatedCookies).toHaveLength(1)
+		const rotatedCookie = (rotatedCookies[0] ?? '').split(';')[0] ?? ''
+		expect(rotatedCookie).toMatch(/^csrf=./)
+		const rotatedToken = await loginResponse.text()
+		expect(loginState.csrf).toBe(rotatedToken)
+		expect(await verifyToken(rotatedToken, TEST_SECRET)).toBe(rotatedId)
+
+		const writeRequest = buildTestRequest('/', {
+			method: 'POST',
+			headers: { 'x-test-session': rotatedId, 'x-csrf-token': rotatedToken, cookie: rotatedCookie },
+		})
+		const terminal = createRecordingTerminal()
+		const response = await runChain(
+			[session, csrf],
+			terminal.handler,
+			writeRequest,
+			createTestContext(writeRequest, {}),
+		)
+		expect(response.status).toBe(200)
+		expect(terminal.count).toBe(1)
+	})
+
+	it('a safe handler that rotates the session mints for the new session, not the one it arrived with', async () => {
+		const transport = createTestTransport()
+		const session = createSession<SessionInterface, CSRFState & SessionState>({ transport })
+		const csrf = createCSRF<CSRFState & SessionState>({ secret: TEST_SECRET })
+		const mintRequest = buildTestRequest('/')
+		const mintResponse = await runChain(
+			[session, csrf],
+			createEchoTerminal(),
+			mintRequest,
+			createTestContext(mintRequest, {}),
+		)
+		const sessionId = mintResponse.headers.get('x-test-session') ?? ''
+
+		const rotateRequest = buildTestRequest('/', { headers: { 'x-test-session': sessionId } })
+		const rotateState: CSRFState & SessionState = {}
+		const rotateResponse = await runChain(
+			[session, csrf],
+			async (_request, context) => {
+				context.state.control?.regenerate()
+				return new Response(ECHO_MARKER)
+			},
+			rotateRequest,
+			createTestContext(rotateRequest, rotateState),
+		)
+		const rotatedId = rotateResponse.headers.get('x-test-session') ?? ''
+		expect(rotatedId).not.toBe('')
+		expect(rotatedId).not.toBe(sessionId)
+		const rotatedCookies = rotateResponse.headers.getSetCookie()
+		expect(rotatedCookies).toHaveLength(1)
+		const rotatedCookie = (rotatedCookies[0] ?? '').split(';')[0] ?? ''
+		const rotatedToken = rotateState.csrf ?? ''
+		expect(await verifyToken(rotatedToken, TEST_SECRET)).toBe(rotatedId)
+
+		const writeRequest = buildTestRequest('/', {
+			method: 'POST',
+			headers: { 'x-test-session': rotatedId, 'x-csrf-token': rotatedToken, cookie: rotatedCookie },
+		})
+		const terminal = createRecordingTerminal()
+		const response = await runChain(
+			[session, csrf],
+			terminal.handler,
+			writeRequest,
+			createTestContext(writeRequest, {}),
+		)
+		expect(response.status).toBe(200)
+		expect(terminal.count).toBe(1)
+	})
+
+	it('a write with the token minted before the rotation is still refused, under the new session and the old', async () => {
+		const transport = createTestTransport()
+		const session = createSession<SessionInterface, CSRFState & SessionState>({ transport })
+		const csrf = createCSRF<CSRFState & SessionState>({ secret: TEST_SECRET })
+		const mintRequest = buildTestRequest('/')
+		const mintState: CSRFState & SessionState = {}
+		const mintResponse = await runChain(
+			[session, csrf],
+			createEchoTerminal(),
+			mintRequest,
+			createTestContext(mintRequest, mintState),
+		)
+		const sessionId = mintResponse.headers.get('x-test-session') ?? ''
+		const cookieValue = (mintResponse.headers.get('set-cookie') ?? '').split(';')[0] ?? ''
+		const token = mintState.csrf ?? ''
+		const loginRequest = buildTestRequest('/login', {
+			method: 'POST',
+			headers: { 'x-test-session': sessionId, 'x-csrf-token': token, cookie: cookieValue },
+		})
+		const loginState: CSRFState & SessionState = {}
+		const loginResponse = await runChain(
+			[session, csrf],
+			async (_request, context) => {
+				context.state.control?.regenerate()
+				return new Response(ECHO_MARKER)
+			},
+			loginRequest,
+			createTestContext(loginRequest, loginState),
+		)
+		const rotatedId = loginResponse.headers.get('x-test-session') ?? ''
+		expect(rotatedId).not.toBe('')
+		expect(rotatedId).not.toBe(sessionId)
+
+		const newRequest = buildTestRequest('/', {
+			method: 'POST',
+			headers: { 'x-test-session': rotatedId, 'x-csrf-token': token, cookie: cookieValue },
+		})
+		await expect(
+			runChain(
+				[session, csrf],
+				createEchoTerminal(),
+				newRequest,
+				createTestContext(newRequest, {}),
+			),
+		).rejects.toMatchObject({ status: 403, message: 'invalid csrf token' })
+
+		const oldRequest = buildTestRequest('/', {
+			method: 'POST',
+			headers: { 'x-test-session': sessionId, 'x-csrf-token': token, cookie: cookieValue },
+		})
+		await expect(
+			runChain(
+				[session, csrf],
+				createEchoTerminal(),
+				oldRequest,
+				createTestContext(oldRequest, {}),
+			),
+		).rejects.toMatchObject({ status: 403, message: 'invalid csrf token' })
+	})
+
+	it('an unsafe request that keeps its session writes no csrf cookie and stashes no token', async () => {
+		const transport = createTestTransport()
+		const session = createSession<SessionInterface, CSRFState & SessionState>({ transport })
+		const csrf = createCSRF<CSRFState & SessionState>({ secret: TEST_SECRET })
+		const mintRequest = buildTestRequest('/')
+		const mintState: CSRFState & SessionState = {}
+		const mintResponse = await runChain(
+			[session, csrf],
+			createEchoTerminal(),
+			mintRequest,
+			createTestContext(mintRequest, mintState),
+		)
+		const sessionId = mintResponse.headers.get('x-test-session') ?? ''
+		const cookieValue = (mintResponse.headers.get('set-cookie') ?? '').split(';')[0] ?? ''
+		const token = mintState.csrf ?? ''
+
+		const writeRequest = buildTestRequest('/', {
+			method: 'POST',
+			headers: { 'x-test-session': sessionId, 'x-csrf-token': token, cookie: cookieValue },
+		})
+		const writeState: CSRFState & SessionState = {}
+		const terminal = createRecordingTerminal()
+		const response = await runChain(
+			[session, csrf],
+			terminal.handler,
+			writeRequest,
+			createTestContext(writeRequest, writeState),
+		)
+		expect(response.status).toBe(200)
+		expect(terminal.count).toBe(1)
+		expect(response.headers.getSetCookie()).toEqual([])
+		expect(writeState.csrf).toBeUndefined()
+	})
+
+	it('a handler that ends the session clears the csrf cookie instead of leaving one bound to the ended session', async () => {
+		const transport = createTestTransport()
+		const session = createSession<SessionInterface, CSRFState & SessionState>({ transport })
+		const csrf = createCSRF<CSRFState & SessionState>({ secret: TEST_SECRET })
+		const mintRequest = buildTestRequest('/')
+		const mintState: CSRFState & SessionState = {}
+		const mintResponse = await runChain(
+			[session, csrf],
+			createEchoTerminal(),
+			mintRequest,
+			createTestContext(mintRequest, mintState),
+		)
+		const sessionId = mintResponse.headers.get('x-test-session') ?? ''
+		const cookieValue = (mintResponse.headers.get('set-cookie') ?? '').split(';')[0] ?? ''
+		const token = mintState.csrf ?? ''
+
+		const logoutRequest = buildTestRequest('/logout', {
+			method: 'POST',
+			headers: { 'x-test-session': sessionId, 'x-csrf-token': token, cookie: cookieValue },
+		})
+		const logoutState: CSRFState & SessionState = {}
+		const logoutResponse = await runChain(
+			[session, csrf],
+			async (_request, context) => {
+				context.state.control?.destroy()
+				return new Response(ECHO_MARKER)
+			},
+			logoutRequest,
+			createTestContext(logoutRequest, logoutState),
+		)
+		expect(logoutResponse.headers.get('x-test-session')).toBeNull()
+		const logoutCookies = logoutResponse.headers.getSetCookie()
+		expect(logoutCookies).toHaveLength(1)
+		expect(logoutCookies[0]).toMatch(/^csrf=;/)
+		expect(logoutCookies[0]).toContain('Max-Age=0')
+		expect(logoutCookies[0]).toContain('Path=/')
+		expect(logoutState.csrf).toBeUndefined()
+
+		const secondMintRequest = buildTestRequest('/')
+		const secondMintResponse = await runChain(
+			[session, csrf],
+			createEchoTerminal(),
+			secondMintRequest,
+			createTestContext(secondMintRequest, {}),
+		)
+		const secondId = secondMintResponse.headers.get('x-test-session') ?? ''
+		const endRequest = buildTestRequest('/', { headers: { 'x-test-session': secondId } })
+		const endState: CSRFState & SessionState = {}
+		const endResponse = await runChain(
+			[session, csrf],
+			async (_request, context) => {
+				context.state.control?.destroy()
+				return new Response(ECHO_MARKER)
+			},
+			endRequest,
+			createTestContext(endRequest, endState),
+		)
+		const endCookies = endResponse.headers.getSetCookie()
+		expect(endCookies).toHaveLength(1)
+		expect(endCookies[0]).toMatch(/^csrf=;/)
+		expect(endCookies[0]).toContain('Max-Age=0')
+		expect(endState.csrf).toBeUndefined()
+	})
+})
+
 // ── Composition (the canonical onion, end-to-end) ─────────────────────────
 
 describe('composition', () => {
