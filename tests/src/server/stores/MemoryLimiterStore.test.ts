@@ -2,9 +2,21 @@ import { createLimiter, createMemoryLimiterStore, MemoryLimiterStore } from '@sr
 import { ContractError } from '@orkestrel/contract'
 import { createRecorder } from '@orkestrel/test'
 import { describe, expect, it } from 'vitest'
-import { buildTestRequest, createTestContext } from '../../../setup.js'
+import {
+	buildTestRequest,
+	createTestContext,
+	LIMITER_GROWTH_BOUND,
+	LIMITER_GROWTH_SIZE,
+	measureLimiterGrowth,
+} from '../../../setup.js'
 
 describe('MemoryLimiterStore', () => {
+	it('evicts at capacity in time constant in the store size when a held key is consumed before each insert', async () => {
+		const growth = await measureLimiterGrowth(LIMITER_GROWTH_SIZE, 4 * LIMITER_GROWTH_SIZE)
+		expect(Number.isFinite(growth)).toBe(true)
+		expect(growth).toBeLessThan(LIMITER_GROWTH_BOUND)
+	})
+
 	it('reports the same window instant as expiry across denial and renewal', async () => {
 		const store = new MemoryLimiterStore()
 		const limits = { max: 1, window: 10 }

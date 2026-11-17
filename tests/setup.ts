@@ -8,6 +8,7 @@ import type {
 import type { TableInterface } from '@orkestrel/database'
 import type {
 	CSRFState,
+	LimiterStoreInterface,
 	SessionInterface,
 	SessionLimits,
 	SessionRow,
@@ -28,6 +29,7 @@ import {
 	createDatabaseSessionStore,
 	createRestoredSession,
 	isSession,
+	MemoryLimiterStore,
 	MemorySessionStore,
 	Session,
 	sessionColumns,
@@ -685,26 +687,95 @@ export async function fillSessionStore(size: number): Promise<MemorySessionStore
  *
  * @param store - The store
  * @param sessions - The sessions to insert, each under an id the store does not hold
+ * @param held - The id of a held session to read live before each insert, or `undefined` for no read
  * @returns The duration of the inserts
  *
  * @example
  * ```ts
- * const ms = timeSessionInserts(await fillSessionStore(4), [new Session('lamp')])
+ * const ms = timeSessionInserts(await fillSessionStore(4), [new Session('lamp')], 'full-0')
  * ```
  */
 export function timeSessionInserts(
 	store: SessionStoreInterface<Session>,
 	sessions: readonly Session[],
+	held?: string,
 ): number {
 	const start = performance.now()
-	const settled = sessions.map((session) => store.set(session, 0))
+	const settled = sessions.flatMap((session) => [
+		...(held === undefined ? [] : [store.get(held, 0)]),
+		store.set(session, 0),
+	])
+	const elapsed = performance.now() - start
+	void Promise.all(settled)
+	return elapsed
+}
+
+/** Holds the limits every limiter growth consume carries: a window that outlasts the run. */
+export const LIMITER_LIMITS = { max: 1, window: 1_000_000_000 }
+
+/**
+ * Bounds the growth ratio t(4n)/t(n) of a `MemoryLimiterStore` consume at capacity. Read on
+ * 2026-11-17 at n = 2,000 on `132ae21`, load average 1.7 to 2.2, 12 solo readings with one held
+ * key consumed before each insert: 1.04 to 1.70 beside identical sides (n against n) at 0.80 to
+ * 1.40. 3 sits above that maximum and below the near-4 reading of a linear eviction.
+ */
+export const LIMITER_GROWTH_BOUND = 3
+
+/** Holds the store size n at which the limiter eviction row reads t(n), and 4n for t(4n). */
+export const LIMITER_GROWTH_SIZE = 2_000
+
+/**
+ * Builds a `MemoryLimiterStore` of capacity `size` that holds `size` keys, so its next consume of
+ * an unseen key evicts.
+ *
+ * @param size - The capacity and the number of keys held
+ * @returns The full store
+ *
+ * @example
+ * ```ts
+ * const store = await fillLimiterStore(4)
+ * await store.consume('full-0', 0, LIMITER_LIMITS) // the oldest key, still held
+ * ```
+ */
+export async function fillLimiterStore(size: number): Promise<MemoryLimiterStore> {
+	const store = new MemoryLimiterStore({ capacity: size })
+	await Promise.all(
+		Array.from({ length: size }, (_, index) => store.consume(`full-${index}`, 0, LIMITER_LIMITS)),
+	)
+	return store
+}
+
+/**
+ * Times consuming every key of `keys` against `store`, in milliseconds. Each consume runs to
+ * completion before it returns, so the time covers the store's whole work.
+ *
+ * @param store - The store
+ * @param keys - The keys to consume, each a key the store does not hold
+ * @param held - The held key to consume before each insert, or `undefined` for no refresh
+ * @returns The duration of the consumes
+ *
+ * @example
+ * ```ts
+ * const ms = timeLimiterInserts(await fillLimiterStore(4), ['lamp'], 'full-0')
+ * ```
+ */
+export function timeLimiterInserts(
+	store: LimiterStoreInterface,
+	keys: readonly string[],
+	held?: string,
+): number {
+	const start = performance.now()
+	const settled = keys.flatMap((key) => [
+		...(held === undefined ? [] : [store.consume(held, 0, LIMITER_LIMITS)]),
+		store.consume(key, 0, LIMITER_LIMITS),
+	])
 	const elapsed = performance.now() - start
 	void Promise.all(settled)
 	return elapsed
 }
 
 /**
- * Measures how an insert at capacity grows from a store of `small` sessions to one of `large`:
+ * Measures how an insert at capacity grows from a store of `small` entries to one of `large`:
  * the batch time at `large` over the batch time at `small`, each the least of 5 batches, with the
  * batch sized so it takes 20 ms or more at `small`.
  *
@@ -715,37 +786,91 @@ export function timeSessionInserts(
  *
  * @param small - The size of the reference store
  * @param large - The size of the measured store
+ * @param fill - Builds a full store of the asked size
+ * @param time - Times inserting the ids into a store, in milliseconds
  * @returns t(large)/t(small): near 1 for a constant-time eviction, and near `large / small` for
  * one that scans the store
  *
  * @example
  * ```ts
- * await measureSessionGrowth(SESSION_GROWTH_SIZE, 4 * SESSION_GROWTH_SIZE) // near 1
+ * await measureStoreGrowth(64, 256, fillSessionStore, (store, ids) =>
+ * 	timeSessionInserts(store, ids.map((id) => new Session(id))),
+ * ) // near 1
  * ```
  */
-export async function measureSessionGrowth(small: number, large: number): Promise<number> {
-	const stores = { small: await fillSessionStore(small), large: await fillSessionStore(large) }
-	const probe = Array.from({ length: 64 }, (_, index) => new Session(`probe-${index}`))
-	const warm = timeSessionInserts(stores.small, probe)
+export async function measureStoreGrowth<T>(
+	small: number,
+	large: number,
+	fill: (size: number) => Promise<T>,
+	time: (store: T, ids: readonly string[]) => number,
+): Promise<number> {
+	const stores = { small: await fill(small), large: await fill(large) }
+	const probe = Array.from({ length: 64 }, (_, index) => `probe-${index}`)
+	const warm = time(stores.small, probe)
 	const repeat = Math.max(64, Math.ceil((20 * probe.length) / Math.max(warm, 0.001)))
 	const rounds = Array.from({ length: 5 }, (_round, round) => {
 		const batch = {
-			small: Array.from({ length: repeat }, (_slot, index) => new Session(`s${round}-${index}`)),
-			large: Array.from({ length: repeat }, (_slot, index) => new Session(`l${round}-${index}`)),
+			small: Array.from({ length: repeat }, (_slot, index) => `s${round}-${index}`),
+			large: Array.from({ length: repeat }, (_slot, index) => `l${round}-${index}`),
 		}
 		return round % 2 === 0
 			? {
-					small: timeSessionInserts(stores.small, batch.small),
-					large: timeSessionInserts(stores.large, batch.large),
+					small: time(stores.small, batch.small),
+					large: time(stores.large, batch.large),
 				}
 			: {
-					large: timeSessionInserts(stores.large, batch.large),
-					small: timeSessionInserts(stores.small, batch.small),
+					large: time(stores.large, batch.large),
+					small: time(stores.small, batch.small),
 				}
 	})
 	return (
 		Math.min(...rounds.map((times) => times.large)) /
 		Math.min(...rounds.map((times) => times.small))
+	)
+}
+
+/**
+ * Measures how a `MemorySessionStore` insert at capacity grows from `small` sessions to `large`.
+ *
+ * @param small - The size of the reference store
+ * @param large - The size of the measured store
+ * @param refresh - If `true`, one live read of a held id precedes every insert; if `false`, none does
+ * @returns t(large)/t(small): near 1 for a constant-time eviction
+ *
+ * @example
+ * ```ts
+ * await measureSessionGrowth(SESSION_GROWTH_SIZE, 4 * SESSION_GROWTH_SIZE, true) // near 1
+ * ```
+ */
+export function measureSessionGrowth(
+	small: number,
+	large: number,
+	refresh = false,
+): Promise<number> {
+	return measureStoreGrowth(small, large, fillSessionStore, (store, ids) =>
+		timeSessionInserts(
+			store,
+			ids.map((id) => new Session(id)),
+			refresh ? 'full-0' : undefined,
+		),
+	)
+}
+
+/**
+ * Measures how a `MemoryLimiterStore` consume at capacity grows from `small` keys to `large`.
+ *
+ * @param small - The size of the reference store
+ * @param large - The size of the measured store
+ * @returns t(large)/t(small): near 1 for a constant-time eviction
+ *
+ * @example
+ * ```ts
+ * await measureLimiterGrowth(LIMITER_GROWTH_SIZE, 4 * LIMITER_GROWTH_SIZE) // near 1
+ * ```
+ */
+export function measureLimiterGrowth(small: number, large: number): Promise<number> {
+	return measureStoreGrowth(small, large, fillLimiterStore, (store, ids) =>
+		timeLimiterInserts(store, ids, 'full-0'),
 	)
 }
 

@@ -23,7 +23,11 @@ import {
 	createWritingTerminal,
 	decompress,
 	ECHO_MARKER,
+	fillLimiterStore,
 	fillSessionStore,
+	LIMITER_LIMITS,
+	measureLimiterGrowth,
+	timeLimiterInserts,
 	issueToken,
 	measureSessionGrowth,
 	readChainStatus,
@@ -431,8 +435,31 @@ describe('the eviction cost row', () => {
 		expect((await store.get('wick', 0))?.id).toBe('wick')
 	})
 
-	it('reads a finite positive growth ratio', async () => {
-		const growth = await measureSessionGrowth(64, 256)
+	it('reads a held id live before each insert, so the held id outlives the evictions', async () => {
+		const store = await fillSessionStore(4)
+		timeSessionInserts(store, [buildSession('lamp'), buildSession('wick')], 'full-0')
+		expect((await store.get('full-0', 0))?.id).toBe('full-0')
+		expect(await store.get('full-1', 0)).toBeUndefined()
+		expect(await store.get('full-2', 0)).toBeUndefined()
+	})
+
+	it('reads a finite positive growth ratio, with and without the held read', async () => {
+		for (const refresh of [false, true]) {
+			const growth = await measureSessionGrowth(64, 256, refresh)
+			expect(Number.isFinite(growth)).toBe(true)
+			expect(growth).toBeGreaterThan(0)
+		}
+	})
+
+	it('fills a limiter store to its capacity and consumes a held key before each insert', async () => {
+		const store = await fillLimiterStore(4)
+		timeLimiterInserts(store, ['lamp', 'wick'], 'full-0')
+		expect((await store.consume('full-0', 0, LIMITER_LIMITS)).admitted).toBe(false)
+		expect((await store.consume('full-1', 0, LIMITER_LIMITS)).admitted).toBe(true)
+	})
+
+	it('reads a finite positive limiter growth ratio', async () => {
+		const growth = await measureLimiterGrowth(64, 256)
 		expect(Number.isFinite(growth)).toBe(true)
 		expect(growth).toBeGreaterThan(0)
 	})

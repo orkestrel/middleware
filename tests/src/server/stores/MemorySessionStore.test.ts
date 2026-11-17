@@ -8,6 +8,11 @@ import {
 	SESSION_GROWTH_BOUND,
 	SESSION_GROWTH_SIZE,
 } from '../../../setup.js'
+import {
+	measureReadRetention,
+	READ_RETENTION_BOUND,
+	READ_RETENTION_COUNT,
+} from '../../../setupServer.js'
 
 // ============================================================================
 //  @orkestrel/middleware — MemorySessionStore unit tests. Every scenario
@@ -183,6 +188,55 @@ describe('MemorySessionStore capacity', () => {
 		expect((await store.get('c', 550))?.id).toBe('c')
 		expect(await store.get('b', 550)).toBeUndefined()
 		expect(evicted).toEqual(['a', 'b'])
+		await store.set(buildSession('e'), 550)
+		await store.set(buildSession('f'), 550)
+		expect(evicted).toEqual(['a', 'b', 'd'])
+	})
+
+	it('leaves no tick behind for a deleted id, so a later eviction takes the least recently used live id', async () => {
+		const evicted: string[] = []
+		const store = new MemorySessionStore<Session>({ capacity: 2, evict: (id) => evicted.push(id) })
+		await store.set(buildSession('a'), 0)
+		await store.set(buildSession('b'), 0)
+		await store.delete('a')
+		await store.set(buildSession('c'), 0)
+		await store.set(buildSession('d'), 0)
+		expect(evicted).toEqual(['b'])
+	})
+
+	it('keeps an id that an evict callback writes during its own insert, then evicts in recency order', async () => {
+		const evicted: string[] = []
+		const store: MemorySessionStore<Session> = new MemorySessionStore<Session>({
+			capacity: 2,
+			evict: (id) => {
+				evicted.push(id)
+				if (id === 'a') void store.set(buildSession('c', 'inner'), 0)
+			},
+		})
+		await store.set(buildSession('a'), 0)
+		await store.set(buildSession('b'), 0)
+		await store.set(buildSession('c', 'outer'), 0)
+		expect((await store.get('b', 0))?.id).toBe('b')
+		expect((await store.get('c', 0))?.id).toBe('c')
+		await store.set(buildSession('d'), 0)
+		expect(evicted).toEqual(['a', 'b'])
+	})
+
+	it('holds no heap per live read of a held session: bytes per read stay within the bound', async () => {
+		const store = new MemorySessionStore<Session>({ capacity: 8 })
+		for (const index of [0, 1, 2, 3]) await store.set(buildSession(`held-${index}`), 0)
+		const retained = await measureReadRetention(
+			(index) => store.get(`held-${index % 4}`, 0),
+			READ_RETENTION_COUNT,
+		)
+		expect(Number.isFinite(retained)).toBe(true)
+		expect(retained).toBeLessThanOrEqual(READ_RETENTION_BOUND)
+	}, 60000)
+
+	it('evicts at capacity in time constant in the store size when a live read of a held id precedes each insert', async () => {
+		const growth = await measureSessionGrowth(SESSION_GROWTH_SIZE, 4 * SESSION_GROWTH_SIZE, true)
+		expect(Number.isFinite(growth)).toBe(true)
+		expect(growth).toBeLessThan(SESSION_GROWTH_BOUND)
 	})
 
 	it('evicts at capacity in time constant in the store size: t(4n)/t(n) stays under the bound', async () => {

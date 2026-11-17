@@ -15,6 +15,9 @@ import { requireValue, waitForCondition, waitForDelay } from '@orkestrel/test'
 import { createScratch } from '@orkestrel/test/server'
 import {
 	COST_GROWTH_BOUND,
+	measureReadRetention,
+	READ_RETENTION_BOUND,
+	READ_RETENTION_COUNT,
 	DEVICE_RUN_SIZE,
 	FIELD_RUN_SIZE,
 	buildFieldDrip,
@@ -379,6 +382,26 @@ describe('measureCostGrowth', () => {
 		expect(linear).toBeLessThan(COST_GROWTH_BOUND)
 		expect(quadratic).toBeGreaterThan(COST_GROWTH_BOUND)
 	})
+})
+
+describe('measureReadRetention', () => {
+	it('reads a Map that holds an unadvanced keys iterator over the bound, and the same Map without it within', async () => {
+		const held = new Map<number, number>([[0, 0]])
+		const iterator = held.keys()
+		const spare = new Map<number, number>([[0, 0]])
+		const retained = await measureReadRetention(() => {
+			held.delete(0)
+			held.set(0, 0)
+		}, READ_RETENTION_COUNT)
+		const free = await measureReadRetention(() => {
+			spare.delete(0)
+			spare.set(0, 0)
+		}, READ_RETENTION_COUNT)
+		expect(iterator.next().done).toBe(false)
+		expect(Number.isFinite(retained)).toBe(true)
+		expect(retained).toBeGreaterThan(READ_RETENTION_BOUND)
+		expect(Math.abs(free)).toBeLessThanOrEqual(READ_RETENTION_BOUND)
+	}, 60000)
 })
 
 describe('DEVICE_RUN_SIZE', () => {

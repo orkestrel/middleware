@@ -56,6 +56,8 @@ import { connect, createServer as createNetServer } from 'node:net'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { randomUUID } from 'node:crypto'
+import { setFlagsFromString } from 'node:v8'
+import { runInNewContext } from 'node:vm'
 import { createCookieJar, createLoopback, createScratch } from '@orkestrel/test/server'
 import { createDispatcher } from '@orkestrel/router'
 import { createServer, createSigner, HTTPError } from '@orkestrel/server'
@@ -3228,3 +3230,88 @@ export function listVary(headers: Headers): readonly string[] {
 export function listCORSHeaders(headers: Headers): readonly string[] {
 	return [...headers.keys()].filter((name) => name.startsWith('access-control-'))
 }
+
+/**
+ * Returns the V8 collector, exposing it through `v8.setFlagsFromString` when the process started without it.
+ *
+ * @returns A function that runs a full collection
+ *
+ * @example
+ * ```ts
+ * const collect = readCollector()
+ * collect()
+ * ```
+ */
+export function readCollector(): () => void {
+	setFlagsFromString('--expose-gc')
+	const collect: unknown = runInNewContext('gc')
+	if (typeof collect !== 'function') throw new Error('the V8 collector is not exposed')
+	return () => void collect()
+}
+
+/**
+ * Runs full collections with real turns between them, so closes, finalizers, and weak references settle.
+ *
+ * @param collect - The V8 collector
+ *
+ * @example
+ * ```ts
+ * await settleHeap(readCollector())
+ * ```
+ */
+export async function settleHeap(collect: () => void): Promise<void> {
+	collect()
+	await waitForDelay(10)
+	collect()
+	await waitForDelay(10)
+	collect()
+}
+
+/**
+ * Reads the heap bytes that each of `count` calls to `read` leaves behind after a collection.
+ *
+ * @remarks
+ * Runs `count` warm reads, settles the heap, reads `heapUsed`, runs `count` more reads, settles,
+ * and reads again. The difference over `count` is what the second population retained.
+ *
+ * @param read - The call under test, given its index in the population
+ * @param count - The reads per population
+ * @returns The retained heap bytes per read
+ *
+ * @example
+ * ```ts
+ * const held: unknown[] = []
+ * await measureReadRetention((index) => held.push(index), 1_000) // near 8 or more
+ * ```
+ */
+export async function measureReadRetention(
+	read: (index: number) => unknown,
+	count: number,
+): Promise<number> {
+	const collect = readCollector()
+	for (const index of new Uint8Array(count).keys()) await read(index)
+	await settleHeap(collect)
+	const before = process.memoryUsage().heapUsed
+	for (const index of new Uint8Array(count).keys()) await read(index)
+	await settleHeap(collect)
+	return (process.memoryUsage().heapUsed - before) / count
+}
+
+/**
+ * Holds the reads per population that the read-retention rows run. At 100,000 reads the
+ * `132ae21` session store read 96.0 B per read, 4 orders above the noise spread.
+ */
+export const READ_RETENTION_COUNT = 100_000
+
+/**
+ * Holds the bytes per read that a read-retention row may leave on the heap.
+ *
+ * @remarks
+ * Read 2026-11-17 on Node v22.23.5 at `132ae21`, load average 1.7, through
+ * `measureReadRetention` at 100,000 reads, 5 readings per arm: a bare `Map` that deletes and
+ * re-sets one key read -0.002 to 0.011 B per read; the same `Map` holding an unadvanced
+ * `keys()` iterator read 152.0 to 152.1 B; the `132ae21` `MemorySessionStore` on 4 held
+ * sessions read 96.0 B. The bound sits 8 B above zero, outside the noise spread and 12 times
+ * below the smallest defect reading.
+ */
+export const READ_RETENTION_BOUND = 8
