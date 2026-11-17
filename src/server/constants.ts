@@ -172,8 +172,8 @@ export const DEFAULT_STATIC_DOTFILES: NonNullable<StaticOptions['dotfiles']> = '
 
 /**
  * Lists `['gzip', 'deflate']`, the content-codings `createNodeCompression`
- * offers — what `node:zlib` guarantees on every Node runtime, so this face never
- * feature-detects.
+ * offers — the codecs of `node:zlib`, which every Node runtime bundles, so this
+ * face never feature-detects.
  */
 export const NODE_COMPRESSION_ENCODINGS: readonly Encoding[] = Object.freeze(['gzip', 'deflate'])
 
