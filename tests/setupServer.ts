@@ -2615,8 +2615,10 @@ export async function sendStack(
 }
 
 /**
- * Opens a session the way a page does: a `GET /token` whose cookies join `jar`, and whose body
- * carries the CSRF token the page embeds.
+ * Opens a session the way a page does after it signs in: a `GET /mark` writes the session, so
+ * its cookie joins `jar`, then a `GET /token` whose body carries the CSRF token the page embeds.
+ * On a stack that mints no session, the write finds none and the token binds to the battery's
+ * nonce.
  *
  * @param stack - The stack
  * @param jar - The client's cookie jar
@@ -2632,6 +2634,7 @@ export async function openSession(
 	stack: StackFixtureInterface,
 	jar: CookieJarInterface,
 ): Promise<string> {
+	await sendStack(stack.url, { path: '/mark' }, jar)
 	const reply = await sendStack(stack.url, { path: '/token' }, jar)
 	const parsed = attempt((): unknown => JSON.parse(reply.text))
 	const token = parsed.success && isRecord(parsed.value) ? parsed.value.csrf : undefined

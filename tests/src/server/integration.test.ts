@@ -115,13 +115,20 @@ describe('invariant 3: the resolved IP is the socket peer or a hop the fixture a
 
 describe('invariant 4: no script-readable value holds the session id', () => {
 	it('the recognizer finds the session id in the HttpOnly session cookie (control)', async () => {
-		const reply = await sendStack(oracle.url, { path: '/token' }, createCookieJar())
+		const reply = await sendStack(oracle.url, { path: '/mark' }, createCookieJar())
 		const sealed = reply.cookies.filter((field) => isHttpOnlyCookie(field))
 		expect(sealed.some((field) => oracle.ids.some((id) => holdsValue(field, id)))).toBe(true)
 	})
 
 	it('a cookie-less GET /token', async () => {
 		const reply = await sendStack(oracle.url, { path: '/token' }, createCookieJar())
+		expect(listHeldValues(reply, oracle.ids)).toEqual([])
+	})
+
+	it('GET /token inside an open session, whose token binds to the live session', async () => {
+		const jar = createCookieJar()
+		await openSession(oracle, jar)
+		const reply = await sendStack(oracle.url, { path: '/token' }, jar)
 		expect(listHeldValues(reply, oracle.ids)).toEqual([])
 	})
 
@@ -210,6 +217,13 @@ describe('invariant 6: every earlier CSRF token of the session passes', () => {
 		const first = await openSession(oracle, jar)
 		await openSession(oracle, jar)
 		expect((await sendStack(oracle.url, buildEchoRequest(first), jar)).status).toBe(200)
+	})
+
+	it('a token another session minted does not pass in this session (control)', async () => {
+		const other = await openSession(oracle, createCookieJar())
+		const jar = createCookieJar()
+		await openSession(oracle, jar)
+		expect((await sendStack(oracle.url, buildEchoRequest(other), jar)).status).toBe(403)
 	})
 
 	it('a token passes after the page loads a static file', async () => {
