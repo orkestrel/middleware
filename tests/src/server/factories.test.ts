@@ -12,7 +12,7 @@ import {
 import { ContractError } from '@orkestrel/contract'
 import { createDatabase, createMemoryDriver } from '@orkestrel/database'
 import { describe, expect, it } from 'vitest'
-import { buildSession, TEST_SECRET } from '../../setup.js'
+import { buildSession, TEST_SIGNER } from '../../setup.js'
 
 // ============================================================================
 //  @orkestrel/middleware — factories.ts unit tests. Round-trips against real
@@ -22,7 +22,7 @@ import { buildSession, TEST_SECRET } from '../../setup.js'
 
 describe('createCookieTransport', () => {
 	it('round-trips a written id back through a request carrying its Cookie header', async () => {
-		const transport = createCookieTransport({ secret: TEST_SECRET })
+		const transport = createCookieTransport({ signer: TEST_SIGNER })
 		const response = new Response(null)
 		await transport.write(response, 'session-id-1', false)
 		const setCookie = response.headers.get('set-cookie')
@@ -33,7 +33,7 @@ describe('createCookieTransport', () => {
 	})
 
 	it('resolves undefined reading a tampered cookie value', async () => {
-		const transport = createCookieTransport({ secret: TEST_SECRET })
+		const transport = createCookieTransport({ signer: TEST_SIGNER })
 		const response = new Response(null)
 		await transport.write(response, 'session-id-1', false)
 		const setCookie = response.headers.get('set-cookie') ?? ''
@@ -45,13 +45,13 @@ describe('createCookieTransport', () => {
 	})
 
 	it('resolves undefined reading a request carrying no cookie at all', async () => {
-		const transport = createCookieTransport({ secret: TEST_SECRET })
+		const transport = createCookieTransport({ signer: TEST_SIGNER })
 		const request = new Request('http://test.local/')
 		expect(await transport.read(request)).toBeUndefined()
 	})
 
 	it('clear emits an expiring Set-Cookie (Max-Age=0)', () => {
-		const transport = createCookieTransport({ secret: TEST_SECRET })
+		const transport = createCookieTransport({ signer: TEST_SIGNER })
 		const response = new Response(null)
 		transport.clear(response)
 		const setCookie = response.headers.get('set-cookie') ?? ''
@@ -59,7 +59,7 @@ describe('createCookieTransport', () => {
 	})
 
 	it('defaults the cookie to name "session", Path=/, HttpOnly, SameSite=Lax', async () => {
-		const transport = createCookieTransport({ secret: TEST_SECRET })
+		const transport = createCookieTransport({ signer: TEST_SIGNER })
 		const response = new Response(null)
 		await transport.write(response, 'session-id-1', false)
 		const setCookie = response.headers.get('set-cookie') ?? ''
@@ -70,7 +70,7 @@ describe('createCookieTransport', () => {
 	})
 
 	it('honors a custom cookie name', async () => {
-		const transport = createCookieTransport({ secret: TEST_SECRET, name: 'sid' })
+		const transport = createCookieTransport({ signer: TEST_SIGNER, name: 'sid' })
 		const response = new Response(null)
 		await transport.write(response, 'session-id-1', false)
 		const setCookie = response.headers.get('set-cookie') ?? ''
@@ -78,7 +78,7 @@ describe('createCookieTransport', () => {
 	})
 
 	it('auto-Secure: encrypted true carries Secure, encrypted false omits it', async () => {
-		const transport = createCookieTransport({ secret: TEST_SECRET })
+		const transport = createCookieTransport({ signer: TEST_SIGNER })
 		const secureResponse = new Response(null)
 		await transport.write(secureResponse, 'session-id-1', true)
 		expect(secureResponse.headers.get('set-cookie')).toContain('Secure')

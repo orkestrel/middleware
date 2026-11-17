@@ -171,8 +171,8 @@ export const SESSION_CONTRACT = createContract(
 )
 
 /**
- * Admits `CookieTransportOptions` whole for `createCookieTransport`: a string `name`, a `secret`
- * that is a string or a string array, and an owned `cookie` record of the six optional members
+ * Admits `CookieTransportOptions` whole for `createCookieTransport`: a string `name`, a required
+ * `signer`, checked as a foreign key, and an owned `cookie` record of the six optional members
  * `@orkestrel/server` declares: string `path` and `domain`, a finite number `maxAge` (a
  * non-finite value writes `Max-Age=NaN` or `Max-Age=Infinity` into `Set-Cookie`), boolean
  * `httpOnly` and `secure`, and a `sameSite` of `'Strict'`, `'Lax'`, or `'None'`.
@@ -180,7 +180,7 @@ export const SESSION_CONTRACT = createContract(
 export const COOKIE_TRANSPORT_CONTRACT = createContract(
 	objectShape({
 		name: optionalShape(stringShape()),
-		secret: unionShape(stringShape(), arrayShape(stringShape())),
+		signer: rawShape({}),
 		cookie: optionalShape(
 			objectShape({
 				path: optionalShape(stringShape()),
@@ -235,12 +235,12 @@ export const MEMORY_LIMITER_STORE_CONTRACT = createContract(
 )
 
 /**
- * Admits `CSRFOptions` whole for `createCSRF`: a required `secret` that is a string or a string
- * array, string `cookie`, `header`, and `field`, and a `safe` string array.
+ * Admits `CSRFOptions` whole for `createCSRF`: a required `signer` that {@link SIGNER_FOREIGN}
+ * checks after admission, string `cookie`, `header`, and `field`, and a `safe` string array.
  */
 export const CSRF_CONTRACT = createContract(
 	objectShape({
-		secret: unionShape(stringShape(), arrayShape(stringShape())),
+		signer: rawShape({}),
 		cookie: optionalShape(stringShape()),
 		header: optionalShape(stringShape()),
 		field: optionalShape(stringShape()),
@@ -340,6 +340,9 @@ export const SESSION_TRANSPORT_FOREIGN = buildForeignContract(['read', 'write', 
 
 /** Holds the members `SessionOptions.store` declares: `get`, `set`, and `delete`. */
 export const SESSION_STORE_FOREIGN = buildForeignContract(['get', 'set', 'delete'])
+
+/** Holds the members `CookieTransportOptions.signer` and `CSRFOptions.signer` declare: `sign` and `verify`. */
+export const SIGNER_FOREIGN = buildForeignContract(['sign', 'verify'])
 
 /** Holds the members `AssetOptions.source` declares: `read`. */
 export const ASSET_SOURCE_FOREIGN = buildForeignContract(['read'])

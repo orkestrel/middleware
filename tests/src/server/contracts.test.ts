@@ -25,6 +25,7 @@ import {
 } from '@src/server'
 import { requireValue } from '@orkestrel/test'
 import { describe, expect, it } from 'vitest'
+import { TEST_SIGNER } from '../../setup.js'
 import { ADMISSION_DOORS, listAdmissionRows, runAdmission } from '../../setupServer.js'
 
 // ============================================================================
@@ -71,8 +72,19 @@ describe('contracts', () => {
 	})
 
 	it('refuses a cookie record that names a key the server publishes in another case', () => {
-		expect(COOKIE_TRANSPORT_CONTRACT.is({ secret: 's', cookie: { maxAge: 60 } })).toBe(true)
-		expect(COOKIE_TRANSPORT_CONTRACT.is({ secret: 's', cookie: { maxage: 60 } })).toBe(false)
+		expect(COOKIE_TRANSPORT_CONTRACT.is({ signer: TEST_SIGNER, cookie: { maxAge: 60 } })).toBe(true)
+		expect(COOKIE_TRANSPORT_CONTRACT.is({ signer: TEST_SIGNER, cookie: { maxage: 60 } })).toBe(
+			false,
+		)
+	})
+
+	it('refuses a bag that carries a secret where the signer belongs', () => {
+		expect(COOKIE_TRANSPORT_CONTRACT.is({ signer: TEST_SIGNER })).toBe(true)
+		expect(COOKIE_TRANSPORT_CONTRACT.is({ secret: 's' })).toBe(false)
+		expect(COOKIE_TRANSPORT_CONTRACT.is({ signer: TEST_SIGNER, secret: 's' })).toBe(false)
+		expect(CSRF_CONTRACT.is({ signer: TEST_SIGNER })).toBe(true)
+		expect(CSRF_CONTRACT.is({ secret: ['current', 'previous'] })).toBe(false)
+		expect(CSRF_CONTRACT.is({ signer: TEST_SIGNER, secret: 's' })).toBe(false)
 	})
 
 	it('refuses every key that its contract does not declare', () => {

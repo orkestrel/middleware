@@ -23,14 +23,15 @@ import { admitOptions, sessionExpired } from '../helpers.js'
  * later re-`set` of the same id. A live read touches `seen`. `delete` of
  * an absent id is a no-op.
  *
- * Capacity is enforced as least-recently-used **by last write**: `set`
- * refreshes an id's recency (deleting then re-inserting so the Map's
- * iteration tail is the most-recently-written id). Inserting a brand-new id
- * once the store is at `capacity` first prunes expired entries; if the store
- * is still full, the least-recently-written id (the Map's head) is evicted.
- * `options.evict` — when provided — is invoked (throw-isolated) with the id
- * on every eviction the store's own policy performs (a capacity eviction or
- * an expired-entry prune), but never for an explicit `delete`.
+ * Capacity is enforced as least-recently-used: a `set` and a live `get` each
+ * refresh an id's recency (deleting then re-inserting so the Map's iteration
+ * tail is the most recently used id). Inserting a brand-new id once the store
+ * is at `capacity` evicts the least recently used id (the Map's head), in time
+ * that does not grow with the store's size; an expired entry leaves at its own
+ * `get` or when it reaches the head. `options.evict` — when provided — is
+ * invoked (throw-isolated) with the id on every eviction the store's own
+ * policy performs (a capacity eviction or an expired read), but never for an
+ * explicit `delete`.
  *
  * @throws {ContractError} When the constructor refuses its options bag whole: an undeclared key, a `ttl` or `lifetime` that is not a positive finite number, a `capacity` that is not an integer of at least 1, or an `evict` that is not a function
  *
@@ -46,10 +47,12 @@ export class MemorySessionStore<S extends SessionInterface> implements SessionSt
 	readonly #lifetime: number | undefined
 	readonly #capacity: number
 	readonly #evict: ((id: string) => void) | undefined
+	#order: Iterator<string>
 
 	constructor(options?: MemorySessionStoreOptions) {
 		admitOptions('MemorySessionStore', MEMORY_SESSION_STORE_CONTRACT, options)
 		this.#entries = new Map()
+		this.#order = this.#entries.keys()
 		this.#ttl = options?.ttl
 		this.#lifetime = options?.lifetime
 		this.#capacity = options?.capacity ?? DEFAULT_SESSION_CAPACITY
@@ -64,6 +67,7 @@ export class MemorySessionStore<S extends SessionInterface> implements SessionSt
 			this.#notify(id)
 			return undefined
 		}
+		this.#entries.delete(id)
 		this.#entries.set(id, { session: entry.session, seen: now, created: entry.created })
 		return entry.session
 	}
@@ -71,7 +75,7 @@ export class MemorySessionStore<S extends SessionInterface> implements SessionSt
 	async set(session: S, now: number): Promise<void> {
 		const id = session.id
 		const existing = this.#entries.get(id)
-		if (existing === undefined) this.#reserve(now)
+		if (existing === undefined) this.#reserve()
 		const created = existing?.created ?? now
 		this.#entries.delete(id)
 		this.#entries.set(id, { session, seen: now, created })
@@ -89,23 +93,25 @@ export class MemorySessionStore<S extends SessionInterface> implements SessionSt
 		})
 	}
 
-	// Makes room for a brand-new id: prunes expired entries, then evicts the
-	// least-recently-written id if the store is still at capacity.
-	#reserve(now: number): void {
+	// Makes room for a brand-new id at capacity by evicting the least recently used id, the
+	// Map's head, without visiting any other entry.
+	#reserve(): void {
 		if (this.#entries.size < this.#capacity) return
-		for (const [id, entry] of this.#entries) {
-			if (this.#expired(entry, now)) {
-				this.#entries.delete(id)
-				this.#notify(id)
-			}
-		}
-		if (this.#entries.size >= this.#capacity) {
-			const oldest = this.#entries.keys().next().value
-			if (oldest !== undefined) {
-				this.#entries.delete(oldest)
-				this.#notify(oldest)
-			}
-		}
+		const oldest = this.#readOldest()
+		if (oldest === undefined) return
+		this.#entries.delete(oldest)
+		this.#notify(oldest)
+	}
+
+	// Reads the least recently used id through one long-lived iterator. Every key it has passed
+	// was evicted or moved to the tail, so its next key is the Map's oldest live one; a fresh
+	// `keys()` would walk the deleted slots at the head again on every eviction.
+	#readOldest(): string | undefined {
+		const next = this.#order.next()
+		if (next.done !== true) return next.value
+		this.#order = this.#entries.keys()
+		const first = this.#order.next()
+		return first.done === true ? undefined : first.value
 	}
 
 	// Invokes the configured evict callback, throw-isolated.

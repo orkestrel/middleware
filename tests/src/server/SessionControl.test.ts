@@ -20,6 +20,11 @@ describe('SessionControl', () => {
 		expect(session.id).toBe('original')
 	})
 
+	it('reports a session the client holds as not fresh by default, and a minted one as fresh', () => {
+		expect(new SessionControl(new Session('held')).fresh).toBe(false)
+		expect(new SessionControl(new Session('minted'), undefined, true).fresh).toBe(true)
+	})
+
 	it('uses the supplied constructor and lets destruction supersede regeneration', () => {
 		const ids = createRecorder<[string]>()
 		const control = new SessionControl(new Session('original'), (id) => {

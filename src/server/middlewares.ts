@@ -26,27 +26,26 @@ import type {
 	StaticOptions,
 	TelemetryOptions,
 } from './types.js'
-import type { CookieOptions, MiddlewareHandler } from '@orkestrel/server'
+import type { MiddlewareHandler } from '@orkestrel/server'
 import { realpath } from 'node:fs/promises'
 import { relative, resolve as resolvePath } from 'node:path'
 import { ContractError, isArray, isError, isRecord, isString } from '@orkestrel/contract'
 import { compilePath } from '@orkestrel/router'
 import {
-	clearCookie,
 	HTTPError,
 	isHTTPError,
 	isValidRequestId,
 	mergeVary,
-	readSignedCookie,
+	parseCookies,
 	resolveOrigin,
 	resolveSecure,
 	resolveSecurityHeader,
-	signToken,
-	verifyToken,
-	writeSignedCookie,
+	serializeCookie,
 } from '@orkestrel/server'
 import { createTimeout } from '@orkestrel/timeout'
 import {
+	CSRF_FIELD_TYPES,
+	CSRF_NONCE_PATTERN,
 	DEFAULT_BEARER_HEADER,
 	DEFAULT_BEARER_SCHEME,
 	DEFAULT_CLUSTER,
@@ -96,6 +95,7 @@ import {
 	SESSION_CONTRACT,
 	SESSION_STORE_FOREIGN,
 	SESSION_TRANSPORT_FOREIGN,
+	SIGNER_FOREIGN,
 	STATIC_CONTRACT,
 	TELEMETRY_CONTRACT,
 } from './contracts.js'
@@ -112,11 +112,12 @@ import {
 	compressNodeBytes,
 	compressResponse,
 	detectEncodings,
-	equalsConstantTime,
 	extractBearerToken,
 	extractFieldToken,
+	generateNonce,
 	isDotfilePath,
 	matchesScope,
+	matchesSessionState,
 	matchesUnbufferableResponse,
 	isPreflight,
 	openStaticFile,
@@ -131,8 +132,10 @@ import {
 	resolveStaticFallbackPath,
 	resolveStaticFile,
 	resolveStaticPath,
+	signCSRFToken,
 	streamFile,
 	unlinkStagedFiles,
+	verifyCSRFToken,
 } from './helpers.js'
 import { parseMultipartRequest } from './parsers.js'
 import { MemoryAssetStore } from './stores/MemoryAssetStore.js'
@@ -489,7 +492,7 @@ export function createETag<TState>(options?: ETagOptions): MiddlewareHandler<TSt
  *
  * @example
  * ```ts
- * const bearer = createBearer({ verify: (token) => verifyToken(token, 'shh') })
+ * const bearer = createBearer({ verify: (token) => verifyToken(token, createSigner('shh')) })
  * ```
  */
 export function createBearer<TState extends BearerState<TCredential>, TCredential = string>(
@@ -628,6 +631,14 @@ export function createBody<TState extends BodyState = BodyState>(): MiddlewareHa
  * Creates the generic session battery — resolves, mints, and persists a session
  * across the request, with a mid-handler `regenerate`/`destroy` control handle.
  *
+ * @remarks
+ * The battery stores a session, and writes its credential, only after the handler
+ * writes to it or regenerates it. A write is a `set`, `delete`, or `clear` that
+ * leaves the state holding other keys or other values by `Object.is` than it held
+ * when the handler started; a `set` of the value a key already holds is none. A
+ * session minted for a request with no credential reads `control.fresh` as true and
+ * leaves no trace in the store or on the response unless it is written.
+ *
  * @typeParam S - The session entity type the store persists (must implement {@link SessionInterface})
  * @typeParam TState - The consumer's opaque per-request state type, must carry {@link SessionState}
  * @param options - See {@link SessionOptions}
@@ -677,105 +688,106 @@ export function createSession<
 		if (requireSession && resolved === undefined && minted === undefined)
 			throw new HTTPError(404, 'session required')
 		const activeSession = resolved ?? minted
-		const control =
-			activeSession === undefined ? undefined : new SessionControl(activeSession, create)
-
-		if (activeSession !== undefined && control !== undefined) {
-			Object.assign<
-				object,
-				{ readonly session: SessionInterface; readonly control: SessionControlInterface }
-			>(context.state, { session: activeSession, control })
-		}
+		if (activeSession === undefined) return next()
+		const control = new SessionControl(activeSession, create, minted !== undefined)
+		const arrived = new Map(activeSession.state)
+		Object.assign<
+			object,
+			{ readonly session: SessionInterface; readonly control: SessionControlInterface }
+		>(context.state, { session: activeSession, control })
 
 		const response = await next()
 
-		if (activeSession !== undefined) {
-			if (control?.destroyed) {
-				await store.delete(activeSession.id)
-				await transport.clear(response)
-			} else if (control?.successor !== undefined) {
-				await store.set(control.successor, clock())
-				await store.delete(activeSession.id)
-				await transport.write(response, control.successor.id, encrypted)
-			} else {
-				await store.set(activeSession, clock())
-				if (minted !== undefined) await transport.write(response, activeSession.id, encrypted)
-			}
+		if (control.destroyed) {
+			await store.delete(activeSession.id)
+			await transport.clear(response)
+		} else if (control.successor !== undefined) {
+			await store.set(control.successor, clock())
+			await store.delete(activeSession.id)
+			await transport.write(response, control.successor.id, encrypted)
+		} else if (!matchesSessionState(arrived, activeSession.state)) {
+			await store.set(activeSession, clock())
+			if (minted !== undefined) await transport.write(response, activeSession.id, encrypted)
 		}
-
 		return response
 	}
 }
 
 /**
- * Creates the session-bound double-submit CSRF protection battery.
+ * Creates the CSRF protection battery: a signed double submit bound to the session the
+ * client holds, or to the battery's own nonce cookie when it holds none.
+ *
+ * @remarks
+ * A token is `random.HMAC(label + binding + random)` ({@link signCSRFToken}) and carries no
+ * form of its binding. With a session the client holds (`state.session` present and
+ * `control.fresh` not true), the binding is the session id and the battery writes no cookie.
+ * Otherwise the binding is the nonce in the `cookie` cookie, which a safe request without
+ * one mints and sets HttpOnly, `SameSite=Lax`, and `Path=/`. Every request that passes,
+ * safe or not, stashes a token bound to the binding it arrived with on `state.csrf`, so
+ * every token the binding minted verifies while it holds. A mutating request submits its
+ * token in the `header`, or in the `field` of a JSON or urlencoded body; the battery reads
+ * no other body, so a multipart form sends its token in the header.
  *
  * @typeParam TState - The consumer's opaque per-request state type, must carry {@link CSRFState} and {@link SessionState}
  * @param options - See {@link CSRFOptions}
  * @returns A `MiddlewareHandler<TState>`
- * @throws {ContractError} When the bag is refused whole: an undeclared key, a missing `secret`, or a value outside its declared type
- * @throws {HTTPError} `403` when the submitted token is missing, mismatched, or bound to a different session
+ * @throws {ContractError} When the bag is refused whole: an undeclared key such as `secret`, a missing `signer`, or a value outside its declared type; or when `signer` lacks `sign` or `verify`
+ * @throws {HTTPError} `403` when a mutating request submits no token, a malformed one, or one not bound to the session it holds or to its nonce
  *
  * @example
  * ```ts
- * const csrf = createCSRF({ secret: 'shh' })
+ * const csrf = createCSRF({ signer: createSigner('shh') })
  * ```
  */
 export function createCSRF<TState extends CSRFState & SessionState>(
 	options: CSRFOptions,
 ): MiddlewareHandler<TState> {
 	admitOptions('createCSRF', CSRF_CONTRACT, options)
+	admitForeign('createCSRF', ['signer'], SIGNER_FOREIGN, options.signer)
 
-	const secret = options.secret
+	const signer = options.signer
 	const cookieName = options.cookie ?? DEFAULT_CSRF_COOKIE
 	const header = options.header ?? DEFAULT_CSRF_HEADER
 	const field = options.field ?? DEFAULT_CSRF_FIELD
 	const safe = options.safe ?? DEFAULT_CSRF_SAFE_METHODS
 
 	return async (request, context, next) => {
-		const arrived = context.state.session?.id
-		const unsafe = !safe.includes(context.method)
-		if (unsafe) {
+		const held = context.state.control?.fresh === true ? undefined : context.state.session?.id
+		const cookie = parseCookies(request.headers.get('cookie') ?? undefined)[cookieName]
+		const nonce =
+			held === undefined && cookie !== undefined && CSRF_NONCE_PATTERN.test(cookie)
+				? cookie
+				: undefined
+		const binding = held ?? nonce
+		if (!safe.includes(context.method)) {
+			const media = (request.headers.get('content-type') ?? '').split(';', 1)[0] ?? ''
 			const submitted =
-				request.headers.get(header) ?? extractFieldToken(await context.body(), field)
-			if (submitted === undefined) throw new HTTPError(403, 'invalid csrf token')
-			const cookieToken = await readSignedCookie(request, cookieName, secret)
-			if (cookieToken === undefined || !equalsConstantTime(cookieToken, submitted))
+				request.headers.get(header) ??
+				(CSRF_FIELD_TYPES.includes(media.trim().toLowerCase())
+					? extractFieldToken(await context.body(), field)
+					: undefined)
+			if (
+				submitted === undefined ||
+				binding === undefined ||
+				!(await verifyCSRFToken(signer, binding, submitted))
+			)
 				throw new HTTPError(403, 'invalid csrf token')
-			if (arrived !== undefined) {
-				const boundId = await verifyToken(cookieToken, secret)
-				if (boundId !== arrived) throw new HTTPError(403, 'invalid csrf token')
-			}
 		}
-		const minted = unsafe ? undefined : await signToken(arrived ?? crypto.randomUUID(), { secret })
-		if (minted !== undefined) Object.assign(context.state, { csrf: minted })
+		const issued = binding ?? generateNonce()
+		Object.assign(context.state, { csrf: await signCSRFToken(signer, issued) })
 
 		const response = await next()
 
-		// The session the response leaves the client holding: `createSession` keeps the
-		// arrived entity on `state.session` and records a rotation or an end on `control`.
-		const control = context.state.control
-		const current =
-			control?.destroyed === true ? undefined : (control?.successor ?? context.state.session)?.id
-		const cookie: CookieOptions = {
-			sameSite: 'Strict',
-			httpOnly: false,
-			path: '/',
-			secure: resolveSecure(undefined, context.connection.encrypted),
-		}
-		if (arrived !== undefined && current === undefined) {
-			Object.assign(context.state, { csrf: undefined })
-			clearCookie(response.headers, cookieName, cookie)
-			return response
-		}
-		const fresh =
-			current !== undefined && current !== arrived
-				? await signToken(current, { secret })
-				: undefined
-		if (fresh !== undefined) Object.assign(context.state, { csrf: fresh })
-		const token = fresh ?? minted
-		if (token !== undefined)
-			await writeSignedCookie(response.headers, cookieName, token, secret, cookie)
+		if (binding === undefined)
+			response.headers.append(
+				'set-cookie',
+				serializeCookie(cookieName, issued, {
+					httpOnly: true,
+					sameSite: 'Lax',
+					path: '/',
+					secure: resolveSecure(undefined, context.connection.encrypted),
+				}),
+			)
 		return response
 	}
 }
@@ -804,7 +816,7 @@ export function createCSRF<TState extends CSRFState & SessionState>(
  * ```ts
  * const scoped = only(
  * 	['/admin', '/admin/*rest'],
- * 	createBearer({ verify: (token) => verifyToken(token, secret) }),
+ * 	createBearer({ verify: (token) => verifyToken(token, signer) }),
  * )
  * ```
  */

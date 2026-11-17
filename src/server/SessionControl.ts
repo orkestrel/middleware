@@ -9,6 +9,7 @@ import { Session } from './Session.js'
  * import { Session, SessionControl } from '@orkestrel/middleware'
  *
  * const control = new SessionControl(new Session('original'))
+ * console.log(control.fresh) // false
  * control.regenerate()
  * console.log(control.successor?.id)
  * control.destroy()
@@ -18,12 +19,14 @@ import { Session } from './Session.js'
 export class SessionControl implements SessionControlInterface {
 	readonly #session: SessionInterface
 	readonly #create: ((id: string) => SessionInterface) | undefined
+	readonly #fresh: boolean
 	#destroyed = false
 	#successor: SessionInterface | undefined
 
-	constructor(session: SessionInterface, create?: (id: string) => SessionInterface) {
+	constructor(session: SessionInterface, create?: (id: string) => SessionInterface, fresh = false) {
 		this.#session = session
 		this.#create = create
+		this.#fresh = fresh
 	}
 
 	get destroyed(): boolean {
@@ -32,6 +35,10 @@ export class SessionControl implements SessionControlInterface {
 
 	get successor(): SessionInterface | undefined {
 		return this.#successor
+	}
+
+	get fresh(): boolean {
+		return this.#fresh
 	}
 
 	/** Mints a successor carrying the active session's current state unless destroyed. */

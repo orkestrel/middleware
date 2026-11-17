@@ -55,7 +55,7 @@ import { join } from 'node:path'
 import { randomUUID } from 'node:crypto'
 import { createCookieJar, createLoopback, createScratch } from '@orkestrel/test/server'
 import { createDispatcher } from '@orkestrel/router'
-import { createServer, HTTPError } from '@orkestrel/server'
+import { createServer, createSigner, HTTPError } from '@orkestrel/server'
 import { createRecorder, requireValue, waitForAbort, waitForDelay } from '@orkestrel/test'
 
 // ── Server-only test harness ─────────────────────────────────────────────────
@@ -817,7 +817,13 @@ const MINIMUM_ONE_KEY = {
 	invalid: [0, -1, 1.5, Number.NaN, Number.POSITIVE_INFINITY, '1', null],
 }
 const COUNT_KEY = { valid: [0, 3], invalid: [-1, 1.5, Number.NaN, '1', null] }
-const SECRET_KEY = { valid: ['s', ['a', 'b']], invalid: [1, [1], null, {}] }
+const SIGNER_KEY = {
+	valid: [
+		createSigner('shh'),
+		{ sign: async (): Promise<string> => '', verify: async (): Promise<boolean> => false },
+	],
+	invalid: [{}, 'shh', ['shh'], 1, null, { sign: async (): Promise<string> => '', verify: 1 }],
+}
 const STRING_OR_FALSE_KEY = { valid: ['x', false], invalid: [true, 1, null, ['x']] }
 const STRING_OR_BOOLEAN_KEY = { valid: ['x', true, false], invalid: [1, null, ['x']] }
 
@@ -1116,10 +1122,10 @@ export const ADMISSION_DOORS: readonly AdmissionDoorInterface[] = Object.freeze(
 		name: 'createCSRF',
 		factory: 'createCSRF',
 		create: createCSRF,
-		base: { secret: 'shh' },
-		misspelled: 'secrets',
+		base: { signer: createSigner('shh') },
+		misspelled: 'secret',
 		keys: [
-			{ path: ['secret'], required: true, ...SECRET_KEY },
+			{ path: ['signer'], required: true, ...SIGNER_KEY },
 			{ path: ['cookie'], ...STRING_KEY },
 			{ path: ['header'], ...STRING_KEY },
 			{ path: ['field'], ...STRING_KEY },
@@ -1130,10 +1136,10 @@ export const ADMISSION_DOORS: readonly AdmissionDoorInterface[] = Object.freeze(
 		name: 'createCookieTransport',
 		factory: 'createCookieTransport',
 		create: createCookieTransport,
-		base: { secret: 'shh' },
-		misspelled: 'secrets',
+		base: { signer: createSigner('shh') },
+		misspelled: 'secret',
 		keys: [
-			{ path: ['secret'], required: true, ...SECRET_KEY },
+			{ path: ['signer'], required: true, ...SIGNER_KEY },
 			{ path: ['name'], ...STRING_KEY },
 			{
 				path: ['cookie'],
@@ -1566,8 +1572,8 @@ export const STACK_LOOPBACK = '127.0.0.1'
 /** Names the second loopback address the proxy fixture connects to the server from, so the server's socket peer differs from the hop the proxy appends. */
 export const STACK_PEER = '127.0.0.2'
 
-/** Signs the session cookie and the CSRF token alike, as the guide's canonical onion shares one secret between them. */
-export const STACK_SECRET = 'stack-secret'
+/** Signs the session cookie and the CSRF token alike, as the guide's canonical onion shares one signer between them. */
+export const STACK_SIGNER = createSigner('stack-secret')
 
 /** Holds the bearer token `/admin` admits. */
 export const STACK_BEARER = 'stack-bearer'
@@ -2364,7 +2370,7 @@ export async function startStack(options: StackOptions): Promise<StackFixtureInt
 		limiter: createLimiter({ max: 10_000, window: 60_000 }),
 		body: except('/upload', createBody<StackState>()),
 		session: createSession<SessionInterface, StackState>({
-			transport: createCookieTransport({ secret: STACK_SECRET }),
+			transport: createCookieTransport({ signer: STACK_SIGNER }),
 			store: createMemorySessionStore(
 				options.capacity === undefined ? {} : { capacity: options.capacity },
 			),
@@ -2374,7 +2380,7 @@ export async function startStack(options: StackOptions): Promise<StackFixtureInt
 			},
 			...(options.anonymous === true ? { mint: refuseSession } : {}),
 		}),
-		csrf: createCSRF({ secret: STACK_SECRET }),
+		csrf: createCSRF({ signer: STACK_SIGNER }),
 		multipart: only('/upload', createMultipart<StackState>({ directory: uploads.path })),
 		static: createStatic({ root: files.path, prefix: '/static' }),
 	}
@@ -2609,8 +2615,10 @@ export async function sendStack(
 }
 
 /**
- * Opens a session the way a page does: a `GET /token` whose cookies join `jar`, and whose body
- * carries the CSRF token the page embeds.
+ * Opens a session the way a page does after it signs in: a `GET /mark` writes the session, so
+ * its cookie joins `jar`, then a `GET /token` whose body carries the CSRF token the page embeds.
+ * On a stack that mints no session, the write finds none and the token binds to the battery's
+ * nonce.
  *
  * @param stack - The stack
  * @param jar - The client's cookie jar
@@ -2626,6 +2634,7 @@ export async function openSession(
 	stack: StackFixtureInterface,
 	jar: CookieJarInterface,
 ): Promise<string> {
+	await sendStack(stack.url, { path: '/mark' }, jar)
 	const reply = await sendStack(stack.url, { path: '/token' }, jar)
 	const parsed = attempt((): unknown => JSON.parse(reply.text))
 	const token = parsed.success && isRecord(parsed.value) ? parsed.value.csrf : undefined

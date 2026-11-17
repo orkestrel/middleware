@@ -7,7 +7,8 @@ import {
 	SessionControl,
 } from '@src/server'
 import { describe, expect, it } from 'vitest'
-import { buildSession } from '../../setup.js'
+import { buildControlRecord, buildSession } from '../../setup.js'
+import { withoutKey } from '../../setupServer.js'
 
 // ============================================================================
 //  @orkestrel/middleware — core validators.ts unit tests. Every guard is
@@ -89,24 +90,50 @@ describe('isSession', () => {
 })
 
 describe('isSessionControl', () => {
-	it('accepts a value with callable regenerate and destroy', () => {
-		expect(isSessionControl({ regenerate: () => undefined, destroy: () => undefined })).toBe(true)
+	it('accepts a value carrying every declared member at its declared type', () => {
+		const control = buildControlRecord()
+		expect(isSessionControl(control)).toBe(true)
+		expect(isSessionControl({ ...control, successor: new Session('next'), fresh: true })).toBe(true)
+		expect(isSessionControl({ ...control, destroyed: true, extra: 1 })).toBe(true)
 	})
 
-	it('accepts a real SessionControl class instance', () => {
-		expect(isSessionControl(new SessionControl(new Session('a')))).toBe(true)
+	it('accepts a real SessionControl class instance, before and after it regenerates', () => {
+		const control = new SessionControl(new Session('a'))
+		expect(isSessionControl(control)).toBe(true)
+		control.regenerate()
+		expect(isSessionControl(control)).toBe(true)
+		control.destroy()
+		expect(isSessionControl(control)).toBe(true)
 	})
 
-	it('accepts a callable object carrying regenerate and destroy', () => {
-		expect(
-			isSessionControl(
-				Object.assign(() => undefined, { regenerate: () => undefined, destroy: () => undefined }),
-			),
-		).toBe(true)
+	it('accepts a callable object carrying every declared member', () => {
+		expect(isSessionControl(Object.assign(() => undefined, buildControlRecord()))).toBe(true)
+	})
+
+	it('refuses a value missing any one declared member, or holding one at another type', () => {
+		const control = buildControlRecord()
+		const variants = [
+			withoutKey(control, 'destroyed'),
+			withoutKey(control, 'successor'),
+			withoutKey(control, 'fresh'),
+			withoutKey(control, 'regenerate'),
+			withoutKey(control, 'destroy'),
+			{ ...control, destroyed: 'false' },
+			{ ...control, fresh: 0 },
+			{ ...control, successor: null },
+			{ ...control, successor: { id: 'next' } },
+			{ ...control, regenerate: 'nope' },
+			{ ...control, destroy: true },
+			withoutKey(withoutKey(withoutKey(control, 'destroyed'), 'successor'), 'fresh'),
+		]
+		expect(variants.map((variant) => isSessionControl(variant))).toEqual(variants.map(() => false))
 	})
 
 	it('rejects a class instance that lacks destroy', () => {
 		class RegenerateOnly {
+			readonly destroyed = false
+			readonly successor = undefined
+			readonly fresh = false
 			regenerate(): void {}
 		}
 		expect(isSessionControl(new RegenerateOnly())).toBe(false)

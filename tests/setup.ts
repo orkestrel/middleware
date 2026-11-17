@@ -3,21 +3,32 @@ import type {
 	MiddlewareContext,
 	MiddlewareHandler,
 	NextFunction,
+	SignerInterface,
 } from '@orkestrel/server'
 import type { TableInterface } from '@orkestrel/database'
 import type {
+	CSRFState,
 	SessionInterface,
 	SessionLimits,
 	SessionRow,
+	SessionState,
 	SessionStoreInterface,
 	SessionTransportInterface,
 } from '@src/server'
-import { ContentTooLargeError, compose, readBody } from '@orkestrel/server'
+import {
+	ContentTooLargeError,
+	compose,
+	createSigner,
+	isHTTPError,
+	readBody,
+} from '@orkestrel/server'
 import { createDatabase, createMemoryDriver } from '@orkestrel/database'
+import { createRecorder } from '@orkestrel/test'
 import {
 	createDatabaseSessionStore,
 	createRestoredSession,
 	isSession,
+	MemorySessionStore,
 	Session,
 	sessionColumns,
 } from '@src/server'
@@ -33,8 +44,8 @@ import {
 /** Limits a test request's body to the default byte cap the test harness's {@link createTestContext} applies. */
 export const TEST_BODY_LIMIT = 1_048_576
 
-/** Signs every bearer, CSRF, and cookie-transport scenario — the secret each one shares. */
-export const TEST_SECRET = 'test-secret'
+/** Signs every bearer, CSRF, and cookie-transport scenario — the signer each one shares. */
+export const TEST_SIGNER = createSigner('test-secret')
 
 /**
  * Builds a `Request` for a test — a tiny, centralized request builder so
@@ -436,6 +447,306 @@ export function createOversizedContext(request: Request): MiddlewareContext<Reco
 		},
 		abort() {},
 	}
+}
+
+/**
+ * Builds a terminal handler for {@link runChain} that writes `mark` into the request's session
+ * under the `mark` key, the write that makes `createSession` persist a session.
+ *
+ * @param mark - The value written; defaults to `lamp`
+ * @returns A terminal `(request, context) => Promise<Response>` for `compose`
+ *
+ * @example
+ * ```ts
+ * await runChain([session], createWritingTerminal(), request, context)
+ * ```
+ */
+export function createWritingTerminal<TState extends SessionState>(
+	mark = 'lamp',
+): (request: Request, context: MiddlewareContext<TState>) => Promise<Response> {
+	return async (_request, context) => {
+		context.state.session?.set('mark', mark)
+		return new Response(ECHO_MARKER)
+	}
+}
+
+/** Describes one handler step against a held session and how many stores `createSession` makes after it. */
+export interface SessionWriteCase {
+	readonly title: string
+	readonly write: (session: SessionInterface) => void
+	readonly stored: number
+}
+
+/** Lists the handler steps against a session held with `mark` = `lamp`: which count as a write and which do not. */
+export const SESSION_WRITE_CASES: readonly SessionWriteCase[] = Object.freeze([
+	{
+		title: 'delete of a held key',
+		write: (session: SessionInterface): void => {
+			session.delete('mark')
+		},
+		stored: 1,
+	},
+	{ title: 'clear', write: (session: SessionInterface): void => session.clear(), stored: 1 },
+	{
+		title: 'set of another value',
+		write: (session: SessionInterface): void => session.set('mark', 'wick'),
+		stored: 1,
+	},
+	{
+		title: 'delete of an absent key',
+		write: (session: SessionInterface): void => {
+			session.delete('absent')
+		},
+		stored: 0,
+	},
+	{
+		title: 'set of the held value',
+		write: (session: SessionInterface): void => session.set('mark', 'lamp'),
+		stored: 0,
+	},
+])
+
+/**
+ * Builds a plain record carrying every member `SessionControlInterface` declares, each at its
+ * declared type, for a guard proof to vary one member at a time.
+ *
+ * @returns A record with `destroyed`, `successor`, `fresh`, `regenerate`, and `destroy`
+ *
+ * @example
+ * ```ts
+ * isSessionControl(buildControlRecord()) // true
+ * ```
+ */
+export function buildControlRecord(): Readonly<Record<string, unknown>> {
+	return {
+		destroyed: false,
+		successor: undefined,
+		fresh: false,
+		regenerate: () => undefined,
+		destroy: () => undefined,
+	}
+}
+
+/** Describes what one safe request through a CSRF chain hands a page. */
+export interface IssuedTokenInterface {
+	/** The token `state.csrf` held, or `''` when the chain stashed none. */
+	readonly token: string
+	/** The `Cookie` header the response's `Set-Cookie` fields send back, `''` when it set none. */
+	readonly cookie: string
+	/** The request's state after the chain ran. */
+	readonly state: CSRFState & SessionState
+	/** The chain's response. */
+	readonly response: Response
+}
+
+/**
+ * Sends one safe `GET /` through a chain that ends in `createCSRF`, the way a page load reaches
+ * it, and reads the token and the cookies the response sets.
+ *
+ * @param middleware - The ordered chain, outermost first
+ * @param headers - The request headers, such as a session credential or a `Cookie` header
+ * @returns The token, the cookies to send back, the state, and the response
+ *
+ * @example
+ * ```ts
+ * const { token, cookie } = await issueToken([createCSRF({ signer: TEST_SIGNER })])
+ * ```
+ */
+export async function issueToken(
+	middleware: ReadonlyArray<MiddlewareHandler<CSRFState & SessionState>>,
+	headers: Readonly<Record<string, string>> = {},
+): Promise<IssuedTokenInterface> {
+	const request = buildTestRequest('/', { headers })
+	const state: CSRFState & SessionState = {}
+	const response = await runChain(
+		middleware,
+		createEchoTerminal(),
+		request,
+		createTestContext(request, state),
+	)
+	const cookie = response.headers
+		.getSetCookie()
+		.map((field) => field.split(';')[0] ?? '')
+		.join('; ')
+	return { token: state.csrf ?? '', cookie, state, response }
+}
+
+/**
+ * Sends one request through a chain and reads its status, taking a thrown `HTTPError`'s status
+ * as the answer a boundary would render.
+ *
+ * @param middleware - The ordered chain, outermost first
+ * @param init - The request's method, headers, and body
+ * @returns The response status, or the thrown `HTTPError`'s status
+ * @throws Thrown when the chain throws anything but an `HTTPError`
+ *
+ * @example
+ * ```ts
+ * await readChainStatus([csrf], { method: 'POST' }) // 403
+ * ```
+ */
+export async function readChainStatus(
+	middleware: ReadonlyArray<MiddlewareHandler<CSRFState & SessionState>>,
+	init: RequestInit,
+): Promise<number> {
+	const request = buildTestRequest('/', init)
+	try {
+		const response = await runChain(
+			middleware,
+			createEchoTerminal(),
+			request,
+			createTestContext(request, {}),
+		)
+		return response.status
+	} catch (error) {
+		if (isHTTPError(error)) return error.status
+		throw error
+	}
+}
+
+/** Records every message a signer signs and verifies, in call order, over a real signer. */
+export interface RecordingSignerInterface extends SignerInterface {
+	readonly signed: readonly string[]
+	readonly verified: readonly string[]
+}
+
+/**
+ * Wraps a real signer so a proof can count the HMAC calls a battery makes and read the messages
+ * it signs.
+ *
+ * @param signer - The real signer every call reaches
+ * @returns A signer that answers as `signer` does and records each call
+ *
+ * @example
+ * ```ts
+ * const recording = createRecordingSigner(TEST_SIGNER)
+ * await recording.sign('lamp')
+ * recording.signed // ['lamp']
+ * ```
+ */
+export function createRecordingSigner(signer: SignerInterface): RecordingSignerInterface {
+	const signs = createRecorder<readonly [string]>()
+	const verifies = createRecorder<readonly [string]>()
+	return {
+		get signed() {
+			return signs.calls.map(([message]) => message)
+		},
+		get verified() {
+			return verifies.calls.map(([message]) => message)
+		},
+		sign(message) {
+			signs.handler(message)
+			return signer.sign(message)
+		},
+		verify(message, signature) {
+			verifies.handler(message)
+			return signer.verify(message, signature)
+		},
+	}
+}
+
+/**
+ * Bounds the growth ratio t(4n)/t(n) of a `MemorySessionStore` insert at capacity, where an
+ * insert evicts one entry. Read on 2026-11-16 at n = 2,000, 30 solo readings per arm: the base
+ * store that scans every entry at capacity (`c00f055`, load average 1.6 to 2.4) read 3.52 to
+ * 4.16 beside identical sides (n against n) at 0.95 to 1.09; the store that evicts through one
+ * long-lived iterator (load average near 4) read 1.08 to 1.36 beside identical sides at 0.88 to
+ * 1.25. 2 sits above the constant arm's maximum and below the scanning arm's minimum.
+ */
+export const SESSION_GROWTH_BOUND = 2
+
+/** Holds the store size n at which the eviction cost row reads t(n), and 4n for t(4n). */
+export const SESSION_GROWTH_SIZE = 2_000
+
+/**
+ * Builds a `MemorySessionStore` of capacity `size` that holds `size` sessions, so its next insert
+ * of an unseen id evicts.
+ *
+ * @param size - The capacity and the number of sessions held
+ * @returns The full store
+ *
+ * @example
+ * ```ts
+ * const store = await fillSessionStore(4)
+ * await store.get('full-0', 0) // the oldest session, still held
+ * ```
+ */
+export async function fillSessionStore(size: number): Promise<MemorySessionStore<Session>> {
+	const store = new MemorySessionStore<Session>({ capacity: size })
+	await Promise.all(
+		Array.from({ length: size }, (_, index) => store.set(new Session(`full-${index}`), 0)),
+	)
+	return store
+}
+
+/**
+ * Times inserting every session of `sessions` into `store`, in milliseconds. Each insert runs to
+ * completion before `set` returns, so the time covers the store's whole work.
+ *
+ * @param store - The store
+ * @param sessions - The sessions to insert, each under an id the store does not hold
+ * @returns The duration of the inserts
+ *
+ * @example
+ * ```ts
+ * const ms = timeSessionInserts(await fillSessionStore(4), [new Session('lamp')])
+ * ```
+ */
+export function timeSessionInserts(
+	store: SessionStoreInterface<Session>,
+	sessions: readonly Session[],
+): number {
+	const start = performance.now()
+	const settled = sessions.map((session) => store.set(session, 0))
+	const elapsed = performance.now() - start
+	void Promise.all(settled)
+	return elapsed
+}
+
+/**
+ * Measures how an insert at capacity grows from a store of `small` sessions to one of `large`:
+ * the batch time at `large` over the batch time at `small`, each the least of 5 batches, with the
+ * batch sized so it takes 20 ms or more at `small`.
+ *
+ * @remarks
+ * The batches interleave in 5 rounds, the small store first in the even rounds and the large
+ * store first in the odd ones, so a burst of contention on the host reaches both sizes. Every
+ * batch inserts ids no earlier batch used, so each insert evicts.
+ *
+ * @param small - The size of the reference store
+ * @param large - The size of the measured store
+ * @returns t(large)/t(small): near 1 for a constant-time eviction, and near `large / small` for
+ * one that scans the store
+ *
+ * @example
+ * ```ts
+ * await measureSessionGrowth(SESSION_GROWTH_SIZE, 4 * SESSION_GROWTH_SIZE) // near 1
+ * ```
+ */
+export async function measureSessionGrowth(small: number, large: number): Promise<number> {
+	const stores = { small: await fillSessionStore(small), large: await fillSessionStore(large) }
+	const probe = Array.from({ length: 64 }, (_, index) => new Session(`probe-${index}`))
+	const warm = timeSessionInserts(stores.small, probe)
+	const repeat = Math.max(64, Math.ceil((20 * probe.length) / Math.max(warm, 0.001)))
+	const rounds = Array.from({ length: 5 }, (_round, round) => {
+		const batch = {
+			small: Array.from({ length: repeat }, (_slot, index) => new Session(`s${round}-${index}`)),
+			large: Array.from({ length: repeat }, (_slot, index) => new Session(`l${round}-${index}`)),
+		}
+		return round % 2 === 0
+			? {
+					small: timeSessionInserts(stores.small, batch.small),
+					large: timeSessionInserts(stores.large, batch.large),
+				}
+			: {
+					large: timeSessionInserts(stores.large, batch.large),
+					small: timeSessionInserts(stores.small, batch.small),
+				}
+	})
+	return (
+		Math.min(...rounds.map((times) => times.large)) /
+		Math.min(...rounds.map((times) => times.small))
+	)
 }
 
 /** Records persistence calls while delegating to the real session store. */

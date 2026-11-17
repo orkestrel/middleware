@@ -2,7 +2,12 @@ import type { MemorySessionStoreOptions, Session } from '@src/server'
 import { ContractError } from '@orkestrel/contract'
 import { DEFAULT_SESSION_CAPACITY, MemorySessionStore } from '@src/server'
 import { describe, expect, it } from 'vitest'
-import { buildSession } from '../../../setup.js'
+import {
+	buildSession,
+	measureSessionGrowth,
+	SESSION_GROWTH_BOUND,
+	SESSION_GROWTH_SIZE,
+} from '../../../setup.js'
 
 // ============================================================================
 //  @orkestrel/middleware — MemorySessionStore unit tests. Every scenario
@@ -118,13 +123,13 @@ describe('MemorySessionStore created stamping', () => {
 })
 
 describe('MemorySessionStore capacity', () => {
-	it('defaults to DEFAULT_SESSION_CAPACITY and evicts the oldest-written entry once exceeded', async () => {
+	it('defaults to DEFAULT_SESSION_CAPACITY and evicts the least recently used entry once exceeded', async () => {
 		const store = new MemorySessionStore<Session>()
 		for (const index of Array.from({ length: DEFAULT_SESSION_CAPACITY }, (_, position) => position))
 			await store.set(buildSession(`id-${index}`), 0)
-		expect((await store.get('id-0', 0))?.id).toBe('id-0')
 		await store.set(buildSession('overflow'), 0)
 		expect(await store.get('id-0', 0)).toBeUndefined()
+		expect((await store.get('id-1', 0))?.id).toBe('id-1')
 		expect((await store.get('overflow', 0))?.id).toBe('overflow')
 	})
 
@@ -151,6 +156,39 @@ describe('MemorySessionStore capacity', () => {
 		expect(await store.get('b', 0)).toBeUndefined()
 		expect((await store.get('a', 0))?.state.get('mark')).toBe('1-touched')
 		expect((await store.get('c', 0))?.state.get('mark')).toBe('3')
+	})
+
+	it('a live read refreshes recency, so a session only read survives later inserts that a write would not', async () => {
+		const store = new MemorySessionStore<Session>({ capacity: 2 })
+		await store.set(buildSession('read', '1'), 0)
+		await store.set(buildSession('idle', '2'), 0)
+		expect((await store.get('read', 0))?.id).toBe('read')
+		await store.set(buildSession('new', '3'), 0)
+		expect(await store.get('idle', 0)).toBeUndefined()
+		expect((await store.get('read', 0))?.state.get('mark')).toBe('1')
+	})
+
+	it('evicts exactly one entry per insert at capacity, the least recently used, even when others expired', async () => {
+		const evicted: string[] = []
+		const store = new MemorySessionStore<Session>({
+			capacity: 3,
+			ttl: 100,
+			evict: (id) => evicted.push(id),
+		})
+		await store.set(buildSession('a'), 0)
+		await store.set(buildSession('b'), 0)
+		await store.set(buildSession('c'), 500)
+		await store.set(buildSession('d'), 500)
+		expect(evicted).toEqual(['a'])
+		expect((await store.get('c', 550))?.id).toBe('c')
+		expect(await store.get('b', 550)).toBeUndefined()
+		expect(evicted).toEqual(['a', 'b'])
+	})
+
+	it('evicts at capacity in time constant in the store size: t(4n)/t(n) stays under the bound', async () => {
+		const growth = await measureSessionGrowth(SESSION_GROWTH_SIZE, 4 * SESSION_GROWTH_SIZE)
+		expect(Number.isFinite(growth)).toBe(true)
+		expect(growth).toBeLessThan(SESSION_GROWTH_BOUND)
 	})
 
 	it('invokes evict with the evicted id on a capacity eviction', async () => {
