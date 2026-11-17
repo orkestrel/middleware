@@ -10,6 +10,7 @@ import type {
 	CSRFState,
 	ForwardedOptions,
 	IdentifierState,
+	MultipartBody,
 	MultipartState,
 	SessionInterface,
 	SessionState,
@@ -43,9 +44,11 @@ import {
 	except,
 	isSession,
 	only,
+	resolveMultipartLimits,
 	Session,
 } from '@src/server'
 import { ContractError, attempt, isRecord, isString } from '@orkestrel/contract'
+import { MultipartParser } from '../src/server/MultipartParser.js'
 import { MiddlewareValue, buildStore } from './setup.js'
 import { statSync, writeFileSync } from 'node:fs'
 import { createServer as createHttpServer, request as sendHttpRequest } from 'node:http'
@@ -426,6 +429,173 @@ export function buildCancelTrackingMultipartRequest(
 		duplex: 'half',
 	}
 	return { request: new Request('http://test.local/upload', init), cancelled }
+}
+
+/**
+ * Bounds the growth ratio t(4n)/t(n) that a linear call may show in a cost row. On 2026-11-17,
+ * with the host's load average near 1.8, 20 solo readings per row of the candidate read 3.64 to
+ * 4.24, and the base `cdf553b` read 13.72 to 19.32 for `isReservedDeviceName` and 16.88 to 21.31
+ * for the multipart field; 8 sits near twice the linear maximum and below either quadratic minimum.
+ */
+export const COST_GROWTH_BOUND = 8
+
+/**
+ * Holds the run length n at which the `isReservedDeviceName` cost row reads t(n): a request
+ * target of a 4n run of dots plus one other character fits the 16 KiB header limit of a default
+ * `node:http` server.
+ */
+export const DEVICE_RUN_SIZE = 4_090
+
+/**
+ * Holds the field length n at which the multipart field cost row reads t(n), each size read with
+ * the field limit set to that size, so the 4n field sits at its limit.
+ */
+export const FIELD_RUN_SIZE = 4_096
+
+/** Describes one `isReservedDeviceName` case: the segment and whether it names a reserved device. */
+export interface DeviceTrimCase {
+	readonly segment: string
+	readonly reserved: boolean
+}
+
+/**
+ * Lists the trailing-run edges of `isReservedDeviceName`: Windows drops a trailing run of dots and
+ * spaces in any interleaving, and keeps every other trailing character, a tab and U+00A0 included.
+ */
+export const DEVICE_TRIM_CASES: readonly DeviceTrimCase[] = Object.freeze([
+	{ segment: 'CON .', reserved: true },
+	{ segment: 'CON . .', reserved: true },
+	{ segment: 'CON. . ', reserved: true },
+	{ segment: 'COM¹ .', reserved: true },
+	{ segment: 'NUL.json. .', reserved: true },
+	{ segment: 'CON\t', reserved: false },
+	{ segment: 'NUL ', reserved: false },
+	{ segment: 'CON　', reserved: false },
+	{ segment: '. .', reserved: false },
+	{ segment: ' ', reserved: false },
+	{ segment: 'console .', reserved: false },
+])
+
+/** Describes one slash-law case: a request pathname, a mount prefix, and whether it lies under it. */
+export interface PrefixLawCase {
+	readonly pathname: string
+	readonly prefix: string
+	readonly under: boolean
+}
+
+/**
+ * Lists the slash law `prefix` and `exclude` share: case-sensitive, one trailing slash optional on
+ * the prefix, and everything beneath the prefix on a segment boundary.
+ */
+export const PREFIX_LAW_CASES: readonly PrefixLawCase[] = Object.freeze([
+	{ pathname: '/static', prefix: '/static', under: true },
+	{ pathname: '/static/', prefix: '/static', under: true },
+	{ pathname: '/static/a.css', prefix: '/static', under: true },
+	{ pathname: '/static', prefix: '/static/', under: true },
+	{ pathname: '/static/', prefix: '/static/', under: true },
+	{ pathname: '/static/a.css', prefix: '/static/', under: true },
+	{ pathname: '/static//a.css', prefix: '/static/', under: true },
+	{ pathname: '/staticx', prefix: '/static', under: false },
+	{ pathname: '/staticx', prefix: '/static/', under: false },
+	{ pathname: '/stati', prefix: '/static/', under: false },
+	{ pathname: '/Static', prefix: '/static', under: false },
+	{ pathname: '/', prefix: '/static/', under: false },
+	{ pathname: '/', prefix: '/', under: true },
+	{ pathname: '/a/b', prefix: '/', under: true },
+])
+
+/**
+ * Times one batch of `repeat` sequential runs of `call`, awaiting each run, in milliseconds.
+ *
+ * @param call - The call to time
+ * @param repeat - The number of runs in the batch
+ * @returns The duration of the batch
+ *
+ * @example
+ * ```ts
+ * await timeCostBatch(() => 'lamp'.repeat(4), 10) // a duration in milliseconds
+ * ```
+ */
+export async function timeCostBatch(call: () => unknown, repeat: number): Promise<number> {
+	const start = performance.now()
+	await Array.from({ length: repeat }).reduce<Promise<unknown>>(
+		(chain) => chain.then(() => call()),
+		Promise.resolve(),
+	)
+	return performance.now() - start
+}
+
+/**
+ * Measures how a call's cost grows from size n to 4n: the batch time at 4n over the batch time
+ * at n, each the least of 5 batches, with the batch sized so it takes 20 ms or more at n.
+ *
+ * @remarks
+ * The batches interleave in 5 rounds, the small batch first in the even rounds and the large batch
+ * first in the odd ones, so a burst of contention on the host reaches both sizes rather than one.
+ *
+ * @param build - Builds the call to time for one size
+ * @param size - The size n
+ * @returns t(4n)/t(n), near 4 for a linear call and near 16 for a quadratic one
+ *
+ * @example
+ * ```ts
+ * await measureCostGrowth((size) => () => 'a'.repeat(size).indexOf('b'), 4_096) // near 4
+ * ```
+ */
+export async function measureCostGrowth(
+	build: (size: number) => () => unknown,
+	size: number,
+): Promise<number> {
+	const small = build(size)
+	const large = build(4 * size)
+	await small()
+	await large()
+	const repeat = Math.max(1, Math.ceil(20 / Math.max(await timeCostBatch(small, 1), 0.001)))
+	const rounds = await Array.from({ length: 5 }).reduce<
+		Promise<ReadonlyArray<{ readonly small: number; readonly large: number }>>
+	>(async (previous, _, round) => {
+		const log = await previous
+		const first = await timeCostBatch(round % 2 === 0 ? small : large, repeat)
+		const second = await timeCostBatch(round % 2 === 0 ? large : small, repeat)
+		return [
+			...log,
+			round % 2 === 0 ? { small: first, large: second } : { small: second, large: first },
+		]
+	}, Promise.resolve([]))
+	return (
+		Math.min(...rounds.map((times) => times.large)) /
+		Math.min(...rounds.map((times) => times.small))
+	)
+}
+
+/**
+ * Builds the multipart field cost row's call for one size: a parse of one text field of `size`
+ * bytes, delivered one byte per chunk, under a field limit of `size`.
+ *
+ * @param size - The field's byte length, and its limit
+ * @returns A call that parses a fresh one-byte-chunk stream of the body and resolves its result
+ *
+ * @example
+ * ```ts
+ * await buildFieldDrip(64)() // { files: {}, fields: { note: 'aaaa…' } }
+ * ```
+ */
+export function buildFieldDrip(size: number): () => Promise<MultipartBody> {
+	const boundary = 'drip-boundary'
+	const { body } = buildMultipartBody(
+		[{ kind: 'field', name: 'note', value: 'a'.repeat(size) }],
+		boundary,
+	)
+	const limits = resolveMultipartLimits({ field: { size } })
+	return () =>
+		new MultipartParser(
+			buildChunkedStream(body, 1),
+			new AbortController().signal,
+			boundary,
+			limits,
+			undefined,
+			tmpdir(),
+		).parse()
 }
 
 /** Names one part of a real `multipart/form-data` body — either a text field or a file. */

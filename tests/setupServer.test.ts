@@ -11,9 +11,15 @@ import { open } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
-import { requireValue, waitForCondition } from '@orkestrel/test'
+import { requireValue, waitForCondition, waitForDelay } from '@orkestrel/test'
 import { createScratch } from '@orkestrel/test/server'
 import {
+	COST_GROWTH_BOUND,
+	DEVICE_RUN_SIZE,
+	FIELD_RUN_SIZE,
+	buildFieldDrip,
+	measureCostGrowth,
+	timeCostBatch,
 	buildCancelTrackingMultipartRequest,
 	buildChunkedStream,
 	buildDirectoryIndexFixture,
@@ -57,7 +63,7 @@ import {
 import type { StackCloser, StackReply } from './setupServer.js'
 import type { SessionState } from '@src/server'
 import { createHeaderTransport, createSession } from '@src/server'
-import { buildTestRequest, createTestContext } from './setup.js'
+import { MiddlewareValue, buildTestRequest, createTestContext } from './setup.js'
 
 // ── tests/setupServer.ts — the Node-only fixtures ─────────────────────────────
 //
@@ -342,6 +348,51 @@ describe('buildChunkedStream', () => {
 	it('closes at once for an empty payload', async () => {
 		const reader = buildChunkedStream(new Uint8Array(0)).getReader()
 		expect(await reader.read()).toEqual({ done: true, value: undefined })
+	})
+})
+
+describe('timeCostBatch', () => {
+	it('runs the call the asked number of times, one after another, and reads a duration', async () => {
+		const runs = new MiddlewareValue<readonly number[]>([])
+		const duration = await timeCostBatch(async () => {
+			runs.value = [...runs.value, runs.value.length]
+			await waitForDelay(1)
+		}, 3)
+		expect(runs.value).toEqual([0, 1, 2])
+		expect(duration).toBeGreaterThanOrEqual(3)
+	})
+})
+
+describe('measureCostGrowth', () => {
+	it('reads a linear call near 4 and a quadratic call far above the bound', async () => {
+		const linear = await measureCostGrowth(
+			(size) => () =>
+				Array.from({ length: size }, (_value, index) => index).reduce((a, b) => a + b, 0),
+			4_096,
+		)
+		const quadratic = await measureCostGrowth(
+			(size) => () =>
+				Array.from(
+					{ length: size },
+					(_value, index) => Array.from({ length: index }, () => 1).length,
+				).reduce((a, b) => a + b, 0),
+			256,
+		)
+		expect(linear).toBeLessThan(COST_GROWTH_BOUND)
+		expect(quadratic).toBeGreaterThan(COST_GROWTH_BOUND)
+	})
+})
+
+describe('DEVICE_RUN_SIZE', () => {
+	it('keeps a request target of a 4n run plus one character inside a 16 KiB header', () => {
+		expect(`/${'.'.repeat(4 * DEVICE_RUN_SIZE)}x`.length).toBeLessThanOrEqual(16_384)
+	})
+})
+
+describe('buildFieldDrip', () => {
+	it('parses one field of the asked size, delivered one byte per chunk, at its limit', async () => {
+		await expect(buildFieldDrip(3)()).resolves.toEqual({ files: {}, fields: { note: 'aaa' } })
+		expect(FIELD_RUN_SIZE).toBeGreaterThan(0)
 	})
 })
 

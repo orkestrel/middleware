@@ -80,7 +80,8 @@ import {
  *
  * @param pathname - The request pathname to test
  * @param prefix - The path prefix to test against
- * @returns True if `pathname` equals `prefix` or starts with `prefix` + `/`; false otherwise
+ * @returns True if `pathname` equals `prefix` with one trailing slash optional, or starts with
+ * that form + `/`; false otherwise
  *
  * @example
  * ```ts
@@ -89,9 +90,8 @@ import {
  * ```
  */
 export function isUnderPath(pathname: string, prefix: string): boolean {
-	if (pathname === prefix) return true
-	const boundary = prefix.endsWith('/') ? prefix : `${prefix}/`
-	return pathname.startsWith(boundary)
+	const base = prefix.endsWith('/') ? prefix.slice(0, -1) : prefix
+	return pathname === base || pathname.startsWith(`${base}/`)
 }
 
 /**
@@ -210,8 +210,7 @@ export function resolveStaticPath(
 	pathname: string,
 ): string | undefined {
 	if (prefix !== undefined && !isUnderPath(pathname, prefix)) return undefined
-	const remainder =
-		prefix === undefined ? pathname : pathname === prefix ? '/' : pathname.slice(prefix.length)
+	const remainder = prefix === undefined ? pathname : pathname.slice(prefix.length)
 	const decodedResult = attempt(() => decodeURIComponent(remainder))
 	if (!decodedResult.success) return undefined
 	const decoded = decodedResult.value
@@ -281,7 +280,7 @@ export function isReservedDeviceName(segment: string): boolean {
 	const superscripted = segment.replace(/[¹²³]/g, (digit) =>
 		digit === '¹' ? '1' : digit === '²' ? '2' : '3',
 	)
-	const trimmed = superscripted.replace(/[. ]+$/, '')
+	const trimmed = superscripted.replace(/(?<![. ])[. ]+$/, '')
 	const stem = trimmed.split('.')[0]
 	if (stem === undefined || stem.length === 0) return false
 	return RESERVED_DEVICE_NAMES.has(stem.toUpperCase())
@@ -513,8 +512,8 @@ export function parsePartHeaders(block: string): PartHeaders {
 
 /**
  * Attempts to unlink every still-`'staged'` file in a parsed
- * {@link MultipartBody} — the fail-closed cleanup `createMultipart` runs when
- * its downstream handler throws, mirroring `parseMultipartRequest`'s own
+ * {@link MultipartBody} — the cleanup `createMultipart` runs when its
+ * downstream handler settles, mirroring `parseMultipartRequest`'s own
  * cleanup pattern (a missing file is already gone; failures are swallowed).
  *
  * @param body - The parsed multipart body to clean up
@@ -759,7 +758,9 @@ export function planStaticResponse(
 		headers.set('content-length', String(info.size))
 		return { status: 200, headers, range: undefined }
 	}
-	const range = parseRange(request.headers.get('range') ?? undefined, info.size)
+	const range = request.headers.has('if-range')
+		? undefined
+		: parseRange(request.headers.get('range') ?? undefined, info.size)
 	if (range === undefined) {
 		headers.set('content-length', String(info.size))
 		return { status: 200, headers, range: undefined }

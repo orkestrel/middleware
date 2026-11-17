@@ -1,12 +1,14 @@
 import { MiddlewareValue } from '../../setup.js'
 import type { MultipartPartInput } from '../../setupServer.js'
-import { dirname } from 'node:path'
+import { dirname, join } from 'node:path'
+import { isError } from '@orkestrel/contract'
 import { readFile, stat, unlink } from 'node:fs/promises'
 import { describe, expect, it } from 'vitest'
 import { waitForDelay } from '@orkestrel/test'
 import { createScratch } from '@orkestrel/test/server'
 import {
 	isMultipartError,
+	MULTIPART_MAX_BOUNDARY,
 	MULTIPART_MAX_HEADER_BLOCK,
 	MULTIPART_MAX_PREAMBLE,
 	parseMultipartRequest,
@@ -163,6 +165,65 @@ describe('parseMultipartRequest', () => {
 		await expect(parseMultipartRequest(request, { allowed: [] })).rejects.toSatisfy(
 			(error: unknown) => isMultipartError(error) && error.code === 'rejected',
 		)
+	})
+
+	it('refuses a file the allow-list rejects before it stages a byte, short or long', async () => {
+		const scratch = createScratch({ prefix: 'middleware-sniff-' })
+		try {
+			// A staging directory that does not exist: opening a staged file there fails with
+			// ENOENT, so the type refusal can arrive only if no staged file was opened first.
+			const directory = join(scratch.path, 'absent')
+			const refusals = await Promise.all(
+				[
+					new TextEncoder().encode('<html>lamp oil and wick, long enough to sniff</html>'),
+					new TextEncoder().encode('lamp'),
+					new Uint8Array(0),
+				].map(async (bytes) => {
+					const request = buildMultipartRequest([
+						{ kind: 'file', name: 'avatar', filename: 'a.png', contentType: 'image/png', bytes },
+					])
+					const [outcome] = await Promise.allSettled([
+						parseMultipartRequest(request, { allowed: ['image/png'], directory }),
+					])
+					if (outcome.status === 'fulfilled') return 'parsed'
+					return isMultipartError(outcome.reason) ? outcome.reason.code : String(outcome.reason)
+				}),
+			)
+			expect(refusals).toEqual(['rejected', 'rejected', 'rejected'])
+			expect(scratch.names()).toEqual([])
+		} finally {
+			scratch.destroy()
+		}
+	})
+
+	it('reaches the staging directory for a file the allow-list admits (control)', async () => {
+		const scratch = createScratch({ prefix: 'middleware-sniff-' })
+		try {
+			const request = buildMultipartRequest([
+				{
+					kind: 'file',
+					name: 'avatar',
+					filename: 'a.png',
+					contentType: 'image/png',
+					bytes: Buffer.concat([Buffer.from(PNG_MAGIC), Buffer.from('lamp oil and wick')]),
+				},
+			])
+			const [outcome] = await Promise.allSettled([
+				parseMultipartRequest(request, {
+					allowed: ['image/png'],
+					directory: join(scratch.path, 'absent'),
+				}),
+			])
+			expect(outcome.status).toBe('rejected')
+			expect(outcome.status === 'rejected' && isMultipartError(outcome.reason)).toBe(false)
+			expect(
+				outcome.status === 'rejected' && isError(outcome.reason) && 'code' in outcome.reason
+					? outcome.reason.code
+					: undefined,
+			).toBe('ENOENT')
+		} finally {
+			scratch.destroy()
+		}
 	})
 
 	it('a genuine sniff-matching, on-list file is ACCEPTED with validated:true', async () => {
@@ -626,6 +687,20 @@ describe('parseMultipartRequest', () => {
 		await expect(parseMultipartRequest(request)).rejects.toSatisfy(
 			(error: unknown) => isMultipartError(error) && error.code === 'malformed',
 		)
+	})
+
+	it('refuses a boundary longer than RFC 2046 admits as malformed, and admits one at the limit', async () => {
+		const parts: readonly MultipartPartInput[] = [{ kind: 'field', name: 'a', value: 'lamp' }]
+		const admitted = buildMultipartRequest(parts, 'b'.repeat(MULTIPART_MAX_BOUNDARY))
+		await expect(parseMultipartRequest(admitted)).resolves.toMatchObject({ fields: { a: 'lamp' } })
+		const refused = buildMultipartRequest(parts, 'b'.repeat(MULTIPART_MAX_BOUNDARY + 1))
+		await expect(parseMultipartRequest(refused)).rejects.toSatisfy(
+			(error: unknown) =>
+				isMultipartError(error) &&
+				error.code === 'malformed' &&
+				error.message === 'multipart boundary longer than 70 characters',
+		)
+		expect(MULTIPART_MAX_BOUNDARY).toBe(70)
 	})
 
 	it('rejects an oversized same-chunk header while accepting the exact limit', async () => {
