@@ -839,7 +839,7 @@ dispatcher.add({ method: 'GET', path: '/health', handler: () => new Response('ok
 const server = createServer<State>({
 	dispatcher,
 	state: () => ({}),
-	middleware: [createBoundary(), createSecurity()],
+	middleware: [createSecurity(), createBoundary()],
 })
 const port = await server.start()
 await server.stop()
