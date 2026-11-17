@@ -273,7 +273,7 @@ export interface LimiterOptions<TState = unknown> {
 
 /**
  * Describes the bearer-authentication state slice `createBearer` stashes on
- * `context.state` once a token verifies.
+ * `context.state` after a token verifies.
  *
  * @typeParam TCredential - The credential `createBearer`'s `verify` resolves
  * @remarks
@@ -464,14 +464,14 @@ export interface SessionStoreInterface<S extends SessionInterface> {
 	 *
 	 * @param session - The session to persist, keyed by its own `id`
 	 * @param now - The caller's clock reading stamped as the session's `seen`
-	 * @returns A promise that resolves once the session is stored
+	 * @returns A promise that resolves after the session is stored
 	 */
 	set(session: S, now: number): Promise<void>
 	/**
 	 * Removes a session by id — a no-op on an absent id, never throws.
 	 *
 	 * @param id - The session id to remove
-	 * @returns A promise that resolves once the id is absent from the store
+	 * @returns A promise that resolves after the id is absent from the store
 	 */
 	delete(id: string): Promise<void>
 }
@@ -593,7 +593,7 @@ export interface SessionTransportInterface {
 	 * @param response - The outgoing response the credential is written onto
 	 * @param id - The session id carried to the client
 	 * @param encrypted - Whether the request arrived over an encrypted transport
-	 * @returns Nothing, or a promise that resolves once the credential is written
+	 * @returns Nothing, or a promise that resolves after the credential is written
 	 */
 	write(response: Response, id: string, encrypted: boolean): void | Promise<void>
 	/** Clears the transport's credential on `destroy()`. */
@@ -765,7 +765,7 @@ export interface MultipartBody {
  * Describes the multipart state slice `createMultipart` stashes.
  *
  * @remarks
- * Present only once `createMultipart` has fully parsed a multipart request.
+ * Present only after `createMultipart` has fully parsed a multipart request.
  * After it runs, `context.body()` must not be called for that request — the
  * multipart battery consumes `request.body` as a stream, so the seam's
  * cached body has nothing left to read.

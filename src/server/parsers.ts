@@ -17,7 +17,7 @@ import { MultipartParser } from './MultipartParser.js'
  * filename is metadata only, never a path component. A field or file part
  * named `__proto__` / `constructor` / `prototype` is silently skipped and
  * never keyed onto the returned {@link MultipartBody} (a skipped file's
- * staged temp file is unlinked immediately, since it can never be
+ * staged temp file is unlinked immediately, because it can never be
  * referenced). A file part with an empty declared filename (`filename=""`)
  * and a zero-byte body — the browser convention for an unselected optional
  * `<input type="file">` — is a silent no-op: its temp file is unlinked, it is

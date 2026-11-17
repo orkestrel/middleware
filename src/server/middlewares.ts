@@ -928,14 +928,14 @@ export function createAssets<TState>(options: AssetOptions): MiddlewareHandler<T
  * Containment is enforced on canonical paths, not merely the lexically
  * resolved one: `options.root` is canonicalized per request and every
  * request's candidate path is re-canonicalized (`fs.realpath`) before it is
- * served, so a symlink whose target escapes `root` is refused (falls through
+ * served, so a symlink whose target resolves outside `root` is refused (falls through
  * to `next()`) even though the lexical path resolved inside `root`. A
  * symlink that resolves to a target still inside `root` is unaffected and
  * still serves normally. A dangling symlink (`realpath` throws `ENOENT`) or
  * any other `realpath` failure is treated as a miss — this battery never
  * throws or 500s on a symlink surprise. On a streamed response (a 200 or 206
  * that carries a file body), the open `FileHandle` is owned by the
- * `Response` body and is released only once that body is fully read or
+ * `Response` body and is released only after that body is fully read or
  * cancelled — Node HTTP servers do this automatically when sending the
  * response, but a caller that holds an unread `Response` (for example in a test)
  * must cancel its body to release the handle promptly.

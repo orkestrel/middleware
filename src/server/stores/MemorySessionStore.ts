@@ -25,7 +25,7 @@ import { admitOptions, sessionExpired } from '../helpers.js'
  *
  * Capacity is enforced as least-recently-used: a `set` and a live `get` each
  * refresh an id's recency (each write takes the next number from a counter, and the
- * lowest number held is the least recently used id). Inserting a brand-new id once the store
+ * lowest number held is the least recently used id). Inserting a brand-new id while the store
  * is at `capacity` evicts the least recently used id, in time that does not grow with
  * the store's size and without retaining heap per read; an expired entry leaves at its own
  * `get` or when it is the least recently used. `options.evict` — when provided — is

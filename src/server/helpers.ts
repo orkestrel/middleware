@@ -203,7 +203,7 @@ export function isContainedPath(child: string, parent: string): boolean {
  * @param pathname - The raw request pathname
  * @returns The resolved absolute path under `root`, or `undefined` when the
  * request does not resolve (out of prefix, malformed escape, NUL byte,
- * reserved device name, or an attempted escape from `root`)
+ * reserved device name, or a path that resolves outside `root`)
  *
  * @example
  * ```ts
@@ -236,7 +236,7 @@ export function resolveStaticPath(
  *
  * @remarks
  * Total: a `realpath` failure (a dangling symlink, a missing file, a
- * permission refusal) and an escape from `rootReal` both resolve `undefined`,
+ * permission refusal) and a path outside `rootReal` both resolve `undefined`,
  * so a caller that treats those two outcomes identically needs no `try`. A
  * caller that must tell them apart keeps its own explicit branch instead.
  *
@@ -524,7 +524,7 @@ export function parsePartHeaders(block: string): PartHeaders {
  * cleanup pattern (a missing file is already gone; failures are swallowed).
  *
  * @param body - The parsed multipart body to clean up
- * @returns A promise that resolves once every staged file has been attempted
+ * @returns A promise that resolves after every staged file has been attempted
  *
  * @example
  * ```ts
@@ -1550,13 +1550,13 @@ export function buildClient(ip: string | undefined): Client {
 }
 
 /**
- * Compares two strings in constant time once their lengths match, so a
+ * Compares two strings in constant time when their lengths match, so a
  * per-character mismatch never changes how long the comparison takes.
  *
  * @remarks
  * Length-guarded XOR-accumulate over char codes: a length mismatch short
  * circuits (safe — the lengths of two independently-generated tokens are
- * not a useful timing signal), but once lengths match every character is
+ * not a useful timing signal), but when lengths match every character is
  * compared with no early return, so a per-character mismatch never affects
  * how long the comparison takes.
  *

@@ -20,7 +20,7 @@ import { admitOptions, sessionExpired, snapshotSession } from '../helpers.js'
  * @typeParam S - The stored session entity type
  *
  * @remarks
- * `get` reads the row, evicts (removes the row) once `sessionExpired`
+ * `get` reads the row, evicts (removes the row) when `sessionExpired`
  * reports either threshold elapsed, then rebuilds the session through the
  * `restore` step it was constructed with — a malformed snapshot or one that
  * fails the caller's guard resolves `undefined` rather than throwing.
@@ -36,7 +36,7 @@ import { admitOptions, sessionExpired, snapshotSession } from '../helpers.js'
  * caller-contextual guard may reject a session that is still perfectly
  * valid for another flow reading the same table (a differently-shaped `S`,
  * a stricter guard mid-rollout), so `get` never destroys data on a guard
- * miss. A row that no caller's guard ever accepts again self-heals once its
+ * miss. A row that no caller's guard ever accepts again self-heals after its
  * `ttl`/`lifetime` elapses on a later `get`.
  *
  * @throws {ContractError} When the constructor refuses its options bag whole: an undeclared key, or a `ttl` or `lifetime` that is not a positive finite number
