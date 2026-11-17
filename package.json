@@ -76,7 +76,7 @@
 	},
 	"dependencies": {
 		"@orkestrel/budget": "^0.0.19",
-		"@orkestrel/contract": "^0.0.24",
+		"@orkestrel/contract": "^0.0.26",
 		"@orkestrel/timeout": "^0.0.18"
 	},
 	"devDependencies": {
@@ -85,7 +85,7 @@
 		"@orkestrel/guide": "^0.0.32",
 		"@orkestrel/probe": "^0.0.31",
 		"@orkestrel/router": "^0.0.23",
-		"@orkestrel/scaffold": "^0.0.138",
+		"@orkestrel/scaffold": "^0.0.139",
 		"@orkestrel/server": "^0.0.29",
 		"@orkestrel/test": "^0.0.43",
 		"@types/node": "^24.19.2",
