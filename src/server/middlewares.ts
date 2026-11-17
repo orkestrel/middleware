@@ -1074,8 +1074,8 @@ export function createMultipart<TState extends MultipartState>(
 }
 
 /**
- * Compresses response bodies through `node:zlib`, guaranteed on any Node runtime rather
- * than dependent on the WHATWG `CompressionStream` global. This battery is the
+ * Compresses response bodies through `node:zlib`, which every Node runtime bundles,
+ * instead of relying on the WHATWG `CompressionStream` global. This battery is the
  * node-bound sibling of the feature-detected `createCompression`, and both
  * compose the same `compressResponse` skeleton.
  *

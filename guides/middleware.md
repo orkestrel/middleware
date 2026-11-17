@@ -16,6 +16,12 @@ cookies, WebCrypto tokens, negotiation, conditionals, and security primitives.
 This package never re-implements that seam, and it supplies mechanism rather
 than product policy. Source: [`src/server`](../src/server). Surfaced through
 the `@orkestrel/middleware` barrel (aliased `@src/server` inside this repo).
+Before 0.0.35, the package published two entries: the host-independent core at
+`@orkestrel/middleware`, and `createAssets`, `createStatic`, `createMultipart`,
+`createNodeCompression`, and the rest of the node face (its helpers, parsers,
+errors, and asset store) at `@orkestrel/middleware/server`. From 0.0.35, the `./server` subpath is gone and
+no alias replaces it: move every import from `@orkestrel/middleware/server` to
+`@orkestrel/middleware`. The move removed and renamed no symbol.
 
 ## Surface
 
@@ -69,7 +75,7 @@ const handle = compose<State>([security, boundary], async (_request, context) =>
 | `createAssets`          | function | `<TState>(options: AssetOptions) => MiddlewareHandler<TState>`                             | Serves validated in-memory assets with identity/Brotli negotiation.                                                                                                                                                                                                                       |
 | `createStatic`          | function | `<TState>(options: StaticOptions) => MiddlewareHandler<TState>`                            | Serves static files from `options.root` over `node:fs` — the node-bound static-file battery, answering conditional, ranged, and SPA-fallback requests.                                                                                                                                    |
 | `createMultipart`       | function | `<TState extends MultipartState>(options?: MultipartOptions) => MiddlewareHandler<TState>` | Parses a streamed `multipart/form-data` request body and stashes its `MultipartBody` on `context.state.multipart` — the node-bound streaming multipart battery.                                                                                                                           |
-| `createNodeCompression` | function | `<TState>(options?: NodeCompressionOptions) => MiddlewareHandler<TState>`                  | Compresses response bodies through `node:zlib`, guaranteed on any Node runtime rather than dependent on the WHATWG `CompressionStream` global. This battery is the node-bound sibling of the feature-detected `createCompression`, and both compose the same `compressResponse` skeleton. |
+| `createNodeCompression` | function | `<TState>(options?: NodeCompressionOptions) => MiddlewareHandler<TState>`                  | Compresses response bodies through `node:zlib`, which every Node runtime bundles, instead of relying on the WHATWG `CompressionStream` global. This battery is the node-bound sibling of the feature-detected `createCompression`, and both compose the same `compressResponse` skeleton. |
 
 ### Types
 

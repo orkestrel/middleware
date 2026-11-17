@@ -29,7 +29,9 @@ npm install @orkestrel/middleware @orkestrel/server @orkestrel/router
 - `@orkestrel/router` as a peer dependency (`only` and `except` match through
   its path grammar)
 - Dual ESM and CommonJS entry: one server-only entry (`.`) that carries every
-  battery, including the node-bound ones
+  battery, including the node-bound ones. Before 0.0.35, the node-bound
+  batteries published under `./server`; move every import from
+  `@orkestrel/middleware/server` to `@orkestrel/middleware`
 
 ## Usage
 
