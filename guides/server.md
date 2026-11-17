@@ -338,7 +338,7 @@ These invariants hold across `src/server` ↔ `server.md`.
 4. **Startup is bounded and caller-cancellable.** `start(signal?)` observes
    caller cancellation only while binding; `timeouts.start` independently
    bounds the bind (`0` permits no startup window) and is an integer from 0
-   through 2_147_483_647, or construction throws a `TypeError`. Cancellation
+   through 2_147_483_647, or construction throws a `ContractError` of code `range`. Cancellation
    or deadline expiry closes the partial listener, clears the startup
    deadline, resets the entity to `idle`, and rejects; expiry rejects with a
    `DOMException` named `TimeoutError`, while caller cancellation rejects
@@ -614,11 +614,11 @@ These invariants hold across `src/server` ↔ `server.md`.
     `m` is the smaller positive of `headers` and `request` as Node applies
     them, so each expires at most one such interval after it passes; with
     neither positive, Node keeps its own interval. Construction refuses,
-    with a `TypeError` that names the key and its limit, a `headers` or
+    with a `ContractError` of code `range` that names the key and its limit, a `headers` or
     `request` that is not an integer from 0 through 2_147_483_647 and a
     `keepalive` that is not an integer from 0 through 2_147_482_647, because
     Node arms `keepalive` plus its buffer as one timer; and it refuses, with a
-    `TypeError` that names both keys, a `headers` above `request` while
+    `ContractError` of code `range` that names both keys, a `headers` above `request` while
     `request` is positive: Node's own `headersTimeout ≤ requestTimeout`
     relation. No server timeout bounds the response; a response deadline is
     a middleware's, such as the `createDeadline` middleware of
@@ -733,7 +733,7 @@ const server = createServer<State>({
 })
 ```
 
-The dispatcher of the `@orkestrel/router` release that 0.0.29 depends on
+The dispatcher of the `@orkestrel/router` release that 0.0.30 depends on
 answers a path that matches with no route for the method with `405` and an
 `Allow` header that lists `OPTIONS`. It answers a `HEAD` with no `HEAD` route
 by running the `GET` handler, cancelling that response's body, and sending its
@@ -797,7 +797,7 @@ deadline expires and cuts it. A request that such a connection sends after
 the listener closes is refused, and its connection is destroyed. A second
 `stop()` call made during the stop returns the first call's promise. The
 `drain` option is an integer from 0 through 2_147_483_647 milliseconds, and
-construction throws a `TypeError` for any other value.
+construction throws a `ContractError` of code `range` for any other value.
 
 ```ts
 import { createServer } from '@orkestrel/server'
