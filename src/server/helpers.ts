@@ -1222,6 +1222,35 @@ export function matchesUnbufferableResponse(
 }
 
 /**
+ * Checks whether a response must keep its content coding — a `206 Partial Content`, whose
+ * `Content-Range` counts bytes of the identity representation, or a response whose
+ * `Cache-Control` carries the `no-transform` directive (RFC 9111 § 5.2.2.6).
+ *
+ * @remarks
+ * The directive matches by name in any case, at any position of the comma-separated list. A
+ * quoted directive argument that holds `no-transform` as a list member also matches, which
+ * leaves that response uncompressed.
+ *
+ * @param response - The candidate response
+ * @returns True if the response must not be content-coded; false otherwise
+ *
+ * @example
+ * ```ts
+ * matchesUntransformableResponse(new Response('part', { status: 206 })) // true
+ * matchesUntransformableResponse(new Response('body', { headers: { 'cache-control': 'no-transform' } })) // true
+ * matchesUntransformableResponse(new Response('body')) // false
+ * ```
+ */
+export function matchesUntransformableResponse(response: Response): boolean {
+	if (response.status === 206) return true
+	const directives = response.headers.get('cache-control')
+	if (directives === null) return false
+	return directives
+		.split(',')
+		.some((directive) => directive.trim().toLowerCase() === 'no-transform')
+}
+
+/**
  * Checks whether a negotiated `Accept-Encoding` outcome is worth acting on —
  * `createCompression`'s negotiation-eligibility half of the skip list.
  *
@@ -1300,7 +1329,8 @@ export function rebuildResponse(
  * compression over a caller-supplied set of feature-detected codings.
  *
  * @remarks
- * Decision order: {@link matchesUnbufferableResponse} → `options.filter` → stamp
+ * Decision order: {@link matchesUnbufferableResponse} → {@link matchesUntransformableResponse}
+ * (a `206` or a `no-transform` response) → `options.filter` → stamp
  * `Vary: Accept-Encoding` (every negotiation-eligible response carries it,
  * even when a later skip declines to compress) → `negotiateEncoding` over
  * `options.encodings` → {@link isCompressionNegotiated} → `isCompressibleType`
@@ -1309,7 +1339,8 @@ export function rebuildResponse(
  * body known too small to be worth compressing) → buffer through
  * `response.arrayBuffer()` → a threshold passthrough when the buffered size
  * is still below `options.threshold` → `options.compress` → set
- * `Content-Encoding` and a fresh `Content-Length` through {@link rebuildResponse}.
+ * `Content-Encoding` and a fresh `Content-Length` through {@link rebuildResponse}, and prefix a
+ * strong `ETag` with `W/`, because one tag then names two codings (RFC 9110 § 8.8.3).
  * Returns `response` unchanged (aside from the `Vary` stamp) on any skip.
  *
  * @param request - The inbound `Request` (read for `Accept-Encoding`)
@@ -1334,6 +1365,7 @@ export async function compressResponse(
 	options: CompressResponseOptions,
 ): Promise<Response> {
 	if (matchesUnbufferableResponse(context.method, response, 'content-encoding')) return response
+	if (matchesUntransformableResponse(response)) return response
 	if (options.filter !== undefined && !options.filter(request, response)) return response
 	response.headers.set(
 		'vary',
@@ -1356,6 +1388,8 @@ export async function compressResponse(
 	const headers = new Headers(response.headers)
 	headers.set('content-encoding', negotiated)
 	headers.set('content-length', String(compressed.byteLength))
+	const etag = headers.get('etag')
+	if (etag !== null && !etag.startsWith('W/')) headers.set('etag', `W/${etag}`)
 	return rebuildResponse(compressed, response, headers)
 }
 
@@ -1382,7 +1416,7 @@ export function transferSessionState(from: SessionInterface, to: SessionInterfac
  *
  * @param method - The request's HTTP method
  * @param headers - The request's `Headers`
- * @returns True if the request is a CORS preflight `createCors` must answer; false otherwise
+ * @returns True if the request is a CORS preflight `createCORS` must answer; false otherwise
  *
  * @example
  * ```ts

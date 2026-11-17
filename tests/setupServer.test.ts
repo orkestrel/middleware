@@ -40,7 +40,7 @@ import {
 	buildTokenHeaders,
 	holdsValue,
 	isHttpOnlyCookie,
-	listCorsHeaders,
+	listCORSHeaders,
 	listGreenCells,
 	listRedCells,
 	listVary,
@@ -382,8 +382,8 @@ describe('resolveSecondDevicePath', () => {
 
 describe('the admission tables', () => {
 	const cors = requireValue(
-		ADMISSION_DOORS.find((door) => door.name === 'createCors'),
-		'Missing door: createCors',
+		ADMISSION_DOORS.find((door) => door.name === 'createCORS'),
+		'Missing door: createCORS',
 	)
 	const deadline = requireValue(
 		ADMISSION_DOORS.find((door) => door.name === 'createDeadline'),
@@ -575,7 +575,7 @@ describe('the composed-stack fixtures', () => {
 		])
 		expect(listVary(new Headers())).toEqual([])
 		expect(
-			listCorsHeaders(new Headers({ 'access-control-allow-origin': '*', vary: 'Origin' })),
+			listCORSHeaders(new Headers({ 'access-control-allow-origin': '*', vary: 'Origin' })),
 		).toEqual(['access-control-allow-origin'])
 	})
 

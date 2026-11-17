@@ -6,7 +6,7 @@ import type {
 	BoundaryOptions,
 	ClientState,
 	CompressionOptions,
-	CorsOptions,
+	CORSOptions,
 	CSRFOptions,
 	CSRFState,
 	DeadlineOptions,
@@ -325,17 +325,17 @@ export function createSecurity<TState extends IdentifierState>(
  * reflects an allow-listed origin or serves the configured wildcard.
  *
  * @typeParam TState - The consumer's opaque per-request state type
- * @param options - See {@link CorsOptions}
+ * @param options - See {@link CORSOptions}
  * @returns A `MiddlewareHandler<TState>`
  * @throws {ContractError} When the bag is refused whole: an undeclared key such as `origins`, or a non-string `origin`, `methods`, or `headers` entry
  *
  * @example
  * ```ts
- * const cors = createCors({ origin: ['https://app.example'] })
+ * const cors = createCORS({ origin: ['https://app.example'] })
  * ```
  */
-export function createCors<TState>(options?: CorsOptions): MiddlewareHandler<TState> {
-	admitOptions('createCors', CORS_CONTRACT, options)
+export function createCORS<TState>(options?: CORSOptions): MiddlewareHandler<TState> {
+	admitOptions('createCORS', CORS_CONTRACT, options)
 	const origin = options?.origin ?? '*'
 	const methods = options?.methods ?? DEFAULT_CORS_METHODS
 	const headers = options?.headers ?? DEFAULT_CORS_HEADERS
@@ -345,17 +345,17 @@ export function createCors<TState>(options?: CorsOptions): MiddlewareHandler<TSt
 		const allowOrigin = resolveOrigin(origin, requestOrigin)
 		if (isPreflight(context.method, request.headers)) {
 			const preflightHeaders = new Headers()
-			if (allowOrigin !== undefined)
+			if (reflecting) preflightHeaders.set('vary', 'Origin')
+			if (allowOrigin !== undefined) {
 				preflightHeaders.set('access-control-allow-origin', allowOrigin)
-			preflightHeaders.set('access-control-allow-methods', methods.join(', '))
-			preflightHeaders.set('access-control-allow-headers', headers.join(', '))
-			if (reflecting && allowOrigin !== undefined)
-				preflightHeaders.set('vary', mergeVary(undefined, 'Origin'))
+				preflightHeaders.set('access-control-allow-methods', methods.join(', '))
+				preflightHeaders.set('access-control-allow-headers', headers.join(', '))
+			}
 			return new Response(null, { status: 204, headers: preflightHeaders })
 		}
 		const response = await next()
 		if (allowOrigin !== undefined) response.headers.set('access-control-allow-origin', allowOrigin)
-		if (reflecting && allowOrigin !== undefined)
+		if (reflecting)
 			response.headers.set('vary', mergeVary(response.headers.get('vary') ?? undefined, 'Origin'))
 		return response
 	}

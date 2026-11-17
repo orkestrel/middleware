@@ -140,17 +140,19 @@ export interface SecurityOptions {
 }
 
 /**
- * Configures `createCors` — Cross-Origin Resource Sharing. The factory admits the bag whole, and a refusal is a `ContractError`. The bag must be a plain object; a class instance refuses.
+ * Configures `createCORS` — Cross-Origin Resource Sharing. The factory admits the bag whole, and a refusal is a `ContractError`. The bag must be a plain object; a class instance refuses.
  *
  * @remarks
  * - `origin` — the allowed origin(s): `'*'` (default), a single origin
- *   string, or an allow-list `readonly string[]` (reflects the request
- *   `Origin` when it matches, and merges `Vary: Origin`). The literal
+ *   string, or an allow-list `readonly string[]`, which reflects the request
+ *   `Origin` when it matches and merges `Vary: Origin` on every response and
+ *   preflight. A preflight from an origin off the list, or with no `Origin`,
+ *   answers `204` with no `Access-Control-*` header. The literal
  *   `Origin: null` is never reflected even when `'null'` is allow-listed.
  * - `methods` — the methods advertised on a preflight; defaults to {@link DEFAULT_CORS_METHODS}.
  * - `headers` — the headers advertised on a preflight; defaults to {@link DEFAULT_CORS_HEADERS}.
  */
-export interface CorsOptions {
+export interface CORSOptions {
 	readonly origin?: string | readonly string[]
 	readonly methods?: readonly string[]
 	readonly headers?: readonly string[]
@@ -195,7 +197,8 @@ export type ForwardedOptions =
  *
  * @remarks
  * - `weak` — mint a weak `W/"…"` ETag (default `true`) or a strong `"…"` one
- *   (`false`).
+ *   (`false`). A compression battery mounted outside prefixes a strong tag with
+ *   `W/` when it codes the body.
  */
 export interface ETagOptions {
 	readonly weak?: boolean

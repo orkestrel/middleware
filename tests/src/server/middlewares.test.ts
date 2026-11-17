@@ -25,7 +25,7 @@ import {
 	createBoundary,
 	createCompression,
 	createCookieTransport,
-	createCors,
+	createCORS,
 	createCSRF,
 	createDeadline,
 	createETag,
@@ -1243,6 +1243,75 @@ describe('createNodeCompression (node face)', () => {
 		expect(response.headers.get('content-encoding')).toBeNull()
 	})
 
+	it('leaves a 206 and a no-transform response identity-coded, in both compression batteries', async () => {
+		const handlers = [
+			createNodeCompression({ threshold: 10 }),
+			createCompression({ threshold: 10 }),
+		]
+		const answers = [
+			new Response('x'.repeat(5000), {
+				status: 206,
+				headers: { 'content-type': 'text/plain', 'content-range': 'bytes 0-4999/10000' },
+			}),
+			new Response('x'.repeat(5000), {
+				headers: { 'content-type': 'text/plain', 'cache-control': 'no-transform' },
+			}),
+		]
+		const request = new Request('http://test.local/', { headers: { 'accept-encoding': 'gzip' } })
+		const responses = await Promise.all(
+			handlers.flatMap((handler) =>
+				answers.map((answer) =>
+					handler(request, createTestContext(request, {}), async () => answer.clone()),
+				),
+			),
+		)
+		expect(
+			responses.map((response) => [response.status, response.headers.get('content-encoding')]),
+		).toEqual([
+			[206, null],
+			[200, null],
+			[206, null],
+			[200, null],
+		])
+	})
+
+	it('weakens the strong ETag createETag sets inside it, and that weak tag revalidates to a 304', async () => {
+		const onion = [
+			createNodeCompression<Record<string, never>>({ threshold: 10 }),
+			createETag<Record<string, never>>({ weak: false }),
+		]
+		const first = buildTestRequest('/', { headers: { 'accept-encoding': 'gzip' } })
+		const coded = await runChain(
+			onion,
+			async () => new Response('x'.repeat(5000), { headers: { 'content-type': 'text/plain' } }),
+			first,
+			createTestContext(first, {}),
+		)
+		const etag = coded.headers.get('etag') ?? ''
+		expect(coded.headers.get('content-encoding')).toBe('gzip')
+		expect(etag.startsWith('W/"')).toBe(true)
+
+		const plain = buildTestRequest('/')
+		const identity = await runChain(
+			onion,
+			async () => new Response('x'.repeat(5000), { headers: { 'content-type': 'text/plain' } }),
+			plain,
+			createTestContext(plain, {}),
+		)
+		expect(identity.headers.get('etag')).toBe(etag.slice(2))
+
+		const again = buildTestRequest('/', {
+			headers: { 'accept-encoding': 'gzip', 'if-none-match': etag },
+		})
+		const revalidated = await runChain(
+			onion,
+			async () => new Response('x'.repeat(5000), { headers: { 'content-type': 'text/plain' } }),
+			again,
+			createTestContext(again, {}),
+		)
+		expect(revalidated.status).toBe(304)
+	})
+
 	it('refuses a threshold that is not a finite number', () => {
 		expect(() => createNodeCompression({ threshold: Number.NaN })).toThrow(
 			'createNodeCompression: threshold',
@@ -1255,23 +1324,6 @@ describe('createNodeCompression (node face)', () => {
 })
 
 // ── The capstone — a real socket + Dispatcher + the canonical onion ────────
-//
-// DEVIATION (documented, not improvised): the dispatch calls for "a real
-// `@orkestrel/server` `Server` + `@orkestrel/router` dispatcher". The
-// installed `@orkestrel/server`'s `./server` entry point (`createServer`) is
-// itself broken — its built `dist/src/server/index.cjs` `require`s
-// `'../core/index.cjs'`, but the installed package's core face ships ONLY an
-// ESM `index.js` (no `.cjs` sibling), so `require('@orkestrel/server/server')`
-// throws `MODULE_NOT_FOUND` unconditionally, confirmed through a direct
-// `node -e "require('@orkestrel/server/server')"` repro — an external
-// peer-package build defect, out of this dispatch's scope to fix. The
-// following capstone substitutes a real `node:http` socket (this repo's own
-// `startServer` helper) plus `@orkestrel/router`'s server-face
-// `buildRequest`/`sendResponse` conversion seam driving the SAME real
-// `@orkestrel/router` `Dispatcher` and the SAME canonical onion through the peer's
-// own `compose` — every layer this capstone is meant to fingerprint is still
-// real and still exercised end-to-end over a real socket; only the specific
-// `Server` class is swapped for its two documented conversion primitives.
 
 describe('capstone: real socket + Dispatcher + canonical onion', () => {
 	it('one authenticated JSON round-trip fingerprints every layer on the wire, plus a 429 and a CSRF 403', async () => {
@@ -1305,9 +1357,9 @@ describe('capstone: real socket + Dispatcher + canonical onion', () => {
 		const onion = [
 			createTelemetry<CapstoneState>({ record: (entry) => telemetryEntries.push(entry) }),
 			createNodeCompression<CapstoneState>({ threshold: 100 }),
-			createBoundary<CapstoneState>({ expose: false }),
 			createSecurity<CapstoneState>(),
-			createCors<CapstoneState>({ origin: ['https://app.example'] }),
+			createCORS<CapstoneState>({ origin: ['https://app.example'] }),
+			createBoundary<CapstoneState>({ expose: false }),
 			createForwarded<CapstoneState>({ proxies: 1 }),
 			createETag<CapstoneState>(),
 			createBearer<CapstoneState>({ verify: (token) => verifyToken(token, secret) }),
@@ -1867,11 +1919,11 @@ describe('createSecurity', () => {
 	})
 })
 
-// ── createCors ────────────────────────────────────────────────────────────
+// ── createCORS ────────────────────────────────────────────────────────────
 
-describe('createCors', () => {
+describe('createCORS', () => {
 	it('wildcard origin sets Access-Control-Allow-Origin: * with no Vary', async () => {
-		const cors = createCors()
+		const cors = createCORS()
 		const request = buildTestRequest('/', { headers: { origin: 'https://app.example' } })
 		const context = createTestContext(request, {})
 		const response = await runChain([cors], createEchoTerminal(), request, context)
@@ -1880,7 +1932,7 @@ describe('createCors', () => {
 	})
 
 	it('list origin reflects a matching request Origin and merges Vary: Origin', async () => {
-		const cors = createCors({ origin: ['https://app.example'] })
+		const cors = createCORS({ origin: ['https://app.example'] })
 		const request = buildTestRequest('/', { headers: { origin: 'https://app.example' } })
 		const context = createTestContext(request, {})
 		const response = await runChain([cors], createEchoTerminal(), request, context)
@@ -1888,8 +1940,77 @@ describe('createCors', () => {
 		expect(response.headers.get('vary')).toBe('Origin')
 	})
 
+	it('list origin merges Vary: Origin onto a response to a disallowed origin and to no Origin, with no allow-origin', async () => {
+		const cors = createCORS({ origin: ['https://app.example'] })
+		const foreign = buildTestRequest('/', { headers: { origin: 'https://other.example' } })
+		const absent = buildTestRequest('/')
+		const responses = await Promise.all(
+			[foreign, absent].map((request) =>
+				runChain(
+					[cors],
+					async () => new Response('page', { headers: { vary: 'Accept-Language' } }),
+					request,
+					createTestContext(request, {}),
+				),
+			),
+		)
+		expect(
+			responses.map((response) => ({
+				vary: response.headers.get('vary'),
+				origin: response.headers.has('access-control-allow-origin'),
+			})),
+		).toEqual([
+			{ vary: 'Accept-Language, Origin', origin: false },
+			{ vary: 'Accept-Language, Origin', origin: false },
+		])
+	})
+
+	it('list origin answers a preflight from the allowed origin with Vary: Origin and the CORS headers', async () => {
+		const cors = createCORS({ origin: ['https://app.example'] })
+		const request = buildTestRequest('/', {
+			method: 'OPTIONS',
+			headers: { origin: 'https://app.example', 'access-control-request-method': 'POST' },
+		})
+		const response = await runChain(
+			[cors],
+			createEchoTerminal(),
+			request,
+			createTestContext(request, {}),
+		)
+		expect(response.status).toBe(204)
+		expect(response.headers.get('vary')).toBe('Origin')
+		expect(response.headers.get('access-control-allow-origin')).toBe('https://app.example')
+		expect(response.headers.has('access-control-allow-methods')).toBe(true)
+		expect(response.headers.has('access-control-allow-headers')).toBe(true)
+	})
+
+	it('list origin answers a preflight from a disallowed origin or with no Origin with 204, Vary: Origin, and no Access-Control header', async () => {
+		const cors = createCORS({ origin: ['https://app.example'] })
+		const terminal = createRecordingTerminal()
+		const requests = [
+			{ origin: 'https://other.example', 'access-control-request-method': 'POST' },
+			{ 'access-control-request-method': 'POST' },
+		].map((headers) => buildTestRequest('/', { method: 'OPTIONS', headers }))
+		const responses = await Promise.all(
+			requests.map((request) =>
+				runChain([cors], terminal.handler, request, createTestContext(request, {})),
+			),
+		)
+		expect(
+			responses.map((response) => ({
+				status: response.status,
+				vary: response.headers.get('vary'),
+				cors: [...response.headers.keys()].filter((name) => name.startsWith('access-control-')),
+			})),
+		).toEqual([
+			{ status: 204, vary: 'Origin', cors: [] },
+			{ status: 204, vary: 'Origin', cors: [] },
+		])
+		expect(terminal.count).toBe(0)
+	})
+
 	it('the literal Origin: null is never reflected even when "null" is allow-listed', async () => {
-		const cors = createCors({ origin: ['null'] })
+		const cors = createCORS({ origin: ['null'] })
 		const request = buildTestRequest('/', { headers: { origin: 'null' } })
 		const context = createTestContext(request, {})
 		const response = await runChain([cors], createEchoTerminal(), request, context)
@@ -1897,7 +2018,7 @@ describe('createCors', () => {
 	})
 
 	it('preflight short-circuits with 204 and advertised methods/headers', async () => {
-		const cors = createCors({ methods: ['GET', 'POST'], headers: ['Content-Type'] })
+		const cors = createCORS({ methods: ['GET', 'POST'], headers: ['Content-Type'] })
 		const request = buildTestRequest('/', {
 			method: 'OPTIONS',
 			headers: { origin: 'https://app.example', 'access-control-request-method': 'POST' },
@@ -1912,7 +2033,7 @@ describe('createCors', () => {
 	})
 
 	it('a non-preflight OPTIONS (no Access-Control-Request-Method) passes through to the terminal', async () => {
-		const cors = createCors()
+		const cors = createCORS()
 		const request = buildTestRequest('/', { method: 'OPTIONS' })
 		const context = createTestContext(request, {})
 		const terminal = createRecordingTerminal()
@@ -1921,7 +2042,7 @@ describe('createCors', () => {
 	})
 
 	it('fixed-string origin mode: the configured origin is set verbatim, matching or not, with no Vary', async () => {
-		const cors = createCors({ origin: 'https://static.example' })
+		const cors = createCORS({ origin: 'https://static.example' })
 
 		const matching = buildTestRequest('/', { headers: { origin: 'https://static.example' } })
 		const matchingResponse = await runChain(
@@ -2122,7 +2243,7 @@ describe('the exchange seam through a real Server', () => {
 				createTelemetry<ExchangeState>({ record: () => {} }),
 				createBoundary<ExchangeState>({ expose: false }),
 				createSecurity<ExchangeState>(),
-				createCors<ExchangeState>({ origin: ['https://app.example'] }),
+				createCORS<ExchangeState>({ origin: ['https://app.example'] }),
 				createDeadline<ExchangeState>({ ms: 5_000 }),
 				createForwarded<ExchangeState>({ proxies: 1 }),
 				createETag<ExchangeState>(),
@@ -3908,7 +4029,7 @@ describe('composition', () => {
 	})
 
 	it('preflight preempts the terminal in a full onion', async () => {
-		const cors = createCors()
+		const cors = createCORS()
 		const boundary = createBoundary()
 		const terminal = createRecordingTerminal()
 		const request = buildTestRequest('/', {

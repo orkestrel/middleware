@@ -53,7 +53,7 @@ export const DEFAULT_HSTS = 'max-age=31536000; includeSubDomains'
 /** Names `'x-request-id'`, the default header `createSecurity` mints or echoes a request identifier into. */
 export const DEFAULT_IDENTIFIER_HEADER = 'x-request-id'
 
-/** Lists the default methods `createCors` advertises on a preflight response. */
+/** Lists the default methods `createCORS` advertises on a preflight response. */
 export const DEFAULT_CORS_METHODS: readonly string[] = Object.freeze([
 	'GET',
 	'POST',
@@ -63,7 +63,7 @@ export const DEFAULT_CORS_METHODS: readonly string[] = Object.freeze([
 	'OPTIONS',
 ])
 
-/** Lists the default headers `createCors` advertises on a preflight response. */
+/** Lists the default headers `createCORS` advertises on a preflight response. */
 export const DEFAULT_CORS_HEADERS: readonly string[] = Object.freeze([
 	'Content-Type',
 	'Authorization',

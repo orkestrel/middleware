@@ -77,7 +77,7 @@ export const SECURITY_CONTRACT = createContract(
 )
 
 /**
- * Admits `CorsOptions` whole for `createCors`: `origin` is a string or a string array, and
+ * Admits `CORSOptions` whole for `createCORS`: `origin` is a string or a string array, and
  * `methods` and `headers` are string arrays.
  */
 export const CORS_CONTRACT = createContract(

@@ -20,7 +20,7 @@ import {
 	driveCell,
 	holdsValue,
 	isHttpOnlyCookie,
-	listCorsHeaders,
+	listCORSHeaders,
 	listGreenCells,
 	listHeldValues,
 	listRedCells,
@@ -182,16 +182,16 @@ describe('invariant 5: Vary: Origin sits on every response and preflight in list
 			path: '/echo',
 			headers: { origin: STACK_ORIGIN, 'access-control-request-method': 'POST' },
 		})
-		expect(listCorsHeaders(reply.headers)).toContain('access-control-allow-origin')
+		expect(listCORSHeaders(reply.headers)).toContain('access-control-allow-origin')
 	})
 
-	it.fails('a preflight from a disallowed origin carries no CORS headers [red until M4]', async () => {
+	it('a preflight from a disallowed origin carries no CORS headers', async () => {
 		const reply = await sendStack(oracle.url, {
 			method: 'OPTIONS',
 			path: '/echo',
 			headers: { origin: STACK_FOREIGN_ORIGIN, 'access-control-request-method': 'POST' },
 		})
-		expect(listCorsHeaders(reply.headers)).toEqual([])
+		expect(listCORSHeaders(reply.headers)).toEqual([])
 	})
 
 	for (const cell of listGreenCells(CANONICAL_VARY_CELLS))
