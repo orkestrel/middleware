@@ -1,4 +1,5 @@
 import type { MultipartBody, MultipartOptions } from './types.js'
+import { MULTIPART_MAX_BOUNDARY } from './constants.js'
 import { MultipartError } from './errors.js'
 import { extractMultipartBoundary, resolveMultipartLimits } from './helpers.js'
 import { MultipartParser } from './MultipartParser.js'
@@ -54,6 +55,8 @@ export async function parseMultipartRequest(
 ): Promise<MultipartBody | undefined> {
 	const boundary = extractMultipartBoundary(request.headers.get('content-type'))
 	if (boundary === undefined) return undefined
+	if (boundary.length > MULTIPART_MAX_BOUNDARY)
+		throw new MultipartError('malformed', 'multipart boundary longer than 70 characters')
 	if (request.body === null) throw new MultipartError('malformed', 'multipart request has no body')
 
 	const limits = resolveMultipartLimits(options.limits)

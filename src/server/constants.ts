@@ -201,6 +201,9 @@ export const MULTIPART_MAX_HEADER_BLOCK = 16_384
 /** Holds `65_536`, the maximum bytes scanned before the first multipart boundary is found before it is malformed. */
 export const MULTIPART_MAX_PREAMBLE = 65_536
 
+/** Holds `70`, the maximum length of a multipart boundary, which RFC 2046 § 5.1.1 fixes. */
+export const MULTIPART_MAX_BOUNDARY = 70
+
 /**
  * Lists the Windows reserved device-name stems (CVE-2025-27210) — matched
  * case-insensitively against the segment's stem (before its first `.`).

@@ -76,10 +76,15 @@ import {
 } from '@src/server'
 import { createSigner, signToken, verifyToken } from '@orkestrel/server'
 import {
+	COST_GROWTH_BOUND,
+	DEVICE_RUN_SIZE,
+	DEVICE_TRIM_CASES,
 	PNG_MAGIC,
+	PREFIX_LAW_CASES,
 	countActiveFileRequests,
 	detectClosedHandle,
 	holdsValue,
+	measureCostGrowth,
 	resolveSecondDevicePath,
 } from '../../setupServer.js'
 import {
@@ -257,6 +262,44 @@ describe('static file stages', () => {
 			await directory.destroy()
 		}
 	})
+
+	it('ignores Range under If-Range, because no validator the plan sends can match it strongly', async () => {
+		const directory = createScratch({ prefix: 'static-plan-' })
+		try {
+			const path = join(directory.path, 'a.txt')
+			await writeFile(path, 'hello')
+			const file = await openStaticFile(path)
+			if (file === undefined) throw new Error('expected an opened file')
+			try {
+				const etag = computeFileETag(file.info.size, file.info.mtimeMs)
+				const plans = [
+					{ etag: true, condition: etag },
+					{ etag: true, condition: etag.slice(2) },
+					{ etag: true, condition: '"stale"' },
+					{ etag: true, condition: file.info.mtime.toUTCString() },
+					{ etag: false, condition: etag },
+				].map(({ etag: tagged, condition }) =>
+					planStaticResponse(
+						new Request('http://test/a', {
+							headers: { range: 'bytes=1-3', 'if-range': condition },
+						}),
+						'GET',
+						file.info,
+						path,
+						{ etag: tagged },
+					),
+				)
+				expect(
+					plans.map((plan) => [plan.status, plan.range, plan.headers.get('content-length')]),
+				).toEqual(plans.map(() => [200, undefined, '5']))
+				expect(plans.every((plan) => !plan.headers.has('content-range'))).toBe(true)
+			} finally {
+				await file.handle.close()
+			}
+		} finally {
+			await directory.destroy()
+		}
+	})
 })
 
 describe('resolveStaticPath', () => {
@@ -289,6 +332,14 @@ describe('resolveStaticPath', () => {
 		expect(resolveStaticPath(root, '/api', '/apifoo/x')).toBeUndefined()
 		expect(resolveStaticPath(root, '/api', '/api/x')).toBe(join(root, 'x'))
 		expect(resolveStaticPath(root, '/api', '/api')).toBe(root)
+	})
+
+	it('strips a prefix written with a trailing slash from its bare and trailing-slash forms', () => {
+		expect(resolveStaticPath(root, '/static/', '/static')).toBe(root)
+		expect(resolveStaticPath(root, '/static/', '/static/')).toBe(root)
+		expect(resolveStaticPath(root, '/static/', '/static/a.css')).toBe(join(root, 'a.css'))
+		expect(resolveStaticPath(root, '/static', '/static/')).toBe(root)
+		expect(resolveStaticPath(root, '/static/', '/staticx/a.css')).toBeUndefined()
 	})
 
 	it('refuses a malformed percent-escape without throwing', () => {
@@ -346,6 +397,12 @@ describe('isUnderPath', () => {
 
 	it('does not match an unrelated path', () => {
 		expect(isUnderPath('/other', '/api')).toBe(false)
+	})
+
+	it('holds one slash law whichever form the prefix is written in', () => {
+		expect(PREFIX_LAW_CASES.map(({ pathname, prefix }) => isUnderPath(pathname, prefix))).toEqual(
+			PREFIX_LAW_CASES.map(({ under }) => under),
+		)
 	})
 })
 
@@ -407,6 +464,14 @@ describe('resolveStaticFallbackPath', () => {
 		expect(
 			resolveStaticFallbackPath(root, 'index.html', '/api', 'GET', '/dashboard', 'image/png'),
 		).toBeUndefined()
+	})
+
+	it('excludes the bare form of a prefix written with a trailing slash', () => {
+		expect(
+			['/api', '/api/', '/api/users', '/apix'].map((pathname) =>
+				resolveStaticFallbackPath(root, 'index.html', '/api/', 'GET', pathname, 'text/html'),
+			),
+		).toEqual([undefined, undefined, undefined, join(root, 'index.html')])
 	})
 })
 
@@ -485,6 +550,28 @@ describe('isReservedDeviceName', () => {
 	it('is total on empty and dot-only segments', () => {
 		expect(isReservedDeviceName('')).toBe(false)
 		expect(isReservedDeviceName('.')).toBe(false)
+	})
+
+	it('strips a mixed trailing run of dots and spaces whole, and only those two characters', () => {
+		expect(DEVICE_TRIM_CASES.map(({ segment }) => isReservedDeviceName(segment))).toEqual(
+			DEVICE_TRIM_CASES.map(({ reserved }) => reserved),
+		)
+	})
+
+	it('grows linearly on a trailing run of dots before another character', async () => {
+		const growth = await measureCostGrowth(
+			(size) => () => isReservedDeviceName(`CON${'.'.repeat(size)}x`),
+			DEVICE_RUN_SIZE,
+		)
+		expect(growth).toBeLessThan(COST_GROWTH_BOUND)
+	})
+
+	it('grows linearly on a trailing run of mixed dots and spaces before another character', async () => {
+		const growth = await measureCostGrowth(
+			(size) => () => isReservedDeviceName(`${'. '.repeat(size / 2)}x`),
+			DEVICE_RUN_SIZE,
+		)
+		expect(growth).toBeLessThan(COST_GROWTH_BOUND)
 	})
 })
 

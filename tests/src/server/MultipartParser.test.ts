@@ -1,4 +1,5 @@
 import { MiddlewareValue } from '../../setup.js'
+import { tmpdir } from 'node:os'
 import { describe, expect, it } from 'vitest'
 import { createScratch } from '@orkestrel/test/server'
 import {
@@ -8,7 +9,14 @@ import {
 	resolveMultipartLimits,
 } from '@src/server'
 import { MultipartParser } from '../../../src/server/MultipartParser.js'
-import { buildChunkedStream, buildMultipartBody } from '../../setupServer.js'
+import {
+	COST_GROWTH_BOUND,
+	FIELD_RUN_SIZE,
+	buildChunkedStream,
+	buildFieldDrip,
+	buildMultipartBody,
+	measureCostGrowth,
+} from '../../setupServer.js'
 
 // ============================================================================
 //  @orkestrel/middleware — MultipartParser unit tests. The class is interned
@@ -90,6 +98,35 @@ describe('MultipartParser header-block cap', () => {
 		} finally {
 			directory.destroy()
 		}
+	})
+
+	it('admits a header block exactly at the cap delivered one byte per chunk', async () => {
+		const boundary = 'parser-header-drip'
+		const prefix = 'Content-Disposition: form-data; name="a"\r\nX-Custom: '
+		const block = `${prefix}${'x'.repeat(MULTIPART_MAX_HEADER_BLOCK - prefix.length)}`
+		const [admitted, refused] = await Promise.allSettled(
+			[block, `${block}x`].map((header) =>
+				new MultipartParser(
+					buildChunkedStream(
+						new TextEncoder().encode(
+							`--${boundary}\r\n${header}\r\n\r\nvalue\r\n--${boundary}--\r\n`,
+						),
+						1,
+					),
+					new AbortController().signal,
+					boundary,
+					resolveMultipartLimits(undefined),
+					undefined,
+					tmpdir(),
+				).parse(),
+			),
+		)
+		expect(admitted).toMatchObject({ status: 'fulfilled', value: { fields: { a: 'value' } } })
+		expect(
+			refused?.status === 'rejected' &&
+				isMultipartError(refused.reason) &&
+				refused.reason.code === 'malformed',
+		).toBe(true)
 	})
 })
 
@@ -236,6 +273,20 @@ describe('MultipartParser staged-file cleanup', () => {
 		} finally {
 			directory.destroy()
 		}
+	})
+})
+
+describe('MultipartParser field accounting', () => {
+	it('parses a field delivered one byte per chunk exactly at its limit', async () => {
+		await expect(buildFieldDrip(64)()).resolves.toEqual({
+			files: {},
+			fields: { note: 'a'.repeat(64) },
+		})
+	})
+
+	it('grows linearly in a field delivered one byte per chunk, at the field limit', async () => {
+		const growth = await measureCostGrowth(buildFieldDrip, FIELD_RUN_SIZE)
+		expect(growth).toBeLessThan(COST_GROWTH_BOUND)
 	})
 })
 

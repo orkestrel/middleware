@@ -962,6 +962,95 @@ describe('createStatic', () => {
 			fixture.scratch.destroy()
 		}
 	})
+
+	it('If-Range: a Range under any If-Range validator serves the full 200', async () => {
+		const fixture = buildStaticFixture()
+		try {
+			const handler = createStatic({ root: fixture.scratch.path })
+			const probe = new Request('http://test.local/large.bin', { method: 'HEAD' })
+			const head = await handler(
+				probe,
+				createTestContext(probe, {}),
+				async () => new Response('miss'),
+			)
+			const etag = head.headers.get('etag') ?? ''
+			expect(etag.startsWith('W/"')).toBe(true)
+			const replies = await Promise.all(
+				[etag, etag.slice(2), '"stale"', new Date().toUTCString()].map(async (condition) => {
+					const request = new Request('http://test.local/large.bin', {
+						headers: { range: 'bytes=10-19', 'if-range': condition },
+					})
+					const response = await handler(
+						request,
+						createTestContext(request, {}),
+						async () => new Response('miss'),
+					)
+					return [response.status, (await response.arrayBuffer()).byteLength]
+				}),
+			)
+			expect(replies).toEqual([
+				[200, 200_000],
+				[200, 200_000],
+				[200, 200_000],
+				[200, 200_000],
+			])
+		} finally {
+			fixture.scratch.destroy()
+		}
+	})
+
+	it('serves a prefix written with a trailing slash on its bare form', async () => {
+		const fixture = buildStaticFixture()
+		try {
+			const handler = createStatic({ root: fixture.scratch.path, prefix: '/static/' })
+			const statuses = await Promise.all(
+				['/static', '/static/', '/static/nested/deep/page.html', '/staticx/index.html'].map(
+					async (path) => {
+						const request = buildTestRequest(path)
+						const response = await handler(
+							request,
+							createTestContext(request, {}),
+							async () => new Response('miss', { status: 404 }),
+						)
+						return [response.status, await response.text()]
+					},
+				),
+			)
+			expect(statuses).toEqual([
+				[200, '<!doctype html><html><body>root index</body></html>'],
+				[200, '<!doctype html><html><body>root index</body></html>'],
+				[200, '<!doctype html><html><body>nested page</body></html>'],
+				[404, 'miss'],
+			])
+		} finally {
+			fixture.scratch.destroy()
+		}
+	})
+
+	it('excludes the bare form of a fallback exclude written with a trailing slash', async () => {
+		const fixture = buildStaticFixture()
+		try {
+			const handler = createStatic({
+				root: fixture.scratch.path,
+				fallback: { exclude: '/api/' },
+			})
+			const statuses = await Promise.all(
+				['/api', '/api/users', '/dashboard'].map(async (path) => {
+					const request = buildTestRequest(path, { headers: { accept: 'text/html' } })
+					const response = await handler(
+						request,
+						createTestContext(request, {}),
+						async () => new Response('miss', { status: 404 }),
+					)
+					await response.body?.cancel()
+					return response.status
+				}),
+			)
+			expect(statuses).toEqual([404, 404, 200])
+		} finally {
+			fixture.scratch.destroy()
+		}
+	})
 })
 
 // ── createMultipart ──────────────────────────────────────────────────────────
@@ -983,18 +1072,16 @@ describe('createMultipart', () => {
 			])
 			const state: MultipartState = {}
 			const context = createTestContext(request, state)
-			const nextCalled = new MiddlewareValue(false)
+			const staged = new MiddlewareValue<readonly string[]>([])
 			await handler(request, context, async () => {
-				nextCalled.value = true
+				staged.value = directory.names()
 				return new Response('ok')
 			})
-			expect(nextCalled.value).toBe(true)
+			expect(staged.value).toHaveLength(1)
 			expect(isMultipartBody(state.multipart)).toBe(true)
 			const files = state.multipart?.files.avatar
 			expect(files?.[0]?.name).toBe('a.png')
 			expect(files?.[0]?.path).not.toContain('a.png')
-			const staged = directory.names()
-			expect(staged).toHaveLength(1)
 		} finally {
 			directory.destroy()
 		}
@@ -1198,6 +1285,61 @@ describe('createMultipart', () => {
 		} finally {
 			directory.destroy()
 		}
+	})
+
+	it('unlinks every still-staged file when the handler returns, and a moved file survives', async () => {
+		const directory = createScratch({ prefix: 'middleware-multipart-' })
+		try {
+			const handler = createMultipart<MultipartState>({ directory: directory.path })
+			const request = buildMultipartRequest([
+				{ kind: 'field', name: 'title', value: 'lamp' },
+				{
+					kind: 'file',
+					name: 'keep',
+					filename: 'a.png',
+					contentType: 'image/png',
+					bytes: Buffer.from(PNG_MAGIC),
+				},
+				{
+					kind: 'file',
+					name: 'left',
+					filename: 'b.png',
+					contentType: 'image/png',
+					bytes: Buffer.from(PNG_MAGIC),
+				},
+			])
+			const state: MultipartState = {}
+			const destination = join(directory.path, 'moved.png')
+			const staged = new MiddlewareValue<readonly string[]>([])
+			const response = await handler(request, createTestContext(request, state), async () => {
+				staged.value = directory.names()
+				const keep = state.multipart?.files.keep?.[0]
+				if (keep !== undefined)
+					await moveUploadedFile(createUploadedFile({ ...keep, status: 'staged' }), destination)
+				return new Response('ok', { status: 201 })
+			})
+			expect(response.status).toBe(201)
+			expect(staged.value).toHaveLength(2)
+			expect(directory.names()).toEqual(['moved.png'])
+		} finally {
+			directory.destroy()
+		}
+	})
+
+	it('refuses a boundary longer than 70 characters with a 400', async () => {
+		const handler = createMultipart<MultipartState>()
+		const request = buildMultipartRequest(
+			[{ kind: 'field', name: 'title', value: 'lamp' }],
+			'b'.repeat(71),
+		)
+		const nextCalled = new MiddlewareValue(false)
+		await expect(
+			handler(request, createTestContext(request, {}), async () => {
+				nextCalled.value = true
+				return new Response('ok')
+			}),
+		).rejects.toSatisfy((error: unknown) => error instanceof HTTPError && error.status === 400)
+		expect(nextCalled.value).toBe(false)
 	})
 })
 

@@ -1033,11 +1033,9 @@ export function createStatic<TState>(options: StaticOptions): MiddlewareHandler<
  * {@link MultipartError} this battery's parser throws is re-thrown as an
  * {@link HTTPError} carrying the same status/message, so `createBoundary`
  * (or any HTTPError-aware renderer) maps it correctly without depending on
- * this node face's error type. Fail-closed on the downstream handler too: if
- * `next()` throws, every still-`'staged'` uploaded file is unlinked
- * (best-effort) before the error is re-thrown, so an unhandled downstream
- * failure never leaks temp files. A normal return leaves staged files
- * untouched — the downstream handler owns moving/reading them.
+ * this node face's error type. When `next()` settles, by a return or a throw,
+ * every uploaded file still at its staged path is unlinked (best-effort), so a
+ * handler moves or reads each file it keeps before it returns.
  *
  * @typeParam TState - The consumer's state type, extending {@link MultipartState}
  * @param options - See {@link MultipartOptions}
@@ -1069,9 +1067,8 @@ export function createMultipart<TState extends MultipartState>(
 		Object.assign(context.state, { multipart: body })
 		try {
 			return await next()
-		} catch (error) {
+		} finally {
 			await unlinkStagedFiles(body)
-			throw error
 		}
 	}
 }
