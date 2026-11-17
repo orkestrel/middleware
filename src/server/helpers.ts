@@ -1226,11 +1226,6 @@ export function matchesUnbufferableResponse(
  * `Content-Range` counts bytes of the identity representation, or a response whose
  * `Cache-Control` carries the `no-transform` directive (RFC 9111 § 5.2.2.6).
  *
- * @remarks
- * The directive matches by name in any case, at any position of the comma-separated list. A
- * quoted directive argument that holds `no-transform` as a list member also matches, which
- * leaves that response uncompressed.
- *
  * @param response - The candidate response
  * @returns True if the response must not be content-coded; false otherwise
  *
@@ -1339,8 +1334,7 @@ export function rebuildResponse(
  * body known too small to be worth compressing) → buffer through
  * `response.arrayBuffer()` → a threshold passthrough when the buffered size
  * is still below `options.threshold` → `options.compress` → set
- * `Content-Encoding` and a fresh `Content-Length` through {@link rebuildResponse}, and prefix a
- * strong `ETag` with `W/`, because one tag then names two codings (RFC 9110 § 8.8.3).
+ * `Content-Encoding` and a fresh `Content-Length` through {@link rebuildResponse}.
  * Returns `response` unchanged (aside from the `Vary` stamp) on any skip.
  *
  * @param request - The inbound `Request` (read for `Accept-Encoding`)

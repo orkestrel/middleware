@@ -473,13 +473,6 @@ Each item names a position and the failure it prevents:
 4. **Compression sits outside `createBoundary`.** An error `Response`
    the boundary renders from a caught throw still passes through
    compression — mount it inside instead and error bodies ship uncompressed.
-   The canonical onion mounts `createNodeCompression`, which codes through
-   `node:zlib`. Mount `createCompression` in its place only on a host without
-   `node:zlib`: it codes through the `CompressionStream` global and costs more
-   per response. A measurement on 2026-11-16 (middleware 0.0.33, Node 22.23.5)
-   read gzip through `CompressionStream` at about 540 µs per 1 KiB response
-   against about 330 µs through `node:zlib`, and about 815 µs against 617 µs
-   at 64 KiB.
 5. **`createBoundary` is the renderer.** Everything mounted beneath it may
    throw `HTTPError` (or anything else) and have it mapped to a `Response`;
    nothing below it needs its own try/catch.
@@ -493,18 +486,14 @@ Each item names a position and the failure it prevents:
    redirect, an error the boundary renders from a throw, and the deadline's
    answer. Mounted inside the boundary, `createSecurity`'s `next()` never
    resolves for a throw beneath it, so the rendered error ships without the
-   headers. Before 0.0.35 the canonical order mounted `createSecurity` inside
-   the boundary and the deadline, and the guide called that position a
-   tradeoff.
+   headers.
 8. **`createCORS` sits outside `createBoundary` and `createDeadline`.** In
    list mode every response then carries `Vary: Origin`, an error the
    boundary renders from a throw and the deadline's answer included, so a
    shared cache never serves one origin's answer to another. Its preflight
    answer runs before the terminal `Dispatcher.handle` sees the `OPTIONS`
    request, so it claims a preflight before the dispatcher's automatic
-   `OPTIONS`. Before 0.0.35 the guide permitted any position ahead of the
-   terminal, and an error rendered outside `createCORS` carried no
-   `Vary: Origin`.
+   `OPTIONS`.
 9. **`createForwarded` resolves client facts before anything keys off
    them.** `createLimiter`'s default key and any session/telemetry logic
    that wants `ClientState.client.ip` must run downstream of it. It reads
@@ -524,15 +513,6 @@ Each item names a position and the failure it prevents:
 10. **`createETag` sits inside compression.** The hash is computed
     over the uncompressed representation — hashing the compressed bytes
     would break revalidation the instant the negotiated coding changes.
-    When compression codes the body, it prefixes a strong tag with `W/`.
-    The tag then names both the identity and the coded representation, and
-    RFC 9110 § 8.8.3 requires a tag that stays the same while the content of
-    a `200` changes to be marked weak. `If-None-Match` compares weakly, so
-    the weak tag still revalidates to a `304` through `createETag`. A tag
-    varied per coding, the RFC 9110 § 8.8.3.3 example, would not revalidate
-    here, because `createETag` compares the request's tag against the tag of
-    the uncoded body. Before 0.0.35 a strong tag passed through compression
-    unchanged.
 11. **`createBearer` sits before `createLimiter`.** The limiter's default key
     derivation prefers a string `BearerState.token` (the `token:<value>` idiom)
     over a client-IP fallback — bearer must have already stashed it. An object
@@ -548,13 +528,8 @@ Each item names a position and the failure it prevents:
 
 14. **CORS.** In list mode `Vary: Origin` is merged on every response and
     preflight, from an allowed origin, a disallowed origin, or no `Origin`
-    alike, and never in `'*'` wildcard or fixed-string mode. A preflight from
-    a disallowed origin or with no `Origin` answers `204` with `Vary: Origin`
-    and no `Access-Control-*` header. The literal `Origin: null` is never
-    reflected even when the string `'null'` is allow-listed. Before 0.0.35,
-    list mode merged `Vary: Origin` only when it reflected an allowed origin,
-    and a disallowed preflight carried `Access-Control-Allow-Methods` and
-    `Access-Control-Allow-Headers`.
+    alike, and never in `'*'` wildcard or fixed-string mode. The literal `Origin: null` is never
+    reflected even when the string `'null'` is allow-listed.
 15. **Headers.** A hostile `X-Request-ID` (off-charset, oversize, or
     CRLF-bearing) is never echoed — `createSecurity` mints a fresh
     `crypto.randomUUID()` instead; a custom `csp` string replaces the
@@ -676,21 +651,13 @@ Each item names a position and the failure it prevents:
     value outside `%x20-21 / %x23-5B / %x5D-7E`; it never escapes or strips. `createBearer`
     refuses a `challenge` that names `error` at construction, because the battery
     owns that parameter.
-27. **Compression.** `createNodeCompression` and `createCompression` leave a
-    `206 Partial Content` and a response whose `Cache-Control` carries
-    `no-transform` identity-coded, with no `Vary: Accept-Encoding` stamp: a
-    `Content-Range` counts bytes of the identity representation, and
-    `no-transform` forbids an added content coding (RFC 9111 § 5.2.2.6).
-    A coded body's strong `ETag` gains the `W/` prefix (Contract §10). Before 0.0.35
-    both batteries coded a `206` and a `no-transform` response.
 
 ## Patterns
 
 ### Canonical onion — over `compose`
 
-The fence composes the canonical onion in the order the ordering doctrine fixes, directly over
-`compose`: no `@orkestrel/server` `Server` is required, because these batteries read and return
-`Request` and `Response`.
+The full ordering doctrine, composed directly over `compose` (no `@orkestrel/server`
+`Server` required — these batteries read and return `Request` and `Response`):
 
 ```ts
 import {
@@ -1026,13 +993,9 @@ admitForeign('createSession', ['store'], store, {}) // throws a ContractError at
 
 ### Practices
 
-- **Mount `createTelemetry` and the compression battery outside `createBoundary`**
+- **Mount `createTelemetry` and `createCompression` outside `createBoundary`**
   — error bodies still compress, and duration still measures the whole
   onion (Contract §3–4).
-- **Mount `createSecurity` and `createCORS` outside `createBoundary` and
-  `createDeadline`** — every response, a rendered error and the deadline's
-  answer included, carries the security headers and, in list mode,
-  `Vary: Origin` (Contract §7–8).
 - **Mount `createForwarded` before anything that keys off `ClientState`** —
   `createLimiter`'s default key and any client-IP-sensitive logic
   downstream (Contract §9).
