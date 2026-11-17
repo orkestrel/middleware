@@ -24,7 +24,7 @@ import {
 	createCSRF,
 	createCompression,
 	createCookieTransport,
-	createCors,
+	createCORS,
 	createDatabaseSessionStore,
 	createDeadline,
 	createETag,
@@ -1091,9 +1091,9 @@ export const ADMISSION_DOORS: readonly AdmissionDoorInterface[] = Object.freeze(
 		],
 	},
 	{
-		name: 'createCors',
-		factory: 'createCors',
-		create: createCors,
+		name: 'createCORS',
+		factory: 'createCORS',
+		create: createCORS,
 		base: {},
 		optionalBag: true,
 		misspelled: 'origins',
@@ -1642,13 +1642,13 @@ export type StackLayer =
 	| 'static'
 
 /** Names one onion order the guide's ordering doctrine permits. */
-export type StackArrangement = 'oracle' | 'canonical' | 'deadline' | 'cors'
+export type StackArrangement = 'oracle' | 'canonical' | 'deadline'
 
 /** Names the compression battery a stack mounts: `createCompression` or `createNodeCompression`. */
 export type StackEngine = 'web' | 'node'
 
 /** Names the unit that turns a red oracle cell green. */
-export type StackCloser = 'M3' | 'M4' | 'M6'
+export type StackCloser = 'M3' | 'M6'
 
 /** Carries every state slice a battery of the composed stack reads or writes. */
 export interface StackState
@@ -1685,7 +1685,7 @@ export interface StackFixtureInterface {
 export interface StackSetInterface {
 	readonly orders: Readonly<Record<StackArrangement, StackFixtureInterface>>
 	readonly trusted: StackFixtureInterface
-	readonly node: StackFixtureInterface
+	readonly nodes: Readonly<Record<StackArrangement, StackFixtureInterface>>
 	readonly capacity: StackFixtureInterface
 	readonly anonymous: StackFixtureInterface
 	readonly alias: boolean
@@ -1792,11 +1792,11 @@ export const SECURITY_HEADERS: readonly string[] = Object.freeze([
  * Lists the onion orders the guide's ordering doctrine permits, outermost first.
  *
  * @remarks
- * `oracle` mounts `createSecurity` and `createCors` above `createBoundary`, the placement doctrine
- * items 7 and 8 permit for a consumer who wants their headers on every response; `canonical` is
- * the guide's fence order; `deadline` mounts `createDeadline` after `createBody` (doctrine item 6);
- * `cors` mounts `createCors` innermost (doctrine item 8). Every order keeps compression outside the
- * boundary and `createETag`, the bearer before the limiter, and the body before the session and CSRF.
+ * `canonical` is the guide's fence order, and `oracle`, the reference the other orders are
+ * compared against, mounts the same order; `deadline` mounts `createDeadline` after `createBody`
+ * (doctrine item 6). Every order mounts compression outside the boundary and `createETag`,
+ * `createSecurity` and `createCORS` outside the boundary and the deadline (doctrine items 7 and 8),
+ * the bearer before the limiter, and the body before the session and CSRF.
  */
 export const STACK_ORDERS: Readonly<Record<StackArrangement, readonly StackLayer[]>> =
 	Object.freeze({
@@ -1818,10 +1818,10 @@ export const STACK_ORDERS: Readonly<Record<StackArrangement, readonly StackLayer
 		],
 		canonical: [
 			'compression',
-			'boundary',
-			'deadline',
 			'security',
 			'cors',
+			'boundary',
+			'deadline',
 			'forwarded',
 			'etag',
 			'bearer',
@@ -1848,30 +1848,10 @@ export const STACK_ORDERS: Readonly<Record<StackArrangement, readonly StackLayer
 			'multipart',
 			'static',
 		],
-		cors: [
-			'compression',
-			'security',
-			'boundary',
-			'deadline',
-			'forwarded',
-			'etag',
-			'bearer',
-			'limiter',
-			'body',
-			'session',
-			'csrf',
-			'cors',
-			'multipart',
-			'static',
-		],
 	})
 
 /** Lists the orders invariant 10 compares against the `oracle` order. */
-export const STACK_VARIANTS: readonly StackArrangement[] = Object.freeze([
-	'canonical',
-	'deadline',
-	'cors',
-])
+export const STACK_VARIANTS: readonly StackArrangement[] = Object.freeze(['canonical', 'deadline'])
 
 /**
  * Builds the headers of a request that carries the CSRF token in its header, when it has one.
@@ -1970,7 +1950,7 @@ export function listGreenCells<TCell extends { readonly closer?: StackCloser }>(
  *
  * @example
  * ```ts
- * listRedCells(FAULT_CELLS).map((cell) => cell.closer) // ['M4', ...]
+ * listRedCells(FAULT_CELLS).map((cell) => cell.closer) // []
  * ```
  */
 export function listRedCells<TCell extends { readonly closer?: StackCloser }>(
@@ -2161,13 +2141,11 @@ export const VARY_CELLS: readonly StackStatusCell[] = Object.freeze([
 	{
 		title: 'GET /page from a disallowed origin',
 		status: 200,
-		closer: 'M4',
 		build: () => ({ path: '/page', headers: { origin: STACK_FOREIGN_ORIGIN } }),
 	},
 	{
 		title: 'GET /page with no Origin',
 		status: 200,
-		closer: 'M4',
 		build: () => ({ path: '/page' }),
 	},
 	{
@@ -2180,7 +2158,6 @@ export const VARY_CELLS: readonly StackStatusCell[] = Object.freeze([
 	},
 	{
 		title: 'OPTIONS /echo, a preflight from a disallowed origin',
-		closer: 'M4',
 		build: () => ({
 			method: 'OPTIONS',
 			path: '/echo',
@@ -2200,7 +2177,6 @@ export const VARY_CELLS: readonly StackStatusCell[] = Object.freeze([
 	{
 		title: 'GET /teapot from a disallowed origin',
 		status: 418,
-		closer: 'M4',
 		build: () => ({ path: '/teapot', headers: { origin: STACK_FOREIGN_ORIGIN } }),
 	},
 	{
@@ -2278,14 +2254,12 @@ export const HEADER_CELLS: readonly StackStatusCell[] = Object.freeze<StackStatu
 export const CANONICAL_VARY_CELLS: readonly StackStatusCell[] = Object.freeze<StackStatusCell[]>([
 	{
 		title: 'POST /echo without a token, a thrown 403, from the allowed origin, the canonical order',
-		closer: 'M4',
 		status: 403,
 		build: () => ({ ...buildEchoRequest(undefined), headers: { origin: STACK_ORIGIN } }),
 	},
 	{
 		title:
 			'POST /echo with malformed JSON, a thrown 400, from the allowed origin, the canonical order',
-		closer: 'M4',
 		status: 400,
 		build: (token) => ({
 			method: 'POST',
@@ -2299,25 +2273,21 @@ export const CANONICAL_VARY_CELLS: readonly StackStatusCell[] = Object.freeze<St
 	},
 	{
 		title: 'GET /teapot, a thrown HTTPError 418, from the allowed origin, the canonical order',
-		closer: 'M4',
 		status: 418,
 		build: () => ({ path: '/teapot', headers: { origin: STACK_ORIGIN } }),
 	},
 	{
 		title: 'GET /fault, a thrown Error, from the allowed origin, the canonical order',
-		closer: 'M4',
 		status: 500,
 		build: () => ({ path: '/fault', headers: { origin: STACK_ORIGIN } }),
 	},
 	{
 		title: 'GET /slow, the deadline 503, from the allowed origin, the canonical order',
-		closer: 'M4',
 		status: 503,
 		build: () => ({ path: '/slow', headers: { origin: STACK_ORIGIN } }),
 	},
 	{
 		title: 'POST /upload, a malformed multipart form, from the allowed origin, the canonical order',
-		closer: 'M4',
 		status: 400,
 		build: (token) => ({
 			method: 'POST',
@@ -2335,13 +2305,11 @@ export const CANONICAL_VARY_CELLS: readonly StackStatusCell[] = Object.freeze<St
 export const CANONICAL_HEADER_CELLS: readonly StackStatusCell[] = Object.freeze<StackStatusCell[]>([
 	{
 		title: 'POST /echo without a token, a thrown 403, the canonical order',
-		closer: 'M4',
 		status: 403,
 		build: () => buildEchoRequest(undefined),
 	},
 	{
 		title: 'POST /echo with malformed JSON, a thrown 400, the canonical order',
-		closer: 'M4',
 		status: 400,
 		build: (token) => ({
 			method: 'POST',
@@ -2352,25 +2320,21 @@ export const CANONICAL_HEADER_CELLS: readonly StackStatusCell[] = Object.freeze<
 	},
 	{
 		title: 'GET /teapot, a thrown HTTPError 418, the canonical order',
-		closer: 'M4',
 		status: 418,
 		build: () => ({ path: '/teapot' }),
 	},
 	{
 		title: 'GET /fault, a thrown Error, the canonical order',
-		closer: 'M4',
 		status: 500,
 		build: () => ({ path: '/fault' }),
 	},
 	{
 		title: 'GET /slow, the deadline 503, the canonical order',
-		closer: 'M4',
 		status: 503,
 		build: () => ({ path: '/slow' }),
 	},
 	{
 		title: 'POST /upload, a malformed multipart form, the canonical order',
-		closer: 'M4',
 		status: 400,
 		build: (token) => ({
 			method: 'POST',
@@ -2388,7 +2352,6 @@ export const RANGE_CELLS: readonly StackRangeCell[] = Object.freeze([
 	{
 		title: 'createCompression over createStatic, GET /static/large.txt with a Range',
 		engine: 'web',
-		closer: 'M4',
 		build: () => ({
 			path: '/static/large.txt',
 			headers: { range: STACK_RANGE, 'accept-encoding': 'gzip' },
@@ -2397,13 +2360,11 @@ export const RANGE_CELLS: readonly StackRangeCell[] = Object.freeze([
 	{
 		title: 'createCompression over a handler 206, GET /partial',
 		engine: 'web',
-		closer: 'M4',
 		build: () => ({ path: '/partial', headers: { 'accept-encoding': 'gzip' } }),
 	},
 	{
 		title: 'createNodeCompression over createStatic, GET /static/large.txt with a Range',
 		engine: 'node',
-		closer: 'M4',
 		build: () => ({
 			path: '/static/large.txt',
 			headers: { range: STACK_RANGE, 'accept-encoding': 'gzip' },
@@ -2412,8 +2373,23 @@ export const RANGE_CELLS: readonly StackRangeCell[] = Object.freeze([
 	{
 		title: 'createNodeCompression over a handler 206, GET /partial',
 		engine: 'node',
-		closer: 'M4',
 		build: () => ({ path: '/partial', headers: { 'accept-encoding': 'gzip' } }),
+	},
+])
+
+/** Lists invariant 11's cells: each `GET` a client that accepts gzip revalidates, whose 304 carries the `ETag` and `Vary` of its 200. */
+export const REVALIDATION_CELLS: readonly StackCell[] = Object.freeze([
+	{
+		title: 'GET /page, a createETag body above the compression threshold',
+		build: () => ({ path: '/page', headers: { 'accept-encoding': 'gzip' } }),
+	},
+	{
+		title: 'GET /client, a createETag body below the compression threshold',
+		build: () => ({ path: '/client', headers: { 'accept-encoding': 'gzip' } }),
+	},
+	{
+		title: 'GET /static/large.txt, a createStatic file',
+		build: () => ({ path: '/static/large.txt', headers: { 'accept-encoding': 'gzip' } }),
 	},
 ])
 
@@ -2640,11 +2616,11 @@ export async function startStack(options: StackOptions): Promise<StackFixtureInt
 	const layers: Readonly<Record<StackLayer, MiddlewareHandler<StackState>>> = {
 		compression: options.engine === 'node' ? createNodeCompression() : createCompression(),
 		security: createSecurity({ hsts: true }),
-		cors: createCors({ origin: [STACK_ORIGIN] }),
+		cors: createCORS({ origin: [STACK_ORIGIN] }),
 		boundary: createBoundary({ expose: false }),
 		deadline: createDeadline({ ms: STACK_DEADLINE }),
 		forwarded: createForwarded(options.forwarded),
-		etag: createETag(),
+		etag: createETag({ weak: false }),
 		bearer: only(
 			'/admin',
 			createBearer<StackState>({
@@ -2815,7 +2791,7 @@ export async function startStack(options: StackOptions): Promise<StackFixtureInt
 
 /**
  * Starts every stack the oracle drives: one per permitted order under `proxies: 1`, one under
- * `trusted`, one mounting `createNodeCompression`, one with a session store of
+ * `trusted`, one per permitted order mounting `createNodeCompression`, one with a session store of
  * {@link STACK_CAPACITY}, and one whose session battery mints no session for a cookie-less
  * request, so `createCSRF` runs on its own nonce.
  *
@@ -2834,23 +2810,42 @@ export async function startStacks(): Promise<StackSetInterface> {
 		engine: 'web',
 		...(alias ? { peer: STACK_PEER } : {}),
 	}
-	const [oracle, canonical, deadline, cors, trusted, node, capacity, anonymous] = await Promise.all(
-		[
-			startStack({ ...base, order: STACK_ORDERS.oracle }),
-			startStack({ ...base, order: STACK_ORDERS.canonical }),
-			startStack({ ...base, order: STACK_ORDERS.deadline }),
-			startStack({ ...base, order: STACK_ORDERS.cors }),
-			startStack({ ...base, order: STACK_ORDERS.oracle, forwarded: { trusted: [STACK_PEER] } }),
-			startStack({ ...base, order: STACK_ORDERS.oracle, engine: 'node' }),
-			startStack({ ...base, order: STACK_ORDERS.oracle, capacity: STACK_CAPACITY }),
-			startStack({ ...base, order: STACK_ORDERS.oracle, anonymous: true }),
-		],
-	)
-	const all = [oracle, canonical, deadline, cors, trusted, node, capacity, anonymous]
-	return {
-		orders: { oracle, canonical, deadline, cors },
+	const [
+		oracle,
+		canonical,
+		deadline,
 		trusted,
-		node,
+		nodeOracle,
+		nodeCanonical,
+		nodeDeadline,
+		capacity,
+		anonymous,
+	] = await Promise.all([
+		startStack({ ...base, order: STACK_ORDERS.oracle }),
+		startStack({ ...base, order: STACK_ORDERS.canonical }),
+		startStack({ ...base, order: STACK_ORDERS.deadline }),
+		startStack({ ...base, order: STACK_ORDERS.oracle, forwarded: { trusted: [STACK_PEER] } }),
+		startStack({ ...base, order: STACK_ORDERS.oracle, engine: 'node' }),
+		startStack({ ...base, order: STACK_ORDERS.canonical, engine: 'node' }),
+		startStack({ ...base, order: STACK_ORDERS.deadline, engine: 'node' }),
+		startStack({ ...base, order: STACK_ORDERS.oracle, capacity: STACK_CAPACITY }),
+		startStack({ ...base, order: STACK_ORDERS.oracle, anonymous: true }),
+	])
+	const all = [
+		oracle,
+		canonical,
+		deadline,
+		trusted,
+		nodeOracle,
+		nodeCanonical,
+		nodeDeadline,
+		capacity,
+		anonymous,
+	]
+	return {
+		orders: { oracle, canonical, deadline },
+		trusted,
+		nodes: { oracle: nodeOracle, canonical: nodeCanonical, deadline: nodeDeadline },
 		capacity,
 		anonymous,
 		alias,
@@ -3063,9 +3058,43 @@ export async function readRangeCell(
 	stacks: StackSetInterface,
 	cell: StackRangeCell,
 ): Promise<{ readonly status: number; readonly coding: string | null }> {
-	const stack = cell.engine === 'node' ? stacks.node : stacks.orders.oracle
+	const stack = cell.engine === 'node' ? stacks.nodes.oracle : stacks.orders.oracle
 	const reply = await sendStack(stack.url, cell.build(undefined))
 	return { status: reply.status, coding: reply.headers.get('content-encoding') }
+}
+
+/**
+ * Drives one invariant 11 cell: the `GET` its cell builds, then the same request carrying the
+ * 200's `ETag` in `If-None-Match`.
+ *
+ * @param stack - The stack
+ * @param cell - The cell
+ * @returns The 304's status, `ETag`, and `Vary`, and the 200's as the expected reading
+ *
+ * @example
+ * ```ts
+ * const { observed, expected } = await readRevalidation(stack, REVALIDATION_CELLS[0])
+ * ```
+ */
+export async function readRevalidation(
+	stack: StackFixtureInterface,
+	cell: StackCell,
+): Promise<{ readonly observed: unknown; readonly expected: unknown }> {
+	const request = cell.build(undefined)
+	const full = await sendStack(stack.url, request)
+	const etag = full.headers.get('etag') ?? ''
+	const reply = await sendStack(stack.url, {
+		...request,
+		headers: { ...request.headers, 'if-none-match': etag },
+	})
+	return {
+		observed: {
+			status: reply.status,
+			etag: reply.headers.get('etag'),
+			vary: listVary(reply.headers),
+		},
+		expected: { status: 304, etag, vary: listVary(full.headers) },
+	}
 }
 
 /**
@@ -3234,9 +3263,9 @@ export function listVary(headers: Headers): readonly string[] {
  *
  * @example
  * ```ts
- * listCorsHeaders(new Headers({ 'access-control-allow-origin': '*' })) // ['access-control-allow-origin']
+ * listCORSHeaders(new Headers({ 'access-control-allow-origin': '*' })) // ['access-control-allow-origin']
  * ```
  */
-export function listCorsHeaders(headers: Headers): readonly string[] {
+export function listCORSHeaders(headers: Headers): readonly string[] {
 	return [...headers.keys()].filter((name) => name.startsWith('access-control-'))
 }

@@ -10,6 +10,7 @@ import {
 	FORWARDED_CELLS,
 	HEADER_CELLS,
 	RANGE_CELLS,
+	REVALIDATION_CELLS,
 	SECURITY_HEADERS,
 	STACK_FOREIGN_ORIGIN,
 	STACK_ORIGIN,
@@ -20,7 +21,7 @@ import {
 	driveCell,
 	holdsValue,
 	isHttpOnlyCookie,
-	listCorsHeaders,
+	listCORSHeaders,
 	listGreenCells,
 	listHeldValues,
 	listRedCells,
@@ -30,6 +31,7 @@ import {
 	readFlood,
 	readForwarded,
 	readRangeCell,
+	readRevalidation,
 	readSecurityCell,
 	readVaryCell,
 	sendStack,
@@ -189,16 +191,16 @@ describe('invariant 5: Vary: Origin sits on every response and preflight in list
 			path: '/echo',
 			headers: { origin: STACK_ORIGIN, 'access-control-request-method': 'POST' },
 		})
-		expect(listCorsHeaders(reply.headers)).toContain('access-control-allow-origin')
+		expect(listCORSHeaders(reply.headers)).toContain('access-control-allow-origin')
 	})
 
-	it.fails('a preflight from a disallowed origin carries no CORS headers [red until M4]', async () => {
+	it('a preflight from a disallowed origin carries no CORS headers', async () => {
 		const reply = await sendStack(oracle.url, {
 			method: 'OPTIONS',
 			path: '/echo',
 			headers: { origin: STACK_FOREIGN_ORIGIN, 'access-control-request-method': 'POST' },
 		})
-		expect(listCorsHeaders(reply.headers)).toEqual([])
+		expect(listCORSHeaders(reply.headers)).toEqual([])
 	})
 
 	for (const cell of listGreenCells(CANONICAL_VARY_CELLS))
@@ -361,4 +363,17 @@ describe('invariant 10: the body is byte-equal in every order the guide permits'
 				const { variant, reference } = await readBodies(stacks, arrangement, cell)
 				expect(variant).toEqual(reference)
 			})
+})
+
+describe('invariant 11: a 304 carries the ETag and Vary the 200 to the same request carried', () => {
+	for (const [engine, set] of [
+		['createCompression', stacks.orders],
+		['createNodeCompression', stacks.nodes],
+	] as const)
+		for (const [arrangement, stack] of Object.entries(set))
+			for (const cell of REVALIDATION_CELLS)
+				it(`${cell.title}, ${engine}, the ${arrangement} order`, async () => {
+					const { observed, expected } = await readRevalidation(stack, cell)
+					expect(observed).toEqual(expected)
+				})
 })
