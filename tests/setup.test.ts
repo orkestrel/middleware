@@ -61,6 +61,24 @@ describe('createTestContext', () => {
 		expect(state.seen).toBe(3)
 	})
 
+	it('carries a plain connection by default, the connection it is given, and reports abort to its observer', () => {
+		const request = buildTestRequest('/')
+		expect(createTestContext(request, {}).connection).toEqual({ encrypted: false })
+		const reasons: unknown[] = []
+		const context = createTestContext(
+			request,
+			{},
+			{
+				connection: { ip: '192.0.2.10', encrypted: true },
+				abort: (reason) => reasons.push(reason),
+			},
+		)
+		expect(context.connection).toEqual({ ip: '192.0.2.10', encrypted: true })
+		context.abort('stop')
+		expect(reasons).toEqual(['stop'])
+		expect(() => createTestContext(request, {}).abort('quiet')).not.toThrow()
+	})
+
 	it('reads the request body once and answers every later call from the same promise', async () => {
 		const payload = '{"name":"ada","tags":["a","b"]}'
 		const context = createTestContext(
@@ -141,16 +159,14 @@ describe('createRecordingTerminal', () => {
 })
 
 describe('createRecordingNext', () => {
-	it('records each substituted request and answers with the response it was given', async () => {
+	it('records each call and answers with the response it was given', async () => {
 		const downstream = new Response('downstream', { status: 202 })
 		const recording = createRecordingNext(downstream)
-		const substituted = buildTestRequest('/rewritten')
 
-		expect(await recording.next(substituted)).toBe(downstream)
+		expect(await recording.next()).toBe(downstream)
 		expect(await recording.next()).toBe(downstream)
 		expect(recording.count).toBe(2)
-		expect(recording.calls[0]).toBe(substituted)
-		expect(recording.calls[1]).toBeUndefined()
+		expect(recording.calls).toEqual([0, 0])
 
 		const defaulted = await createRecordingNext().next()
 		expect(defaulted.status).toBe(200)
@@ -165,9 +181,9 @@ describe('runChain', () => {
 		const context = createTestContext(request, { trail })
 		const response = await runChain(
 			[
-				async (driving, outer, next) => {
+				async (_driving, outer, next) => {
 					trail.push(`outer:enter:${outer.method}`)
-					const answer = await next(driving)
+					const answer = await next()
 					trail.push('outer:exit')
 					return new Response(await answer.text(), {
 						status: answer.status,

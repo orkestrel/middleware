@@ -6,7 +6,6 @@ import type {
 	BoundaryOptions,
 	ClientState,
 	CompressionOptions,
-	ConnectionState,
 	CorsOptions,
 	CSRFOptions,
 	CSRFState,
@@ -31,7 +30,6 @@ import type { CookieOptions, MiddlewareHandler } from '@orkestrel/server'
 import { realpath } from 'node:fs/promises'
 import { relative, resolve as resolvePath } from 'node:path'
 import { ContractError, isArray, isError, isRecord, isString } from '@orkestrel/contract'
-import { linkSignal } from '@orkestrel/abort'
 import {
 	clearCookie,
 	HTTPError,
@@ -370,9 +368,9 @@ export function createCors<TState>(options?: CorsOptions): MiddlewareHandler<TSt
  * @throws {ContractError} When the bag is refused whole: an undeclared key, an `ms` that is not a positive finite number, or a `status` that is not an integer from 200 through 599
  *
  * @remarks
- * Mount this battery outside `createBody` in the chain — it reconstructs the inbound
- * `Request` (to link its `signal` to the deadline `signal`), which throws if
- * the body was already consumed upstream (for example by `createBody`'s cached read).
+ * On expiry it calls `context.abort(reason)`, so the request's `signal` aborts
+ * with the deadline's reason, and answers `status` with no body. It builds no
+ * `Request`, so it composes with `createBody` in either order.
  *
  * @example
  * ```ts
@@ -383,18 +381,22 @@ export function createDeadline<TState>(options: DeadlineOptions): MiddlewareHand
 	admitOptions('createDeadline', DEADLINE_CONTRACT, options)
 	const ms = options.ms
 	const status = options.status ?? DEFAULT_DEADLINE_STATUS
-	// The deadline links signals off `request` alone, so the second position is
+	// The deadline reads neither the request nor the state, so the first position is
 	// conformance-only.
-	return async (request, _context, next) => {
+	return async (_request, context, next) => {
 		const timeout = createTimeout({ ms })
-		const linked = linkSignal(timeout.signal, request.signal)
 		timeout.start()
-		const downstream = next(new Request(request, { signal: linked }))
+		const downstream = next()
 		const expired = new Response(null, { status })
 		const deadline = new Promise<Response>((resolve) => {
-			timeout.signal.addEventListener('abort', () => resolve(expired), {
-				once: true,
-			})
+			timeout.signal.addEventListener(
+				'abort',
+				() => {
+					context.abort(timeout.signal.reason)
+					resolve(expired)
+				},
+				{ once: true },
+			)
 		})
 		try {
 			const winner = await Promise.race([downstream, deadline])
@@ -414,7 +416,7 @@ export function createDeadline<TState>(options: DeadlineOptions): MiddlewareHand
  * Creates the trusted-proxy client-IP resolver battery — walks `X-Forwarded-For` past
  * the hops its options declare trusted.
  *
- * @typeParam TState - The consumer's opaque per-request state type, must carry {@link ClientState} and {@link ConnectionState}
+ * @typeParam TState - The consumer's opaque per-request state type, must carry {@link ClientState}
  * @param options - See {@link ForwardedOptions}
  * @returns A `MiddlewareHandler<TState>`
  * @throws {ContractError} When the bag is refused whole: neither or both of `proxies` and `trusted`, a `proxies` that is not an integer of at least 1, or a non-string `trusted` entry
@@ -424,7 +426,7 @@ export function createDeadline<TState>(options: DeadlineOptions): MiddlewareHand
  * const forwarded = createForwarded({ proxies: 1 })
  * ```
  */
-export function createForwarded<TState extends ClientState & ConnectionState>(
+export function createForwarded<TState extends ClientState>(
 	options: ForwardedOptions,
 ): MiddlewareHandler<TState> {
 	admitOptions('createForwarded', FORWARDED_CONTRACT, options)
@@ -432,7 +434,7 @@ export function createForwarded<TState extends ClientState & ConnectionState>(
 	return async (request, context, next) => {
 		const header = request.headers.get('x-forwarded-for') ?? undefined
 		const resolved = resolveForwardedFor(header, trust)
-		const ip = resolved ?? context.state.connection?.ip
+		const ip = resolved ?? context.connection.ip
 		Object.assign(context.state, { client: buildClient(ip) })
 		return next()
 	}
@@ -535,7 +537,7 @@ export function createBearer<TState extends BearerState<TCredential>, TCredentia
  * @remarks
  * The store admits atomically. A fresh window takes the current maximum from its limits.
  *
- * @typeParam TState - The consumer's opaque per-request state type, must carry {@link BearerState}, {@link ClientState}, and {@link ConnectionState}
+ * @typeParam TState - The consumer's opaque per-request state type, must carry {@link BearerState} and {@link ClientState}
  * @param options - See {@link LimiterOptions}
  * @returns A `MiddlewareHandler<TState>`
  * @throws {ContractError} When the bag is refused whole, or when `store` lacks `consume`
@@ -545,7 +547,7 @@ export function createBearer<TState extends BearerState<TCredential>, TCredentia
  * const limiter = createLimiter({ max: 100, window: 60_000 })
  * ```
  */
-export function createLimiter<TState extends BearerState<unknown> & ClientState & ConnectionState>(
+export function createLimiter<TState extends BearerState<unknown> & ClientState>(
 	options: LimiterOptions<TState>,
 ): MiddlewareHandler<TState> {
 	admitOptions('createLimiter', LIMITER_CONTRACT, options)
@@ -568,7 +570,8 @@ export function createLimiter<TState extends BearerState<unknown> & ClientState 
 	const limits = { max, window }
 	// The key is derived from `context` alone, so the first position is conformance-only.
 	return async (_request, context, next) => {
-		const key = deriveKey === undefined ? resolveKey(context.state) : deriveKey(context)
+		const key =
+			deriveKey === undefined ? resolveKey(context.state, context.connection) : deriveKey(context)
 		const now = clock()
 		const result = await store.consume(key, now, limits)
 		if (!result.admitted) {
@@ -625,7 +628,7 @@ export function createBody<TState extends BodyState = BodyState>(): MiddlewareHa
  * across the request, with a mid-handler `regenerate`/`destroy` control handle.
  *
  * @typeParam S - The session entity type the store persists (must implement {@link SessionInterface})
- * @typeParam TState - The consumer's opaque per-request state type, must carry {@link SessionState} and {@link ConnectionState}
+ * @typeParam TState - The consumer's opaque per-request state type, must carry {@link SessionState}
  * @param options - See {@link SessionOptions}
  * @returns A `MiddlewareHandler<TState>`
  * @throws {ContractError} When the bag is refused whole, or when `transport` or `store` lacks a member its interface declares
@@ -638,7 +641,7 @@ export function createBody<TState extends BodyState = BodyState>(): MiddlewareHa
  */
 export function createSession<
 	S extends SessionInterface = SessionInterface,
-	TState extends SessionState & ConnectionState = SessionState & ConnectionState,
+	TState extends SessionState = SessionState,
 >(options: SessionOptions<S, TState>): MiddlewareHandler<TState> {
 	admitOptions('createSession', SESSION_CONTRACT, options)
 	admitForeign('createSession', ['transport'], SESSION_TRANSPORT_FOREIGN, options.transport)
@@ -661,7 +664,7 @@ export function createSession<
 
 	return async (request, context, next) => {
 		const now = clock()
-		const encrypted = context.state.connection?.encrypted ?? false
+		const encrypted = context.connection.encrypted
 		const incomingId = await transport.read(request)
 		const resolved = incomingId !== undefined ? await store.get(incomingId, now) : undefined
 		const shouldMint = resolved === undefined && (mint !== undefined ? await mint(context) : true)
@@ -706,7 +709,7 @@ export function createSession<
 /**
  * Creates the session-bound double-submit CSRF protection battery.
  *
- * @typeParam TState - The consumer's opaque per-request state type, must carry {@link CSRFState}, {@link SessionState}, and {@link ConnectionState}
+ * @typeParam TState - The consumer's opaque per-request state type, must carry {@link CSRFState} and {@link SessionState}
  * @param options - See {@link CSRFOptions}
  * @returns A `MiddlewareHandler<TState>`
  * @throws {ContractError} When the bag is refused whole: an undeclared key, a missing `secret`, or a value outside its declared type
@@ -717,7 +720,7 @@ export function createSession<
  * const csrf = createCSRF({ secret: 'shh' })
  * ```
  */
-export function createCSRF<TState extends CSRFState & SessionState & ConnectionState>(
+export function createCSRF<TState extends CSRFState & SessionState>(
 	options: CSRFOptions,
 ): MiddlewareHandler<TState> {
 	admitOptions('createCSRF', CSRF_CONTRACT, options)
@@ -757,7 +760,7 @@ export function createCSRF<TState extends CSRFState & SessionState & ConnectionS
 			sameSite: 'Strict',
 			httpOnly: false,
 			path: '/',
-			secure: resolveSecure(undefined, context.state.connection?.encrypted ?? false),
+			secure: resolveSecure(undefined, context.connection.encrypted),
 		}
 		if (arrived !== undefined && current === undefined) {
 			Object.assign(context.state, { csrf: undefined })

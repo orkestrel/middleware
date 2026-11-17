@@ -1,5 +1,5 @@
 import { ContractError } from '@orkestrel/contract'
-import type { CapstoneState } from '../../setupServer.js'
+import type { CapstoneState, ExchangeFixtureInterface, ExchangeState } from '../../setupServer.js'
 import { MiddlewareValue, createOversizedContext, createCountedStore } from '../../setup.js'
 import type {
 	BearerOptions,
@@ -11,13 +11,12 @@ import type {
 	SessionInterface,
 	SessionState,
 } from '@src/server'
-import type { ConnectionState } from '@src/server'
 import { join } from 'node:path'
 import { symlink } from 'node:fs/promises'
 import http from 'node:http'
 import { brotliCompressSync } from 'node:zlib'
-import { describe, expect, it } from 'vitest'
-import { createRecorder, waitForDelay } from '@orkestrel/test'
+import { afterEach, describe, expect, it } from 'vitest'
+import { createRecorder, waitForCondition, waitForDelay } from '@orkestrel/test'
 import { createLoopback, createScratch } from '@orkestrel/test/server'
 import {
 	createAssets,
@@ -57,6 +56,7 @@ import {
 	buildSymlinkFixture,
 	createAssetSource,
 	PNG_MAGIC,
+	startExchange,
 } from '../../setupServer.js'
 import {
 	buildTestRequest,
@@ -1325,13 +1325,10 @@ describe('capstone: real socket + Dispatcher + canonical onion', () => {
 		const server = http.createServer(async (message, response) => {
 			const request = buildRouterRequest(message)
 			const ip = message.socket.remoteAddress
-			const state: CapstoneState = {
-				connection: {
-					...(ip !== undefined ? { ip } : {}),
-					encrypted: false,
-				},
-			}
-			const context = createTestContext(request, state)
+			const state: CapstoneState = {}
+			const context = createTestContext(request, state, {
+				connection: { ...(ip !== undefined ? { ip } : {}), encrypted: false },
+			})
 			const result = await composed(request, context)
 			await sendResponse(result, response)
 		})
@@ -1403,7 +1400,7 @@ describe('capstone: real socket + Dispatcher + canonical onion', () => {
 
 	it('a limiter behind a bearer that stashes an object credential keys by client address', async () => {
 		type Principal = { readonly subject: string }
-		type PrincipalState = BearerState<Principal> & ClientState & ConnectionState
+		type PrincipalState = BearerState<Principal> & ClientState
 		const keys = createRecorder<[string]>()
 		const memory = new MemoryLimiterStore()
 		const bearer = createBearer<PrincipalState, Principal>({
@@ -1426,10 +1423,11 @@ describe('capstone: real socket + Dispatcher + canonical onion', () => {
 		const server = http.createServer(async (message, response) => {
 			const request = buildRouterRequest(message)
 			const ip = message.socket.remoteAddress
-			const state: PrincipalState = {
+			const state: PrincipalState = {}
+			const context = createTestContext(request, state, {
 				connection: { ...(ip !== undefined ? { ip } : {}), encrypted: false },
-			}
-			await sendResponse(await composed(request, createTestContext(request, state)), response)
+			})
+			await sendResponse(await composed(request, context), response)
 		})
 		const handle = await createLoopback(server)
 		try {
@@ -1966,19 +1964,36 @@ describe('createDeadline', () => {
 		expect(await response.text()).toBe(ECHO_MARKER)
 	})
 
-	it('a slow handler triggers the default 503 and the downstream sees an aborted signal', async () => {
+	it('a slow handler triggers the default 503 and the context aborts once with the deadline reason', async () => {
 		const deadline = createDeadline<Record<string, never>>({ ms: 20 })
-		const context = createTestContext(buildTestRequest('/'), {})
-		const sawAborted = new MiddlewareValue(false)
-		const response = await deadline(buildTestRequest('/'), context, async (substituted) => {
-			const request = substituted ?? buildTestRequest('/')
+		const reasons: unknown[] = []
+		const context = createTestContext(
+			buildTestRequest('/'),
+			{},
+			{ abort: (reason) => reasons.push(reason) },
+		)
+		const response = await deadline(buildTestRequest('/'), context, async () => {
 			await waitForDelay(100)
-			sawAborted.value = request.signal.aborted
 			return new Response('too slow')
 		})
 		expect(response.status).toBe(503)
-		await waitForDelay(150)
-		expect(sawAborted.value).toBe(true)
+		expect(reasons).toHaveLength(1)
+		expect(reasons[0]).toBeInstanceOf(DOMException)
+		expect(reasons[0]).toMatchObject({ name: 'AbortError' })
+	})
+
+	it('a fast handler never aborts the context', async () => {
+		const deadline = createDeadline<Record<string, never>>({ ms: 200 })
+		const reasons: unknown[] = []
+		const context = createTestContext(
+			buildTestRequest('/'),
+			{},
+			{ abort: (reason) => reasons.push(reason) },
+		)
+		const next = createRecordingNext()
+		await deadline(buildTestRequest('/'), context, next.next)
+		expect(next.calls).toEqual([0])
+		expect(reasons).toEqual([])
 	})
 
 	it('accepts a custom status', async () => {
@@ -2021,26 +2036,145 @@ describe('createDeadline', () => {
 	})
 })
 
+// ── The exchange seam through a real Server ───────────────────────────────
+
+describe('the exchange seam through a real Server', () => {
+	const running: ExchangeFixtureInterface[] = []
+
+	afterEach(async () => {
+		await Promise.all(running.splice(0).map((fixture) => fixture.stop()))
+	})
+
+	const json = { 'content-type': 'application/json' }
+
+	it('F1: createDeadline then createBody answers a JSON POST 200 with the body', async () => {
+		const fixture = await startExchange(running, [
+			createDeadline<ExchangeState>({ ms: 5_000 }),
+			createBody(),
+		])
+		const response = await fetch(`${fixture.url}/echo`, {
+			method: 'POST',
+			headers: json,
+			body: '{"item":"lamp"}',
+		})
+		expect(response.status).toBe(200)
+		expect(await response.json()).toEqual({ body: { item: 'lamp' } })
+	})
+
+	it('F1: the same composition behind createBoundary answers 200 with the body', async () => {
+		const fixture = await startExchange(running, [
+			createBoundary<ExchangeState>({ expose: false }),
+			createDeadline<ExchangeState>({ ms: 5_000 }),
+			createBody(),
+		])
+		const response = await fetch(`${fixture.url}/echo`, {
+			method: 'POST',
+			headers: json,
+			body: '{"item":"lamp"}',
+		})
+		expect(response.status).toBe(200)
+		expect(await response.json()).toEqual({ body: { item: 'lamp' } })
+	})
+
+	it('F1 expiry: a deadline that fires first answers its status and aborts the handler request with the deadline reason', async () => {
+		const fixture = await startExchange(running, [
+			createDeadline<ExchangeState>({ ms: 20, status: 504 }),
+		])
+		const response = await fetch(`${fixture.url}/slow`)
+		expect(response.status).toBe(504)
+		await waitForCondition(
+			'the slow route received its request',
+			() => fixture.requests.length === 1,
+		)
+		const signal = fixture.requests[0]?.signal
+		expect(signal?.aborted).toBe(true)
+		expect(signal?.reason).toBeInstanceOf(DOMException)
+		expect(signal?.reason).toMatchObject({ name: 'AbortError' })
+	})
+
+	it('F4: createForwarded resolves the client ip from the socket peer under state: () => ({})', async () => {
+		const fixture = await startExchange(running, [createForwarded<ExchangeState>({ proxies: 1 })])
+		const response = await fetch(`${fixture.url}/client`)
+		expect(await response.text()).toBe('127.0.0.1')
+	})
+
+	it('F4: createSession and createCSRF omit Secure over the plain Server', async () => {
+		const fixture = await startExchange(running, [
+			createSession<SessionInterface, ExchangeState>({
+				transport: createCookieTransport({ secret: TEST_SECRET }),
+			}),
+			createCSRF<ExchangeState>({ secret: TEST_SECRET }),
+		])
+		const response = await fetch(`${fixture.url}/plain`)
+		const cookies = response.headers.getSetCookie()
+		expect(cookies.find((value) => value.startsWith('session='))).toBeDefined()
+		expect(cookies.find((value) => value.startsWith('csrf='))).toBeDefined()
+		for (const cookie of cookies) expect(cookie).not.toContain('Secure')
+	})
+
+	it('every battery hands the terminal the Request the server built', async () => {
+		const fixture = buildStaticFixture()
+		const outer: Request[] = []
+		try {
+			const server = await startExchange(running, [
+				async (request, _context, next) => {
+					outer.push(request)
+					return next()
+				},
+				createTelemetry<ExchangeState>({ record: () => {} }),
+				createBoundary<ExchangeState>({ expose: false }),
+				createSecurity<ExchangeState>(),
+				createCors<ExchangeState>({ origin: ['https://app.example'] }),
+				createDeadline<ExchangeState>({ ms: 5_000 }),
+				createForwarded<ExchangeState>({ proxies: 1 }),
+				createETag<ExchangeState>(),
+				createCompression<ExchangeState>(),
+				createNodeCompression<ExchangeState>(),
+				createBearer<ExchangeState>({ verify: (token) => token }),
+				createLimiter<ExchangeState>({ max: 10, window: 60_000 }),
+				createSession<SessionInterface, ExchangeState>({
+					transport: createCookieTransport({ secret: TEST_SECRET }),
+				}),
+				createCSRF<ExchangeState>({ secret: TEST_SECRET }),
+				createBody(),
+				createMultipart<ExchangeState>(),
+				createStatic<ExchangeState>({ root: fixture.scratch.path, prefix: '/static' }),
+				createAssets<ExchangeState>({ source: createAssetSource(new Map()).source }),
+			])
+			const response = await fetch(`${server.url}/plain`, {
+				headers: { authorization: 'Bearer token-1', origin: 'https://app.example' },
+			})
+			expect(response.status).toBe(200)
+			expect(await response.text()).toBe('plain')
+			expect(server.requests).toHaveLength(1)
+			expect(outer).toHaveLength(1)
+			expect(server.requests[0]).toBe(outer[0])
+		} finally {
+			fixture.scratch.destroy()
+		}
+	})
+})
+
 // ── createForwarded ───────────────────────────────────────────────────────
 
 describe('createForwarded', () => {
 	it('proxies-count walk: trusts exactly N hops from the right', async () => {
-		const forwarded = createForwarded<ClientState & ConnectionState>({ proxies: 1 })
+		const forwarded = createForwarded<ClientState>({ proxies: 1 })
 		const request = buildTestRequest('/', {
 			headers: { 'x-forwarded-for': '203.0.113.7, 10.0.0.1' },
 		})
-		const state: ClientState & ConnectionState = {}
+		const state: ClientState = {}
 		const context = createTestContext(request, state)
 		await runChain([forwarded], createEchoTerminal(), request, context)
 		expect(state.client?.ip).toBe('203.0.113.7')
 	})
 
 	it('trusted-list walk: trusts consecutive hops matching the CIDR roster', async () => {
-		const forwarded = createForwarded<ClientState & ConnectionState>({ trusted: ['10.0.0.0/8'] })
+		const forwarded = createForwarded<ClientState>({ trusted: ['10.0.0.0/8'] })
 		const request = buildTestRequest('/', {
 			headers: { 'x-forwarded-for': '203.0.113.7, 10.0.0.1' },
 		})
-		const state: ClientState & ConnectionState = {}
+		const state: ClientState = {}
 		const context = createTestContext(request, state)
 		await runChain([forwarded], createEchoTerminal(), request, context)
 		expect(state.client?.ip).toBe('203.0.113.7')
@@ -2057,11 +2191,11 @@ describe('createForwarded', () => {
 	})
 
 	it('with proxies:1 and a spoofed extra hop, the attacker-injected leftmost value is never selected', async () => {
-		const forwarded = createForwarded<ClientState & ConnectionState>({ proxies: 1 })
+		const forwarded = createForwarded<ClientState>({ proxies: 1 })
 		const request = buildTestRequest('/', {
 			headers: { 'x-forwarded-for': 'attacker-injected-spoof, 203.0.113.7, 10.0.0.1' },
 		})
-		const state: ClientState & ConnectionState = {}
+		const state: ClientState = {}
 		const context = createTestContext(request, state)
 		await runChain([forwarded], createEchoTerminal(), request, context)
 		expect(state.client?.ip).toBe('203.0.113.7')
@@ -2069,14 +2203,14 @@ describe('createForwarded', () => {
 	})
 
 	it('with a trusted roster, an untrusted rightmost (immediate sender) hop makes the whole header untrustworthy and falls back to the socket peer, never a client-supplied hop', async () => {
-		const forwarded = createForwarded<ClientState & ConnectionState>({ trusted: ['10.0.0.0/8'] })
+		const forwarded = createForwarded<ClientState>({ trusted: ['10.0.0.0/8'] })
 		const request = buildTestRequest('/', {
 			headers: { 'x-forwarded-for': 'attacker-injected-spoof, 203.0.113.7, 198.51.100.9' },
 		})
-		const state: ClientState & ConnectionState = {
+		const state: ClientState = {}
+		const context = createTestContext(request, state, {
 			connection: { ip: '192.0.2.55', encrypted: false },
-		}
-		const context = createTestContext(request, state)
+		})
 		await runChain([forwarded], createEchoTerminal(), request, context)
 		expect(state.client?.ip).toBe('192.0.2.55')
 		expect(state.client?.ip).not.toBe('attacker-injected-spoof')
@@ -2084,21 +2218,21 @@ describe('createForwarded', () => {
 	})
 
 	it('a spoofed hop beyond the trusted count is ignored', async () => {
-		const forwarded = createForwarded<ClientState & ConnectionState>({ proxies: 1 })
+		const forwarded = createForwarded<ClientState>({ proxies: 1 })
 		const request = buildTestRequest('/', { headers: { 'x-forwarded-for': 'evil-spoofed-ip' } })
-		const state: ClientState & ConnectionState = {}
+		const state: ClientState = {}
 		const context = createTestContext(request, state)
 		await runChain([forwarded], createEchoTerminal(), request, context)
 		expect(state.client?.ip).toBeUndefined()
 	})
 
-	it('falls back to the connection-state ip when no forwarded hop qualifies', async () => {
-		const forwarded = createForwarded<ClientState & ConnectionState>({ proxies: 1 })
+	it('falls back to the connection ip when no forwarded hop qualifies', async () => {
+		const forwarded = createForwarded<ClientState>({ proxies: 1 })
 		const request = buildTestRequest('/')
-		const state: ClientState & ConnectionState = {
+		const state: ClientState = {}
+		const context = createTestContext(request, state, {
 			connection: { ip: '198.51.100.9', encrypted: false },
-		}
-		const context = createTestContext(request, state)
+		})
 		await runChain([forwarded], createEchoTerminal(), request, context)
 		expect(state.client?.ip).toBe('198.51.100.9')
 	})
@@ -2568,12 +2702,12 @@ describe('createBearer', () => {
 describe('createLimiter', () => {
 	it('admits exactly max requests then 429s with Retry-After >= 1', async () => {
 		const clock = createManualClock()
-		const limiter = createLimiter<BearerState & ClientState & ConnectionState>({
+		const limiter = createLimiter<BearerState & ClientState>({
 			max: 2,
 			window: 1_000,
 			clock: clock.clock,
 		})
-		const state: BearerState & ClientState & ConnectionState = { client: { ip: '203.0.113.1' } }
+		const state: BearerState & ClientState = { client: { ip: '203.0.113.1' } }
 		const context = createTestContext(buildTestRequest('/'), state)
 		const first = await runChain([limiter], createEchoTerminal(), buildTestRequest('/'), context)
 		const second = await runChain([limiter], createEchoTerminal(), buildTestRequest('/'), context)
@@ -2587,12 +2721,12 @@ describe('createLimiter', () => {
 
 	it('lazily rolls the window once the clock passes resetAt', async () => {
 		const clock = createManualClock()
-		const limiter = createLimiter<BearerState & ClientState & ConnectionState>({
+		const limiter = createLimiter<BearerState & ClientState>({
 			max: 1,
 			window: 1_000,
 			clock: clock.clock,
 		})
-		const state: BearerState & ClientState & ConnectionState = { client: { ip: '203.0.113.1' } }
+		const state: BearerState & ClientState = { client: { ip: '203.0.113.1' } }
 		const context = createTestContext(buildTestRequest('/'), state)
 		const first = await runChain([limiter], createEchoTerminal(), buildTestRequest('/'), context)
 		const blocked = await runChain([limiter], createEchoTerminal(), buildTestRequest('/'), context)
@@ -2610,13 +2744,13 @@ describe('createLimiter', () => {
 
 	it('isolates buckets per key, including the token: vs ip: idiom', async () => {
 		const clock = createManualClock()
-		const limiter = createLimiter<BearerState & ClientState & ConnectionState>({
+		const limiter = createLimiter<BearerState & ClientState>({
 			max: 1,
 			window: 1_000,
 			clock: clock.clock,
 		})
-		const tokenState: BearerState & ClientState & ConnectionState = { token: 'abc' }
-		const ipState: BearerState & ClientState & ConnectionState = { client: { ip: '203.0.113.1' } }
+		const tokenState: BearerState & ClientState = { token: 'abc' }
+		const ipState: BearerState & ClientState = { client: { ip: '203.0.113.1' } }
 		const tokenContext = createTestContext(buildTestRequest('/'), tokenState)
 		const ipContext = createTestContext(buildTestRequest('/'), ipState)
 		const tokenResponse1 = await runChain(
@@ -2637,15 +2771,15 @@ describe('createLimiter', () => {
 
 	it('collapses an IPv6 client address to its /64 network for the bucket key', async () => {
 		const clock = createManualClock()
-		const limiter = createLimiter<BearerState & ClientState & ConnectionState>({
+		const limiter = createLimiter<BearerState & ClientState>({
 			max: 1,
 			window: 1_000,
 			clock: clock.clock,
 		})
-		const stateA: BearerState & ClientState & ConnectionState = {
+		const stateA: BearerState & ClientState = {
 			client: { ip: '2001:db8:1:2:dead:beef:0:9' },
 		}
-		const stateB: BearerState & ClientState & ConnectionState = {
+		const stateB: BearerState & ClientState = {
 			client: { ip: '2001:db8:1:2:aaaa:bbbb:0:1' },
 		}
 		const first = await runChain(
@@ -2666,15 +2800,15 @@ describe('createLimiter', () => {
 
 	it('true LRU: eviction follows access recency, not insertion order', async () => {
 		const clock = createManualClock()
-		const limiter = createLimiter<BearerState & ClientState & ConnectionState>({
+		const limiter = createLimiter<BearerState & ClientState>({
 			max: 1,
 			window: 1_000,
 			capacity: 2,
 			clock: clock.clock,
 		})
-		const stateA: BearerState & ClientState & ConnectionState = { client: { ip: '203.0.113.1' } }
-		const stateB: BearerState & ClientState & ConnectionState = { client: { ip: '203.0.113.2' } }
-		const stateC: BearerState & ClientState & ConnectionState = { client: { ip: '203.0.113.3' } }
+		const stateA: BearerState & ClientState = { client: { ip: '203.0.113.1' } }
+		const stateB: BearerState & ClientState = { client: { ip: '203.0.113.2' } }
+		const stateC: BearerState & ClientState = { client: { ip: '203.0.113.3' } }
 		// Insert A then B (buckets: A, B — both exhausted at max:1).
 		await runChain(
 			[limiter],
@@ -2725,15 +2859,15 @@ describe('createLimiter', () => {
 	it('invokes evict with the evicted bucket key', async () => {
 		const clock = createManualClock()
 		const evicted: string[] = []
-		const limiter = createLimiter<BearerState & ClientState & ConnectionState>({
+		const limiter = createLimiter<BearerState & ClientState>({
 			max: 1,
 			window: 1_000,
 			capacity: 1,
 			clock: clock.clock,
 			evict: (key) => evicted.push(key),
 		})
-		const stateA: BearerState & ClientState & ConnectionState = { client: { ip: '203.0.113.1' } }
-		const stateB: BearerState & ClientState & ConnectionState = { client: { ip: '203.0.113.2' } }
+		const stateA: BearerState & ClientState = { client: { ip: '203.0.113.1' } }
+		const stateB: BearerState & ClientState = { client: { ip: '203.0.113.2' } }
 		await runChain(
 			[limiter],
 			createEchoTerminal(),
@@ -2751,14 +2885,14 @@ describe('createLimiter', () => {
 
 	it('honors a custom key function', async () => {
 		const clock = createManualClock()
-		const limiter = createLimiter<BearerState & ClientState & ConnectionState>({
+		const limiter = createLimiter<BearerState & ClientState>({
 			max: 1,
 			window: 1_000,
 			clock: clock.clock,
 			key: () => 'fixed-key',
 		})
-		const stateA: BearerState & ClientState & ConnectionState = { client: { ip: '203.0.113.1' } }
-		const stateB: BearerState & ClientState & ConnectionState = { client: { ip: '203.0.113.2' } }
+		const stateA: BearerState & ClientState = { client: { ip: '203.0.113.1' } }
+		const stateB: BearerState & ClientState = { client: { ip: '203.0.113.2' } }
 		const first = await runChain(
 			[limiter],
 			createEchoTerminal(),
@@ -2777,13 +2911,13 @@ describe('createLimiter', () => {
 
 	it('honors a custom message on the 429 body', async () => {
 		const clock = createManualClock()
-		const limiter = createLimiter<BearerState & ClientState & ConnectionState>({
+		const limiter = createLimiter<BearerState & ClientState>({
 			max: 1,
 			window: 1_000,
 			clock: clock.clock,
 			message: 'slow down',
 		})
-		const state: BearerState & ClientState & ConnectionState = { client: { ip: '203.0.113.1' } }
+		const state: BearerState & ClientState = { client: { ip: '203.0.113.1' } }
 		const context = createTestContext(buildTestRequest('/'), state)
 		await runChain([limiter], createEchoTerminal(), buildTestRequest('/'), context)
 		const second = await runChain([limiter], createEchoTerminal(), buildTestRequest('/'), context)
@@ -2801,13 +2935,13 @@ describe('createLimiter', () => {
 
 	it('emits the exact RateLimit/RateLimit-Policy wire shape when policy: true', async () => {
 		const clock = createManualClock()
-		const limiter = createLimiter<BearerState & ClientState & ConnectionState>({
+		const limiter = createLimiter<BearerState & ClientState>({
 			max: 3,
 			window: 60_000,
 			policy: true,
 			clock: clock.clock,
 		})
-		const state: BearerState & ClientState & ConnectionState = { client: { ip: '203.0.113.1' } }
+		const state: BearerState & ClientState = { client: { ip: '203.0.113.1' } }
 		const context = createTestContext(buildTestRequest('/'), state)
 		await runChain([limiter], createEchoTerminal(), buildTestRequest('/'), context)
 		await runChain([limiter], createEchoTerminal(), buildTestRequest('/'), context)
@@ -3134,29 +3268,23 @@ describe('createSession', () => {
 
 	it('auto-Secure: the cookie transport carries Secure when connection.encrypted is true, omits it when false/absent', async () => {
 		const transport = createCookieTransport({ secret: TEST_SECRET })
-		const session = createSession<SessionInterface, SessionState & ConnectionState>({ transport })
+		const session = createSession<SessionInterface, SessionState>({ transport })
 
-		const secureState: SessionState & ConnectionState = {
-			connection: { ip: '203.0.113.1', encrypted: true },
-		}
 		const secureRequest = buildTestRequest('/')
 		const secureResponse = await runChain(
 			[session],
 			createEchoTerminal(),
 			secureRequest,
-			createTestContext(secureRequest, secureState),
+			createTestContext(secureRequest, {}, { connection: { ip: '203.0.113.1', encrypted: true } }),
 		)
 		expect(secureResponse.headers.get('set-cookie')).toContain('Secure')
 
-		const plainState: SessionState & ConnectionState = {
-			connection: { ip: '203.0.113.1', encrypted: false },
-		}
 		const plainRequest = buildTestRequest('/')
 		const plainResponse = await runChain(
 			[session],
 			createEchoTerminal(),
 			plainRequest,
-			createTestContext(plainRequest, plainState),
+			createTestContext(plainRequest, {}, { connection: { ip: '203.0.113.1', encrypted: false } }),
 		)
 		expect(plainResponse.headers.get('set-cookie')).not.toContain('Secure')
 	})
@@ -3405,27 +3533,29 @@ describe('createCSRF', () => {
 	})
 
 	it('auto-Secure: the double-submit cookie carries Secure when connection.encrypted is true, omits it when false', async () => {
-		const csrf = createCSRF<CSRFState & SessionState & ConnectionState>({ secret: TEST_SECRET })
+		const csrf = createCSRF<CSRFState & SessionState>({ secret: TEST_SECRET })
 
-		const secureState: CSRFState & SessionState & ConnectionState = {
-			connection: { ip: '203.0.113.1', encrypted: true },
-		}
 		const secureResponse = await runChain(
 			[csrf],
 			createEchoTerminal(),
 			buildTestRequest('/'),
-			createTestContext(buildTestRequest('/'), secureState),
+			createTestContext(
+				buildTestRequest('/'),
+				{},
+				{ connection: { ip: '203.0.113.1', encrypted: true } },
+			),
 		)
 		expect(secureResponse.headers.get('set-cookie')).toContain('Secure')
 
-		const plainState: CSRFState & SessionState & ConnectionState = {
-			connection: { ip: '203.0.113.1', encrypted: false },
-		}
 		const plainResponse = await runChain(
 			[csrf],
 			createEchoTerminal(),
 			buildTestRequest('/'),
-			createTestContext(buildTestRequest('/'), plainState),
+			createTestContext(
+				buildTestRequest('/'),
+				{},
+				{ connection: { ip: '203.0.113.1', encrypted: false } },
+			),
 		)
 		expect(plainResponse.headers.get('set-cookie')).not.toContain('Secure')
 	})
@@ -3784,16 +3914,16 @@ describe('composition', () => {
 	it('bearer -> limiter token-key idiom: the limiter keys off the bearer-stashed token', async () => {
 		const clock = createManualClock()
 		const token = await signToken('user-1', { secret: TEST_SECRET })
-		const bearer = createBearer<BearerState & ClientState & ConnectionState>({
+		const bearer = createBearer<BearerState & ClientState>({
 			verify: (value) => verifyToken(value, TEST_SECRET),
 		})
-		const limiter = createLimiter<BearerState & ClientState & ConnectionState>({
+		const limiter = createLimiter<BearerState & ClientState>({
 			max: 1,
 			window: 1_000,
 			clock: clock.clock,
 		})
 		const request = buildTestRequest('/', { headers: { authorization: `Bearer ${token}` } })
-		const state: BearerState & ClientState & ConnectionState = {}
+		const state: BearerState & ClientState = {}
 		const context = createTestContext(request, state)
 		const first = await runChain([bearer, limiter], createEchoTerminal(), request, context)
 		const second = await runChain([bearer, limiter], createEchoTerminal(), request, context)

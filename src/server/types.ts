@@ -2,13 +2,7 @@ import type { Stats } from 'node:fs'
 import type { FileHandle } from 'node:fs/promises'
 import type { BudgetInterface } from '@orkestrel/budget'
 import type { Guard } from '@orkestrel/contract'
-import type {
-	Connection,
-	CookieOptions,
-	Encoding,
-	MiddlewareContext,
-	TokenSecret,
-} from '@orkestrel/server'
+import type { CookieOptions, Encoding, MiddlewareContext, TokenSecret } from '@orkestrel/server'
 
 /**
  * Configures `createBoundary` — the outermost error-rendering battery. The factory admits the bag whole, and a refusal is a `ContractError`. The bag must be a plain object; a class instance refuses.
@@ -167,8 +161,8 @@ export interface CorsOptions {
  *
  * @remarks
  * - `ms` — the deadline in milliseconds, an integer from 1 through 2147483647 (the range
- *   `@orkestrel/timeout` enforces), armed through `@orkestrel/timeout` and
- *   linked to the request's `signal` through `@orkestrel/abort`'s `linkSignal`.
+ *   `@orkestrel/timeout` enforces), armed through `@orkestrel/timeout`; on expiry the
+ *   battery calls `context.abort(reason)`.
  * - `status` — the response status returned when the deadline fires before
  *   the downstream chain settles; defaults to {@link DEFAULT_DEADLINE_STATUS}.
  */
@@ -323,16 +317,6 @@ export interface LimiterStoreInterface {
 export interface MemoryLimiterStoreOptions {
 	readonly capacity?: number
 	readonly evict?: (key: string) => void
-}
-
-/**
- * Describes the connection-facts state slice `createLimiter`'s default key derivation
- * falls back to when neither {@link BearerState} nor {@link ClientState} is
- * present — the raw socket peer surfaced on `context.state` by the server's
- * `state` option.
- */
-export interface ConnectionState {
-	readonly connection?: Connection
 }
 
 /**

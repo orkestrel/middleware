@@ -6,7 +6,6 @@ import type {
 	Client,
 	ClientState,
 	CompressResponseOptions,
-	ConnectionState,
 	ForeignContract,
 	ForwardedOptions,
 	MultipartBody,
@@ -25,7 +24,7 @@ import type {
 } from './types.js'
 import type { Stats } from 'node:fs'
 import type { FileHandle } from 'node:fs/promises'
-import type { Encoding, MiddlewareContext } from '@orkestrel/server'
+import type { Connection, Encoding, MiddlewareContext } from '@orkestrel/server'
 import { createReadStream } from 'node:fs'
 import {
 	computeBodyETag,
@@ -839,23 +838,27 @@ export function buildAssetResponse(
  * `token:<value>` only when it is a string, so an object credential falls
  * through; else a resolved client IP ({@link ClientState.client.ip},
  * set when `createForwarded` is mounted) or the raw socket peer
- * ({@link ConnectionState.connection.ip}) collapsed through `computeClientKey`
+ * (`connection.ip`) collapsed through `computeClientKey`
  * (IPv6 to its `/64` network) as `ip:<key>`; else the literal `ip:unknown`.
  * Never reads `X-Forwarded-For` itself — that trust decision belongs solely
  * to `createForwarded`.
  *
  * @param state - The slices `createLimiter`'s default key may read
+ * @param connection - The exchange's connection facts, `context.connection`
  * @returns The bucket key for the request
  *
  * @example
  * ```ts
- * resolveKey({ token: 'abc' }) // 'token:abc'
- * resolveKey({ client: { ip: '2001:db8::1' } }) // 'ip:2001:db8:0:0::/64'
+ * resolveKey({ token: 'abc' }, { encrypted: false }) // 'token:abc'
+ * resolveKey({ client: { ip: '2001:db8::1' } }, { encrypted: false }) // 'ip:2001:db8:0:0::/64'
  * ```
  */
-export function resolveKey(state: BearerState<unknown> & ClientState & ConnectionState): string {
+export function resolveKey(
+	state: BearerState<unknown> & ClientState,
+	connection: Connection,
+): string {
 	if (isString(state.token)) return `token:${state.token}`
-	const ip = state.client?.ip ?? state.connection?.ip
+	const ip = state.client?.ip ?? connection.ip
 	if (ip !== undefined) return `ip:${computeClientKey(ip)}`
 	return 'ip:unknown'
 }
