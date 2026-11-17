@@ -653,7 +653,9 @@ export function createRecordingSigner(signer: SignerInterface): RecordingSignerI
  * store that scans every entry at capacity (`c00f055`, load average 1.6 to 2.4) read 3.52 to
  * 4.16 beside identical sides (n against n) at 0.95 to 1.09; the store that evicts through one
  * long-lived iterator (load average near 4) read 1.08 to 1.36 beside identical sides at 0.88 to
- * 1.25. 2 sits above the constant arm's maximum and below the scanning arm's minimum.
+ * 1.25. With one live read of a held id before each insert (12 solo readings, load average 1.1
+ * to 2.2), `132ae21` read 2.50 to 3.54 and the tick ledger read 1.14 to 1.91. 2 sits above the
+ * constant arms' maximum and below the scanning and iterator arms' minimum.
  */
 export const SESSION_GROWTH_BOUND = 2
 
