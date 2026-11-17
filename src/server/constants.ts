@@ -84,6 +84,17 @@ export const CHALLENGE_TOKEN = Object.freeze(/^[!#$%&'*+\-.^_`|~0-9A-Za-z]+$/u)
 /** Matches the characters RFC 6750 § 3 admits in a quoted auth-param value: `%x20-21 / %x23-5B / %x5D-7E`. */
 export const CHALLENGE_VALUE = Object.freeze(/^[\x20\x21\x23-\x5B\x5D-\x7E]*$/u)
 
+/** Matches a dotted-decimal IPv4 address: four decimal octets from 0 to 255, with no sign, hex digit, leading zero, or empty octet. */
+export const IPV4_ADDRESS = Object.freeze(
+	/^(?:(?:25[0-5]|2[0-4]\d|1\d\d|[1-9]?\d)\.){3}(?:25[0-5]|2[0-4]\d|1\d\d|[1-9]?\d)$/u,
+)
+
+/** Matches the `::ffff:` prefix, in either case, of an IPv4-mapped IPv6 address written with its embedded dotted IPv4. */
+export const IPV4_MAPPED_PREFIX = Object.freeze(/^::ffff:(?=[\d.]+$)/iu)
+
+/** Matches an IPv4 CIDR prefix length `createForwarded`'s roster admits: a decimal from 8 to 32, with no sign or leading zero. */
+export const CIDR_LENGTH = Object.freeze(/^(?:[89]|[12]\d|3[0-2])$/u)
+
 /** Holds `10_000`, the default maximum number of distinct rate-limit keys `createLimiter` tracks before LRU eviction. */
 export const DEFAULT_LIMITER_CAPACITY = 10_000
 

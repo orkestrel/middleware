@@ -1280,6 +1280,36 @@ describe('matchesTrustedEntry', () => {
 
 	it('doc-pin: an IPv6 CIDR-shaped entry is never expanded — no IPv6 CIDR support', () => {
 		expect(matchesTrustedEntry('2001:db8::1', '2001:db8::/32')).toBe(false)
+		expect(matchesTrustedEntry('::ffff:10.1.2.3', '::ffff:10.0.0.0/104')).toBe(false)
+	})
+
+	it('compares an IPv4-mapped address, in either case, by its embedded IPv4', () => {
+		expect(matchesTrustedEntry('::ffff:10.1.2.3', '10.0.0.0/8')).toBe(true)
+		expect(matchesTrustedEntry('::FFFF:10.1.2.3', '10.0.0.0/8')).toBe(true)
+		expect(matchesTrustedEntry('::ffff:10.0.0.6', '10.0.0.6')).toBe(true)
+		expect(matchesTrustedEntry('10.0.0.6', '::ffff:10.0.0.6')).toBe(true)
+		expect(matchesTrustedEntry('::ffff:192.168.1.1', '10.0.0.0/8')).toBe(false)
+		expect(matchesTrustedEntry('::ffff:10.0.0.7', '10.0.0.6')).toBe(false)
+	})
+
+	it('reads an IPv4 address only as four decimal octets from 0 to 255', () => {
+		expect(matchesTrustedEntry('0x0a.0.0.1', '10.0.0.0/8')).toBe(false)
+		expect(matchesTrustedEntry('+10.0.0.1', '10.0.0.0/8')).toBe(false)
+		expect(matchesTrustedEntry('10..0.1', '10.0.0.0/8')).toBe(false)
+		expect(matchesTrustedEntry('10.0.0.', '10.0.0.0/8')).toBe(false)
+		expect(matchesTrustedEntry('010.0.0.1', '10.0.0.0/8')).toBe(false)
+		expect(matchesTrustedEntry('10.0.0.256', '10.0.0.0/8')).toBe(false)
+		expect(matchesTrustedEntry('10.0.0.1e0', '10.0.0.0/8')).toBe(false)
+		expect(matchesTrustedEntry('10.0.0.1', '0x0a.0.0.0/8')).toBe(false)
+		expect(matchesTrustedEntry('10.255.255.255', '10.0.0.0/8')).toBe(true)
+	})
+
+	it('reads a CIDR prefix length only as a decimal from 8 to 32', () => {
+		expect(matchesTrustedEntry('10.1.2.3', '10.0.0.0/+8')).toBe(false)
+		expect(matchesTrustedEntry('10.1.2.3', '10.0.0.0/0x8')).toBe(false)
+		expect(matchesTrustedEntry('10.1.2.3', '10.0.0.0/08')).toBe(false)
+		expect(matchesTrustedEntry('10.1.2.3', '10.0.0.0/')).toBe(false)
+		expect(matchesTrustedEntry('10.1.2.3', '10.0.0.0/7')).toBe(false)
 	})
 })
 
@@ -1357,6 +1387,47 @@ describe('resolveForwardedFor', () => {
 		expect(
 			resolveForwardedFor('198.51.100.66, 10.0.0.1', { trusted: ['10.0.0.0/8'] }, undefined),
 		).toBeUndefined()
+	})
+
+	it('with an IPv4 roster, walks past a socket peer that arrives IPv4-mapped', () => {
+		const header = '198.51.100.66, 203.0.113.9, 10.0.0.5'
+		expect(resolveForwardedFor(header, { trusted: ['10.0.0.0/8'] }, '::ffff:10.0.0.6')).toBe(
+			'203.0.113.9',
+		)
+		expect(
+			resolveForwardedFor(header, { trusted: ['10.0.0.5', '10.0.0.6'] }, '::ffff:10.0.0.6'),
+		).toBe('203.0.113.9')
+		expect(resolveForwardedFor(header, { trusted: ['10.0.0.0/8'] }, '::FFFF:10.0.0.6')).toBe(
+			'203.0.113.9',
+		)
+	})
+
+	it('with an IPv4 roster, walks past an IPv4-mapped hop and returns the client as written', () => {
+		expect(
+			resolveForwardedFor(
+				'198.51.100.66, ::ffff:10.0.0.5',
+				{ trusted: ['10.0.0.0/8'] },
+				'10.0.0.6',
+			),
+		).toBe('198.51.100.66')
+		expect(
+			resolveForwardedFor('::ffff:203.0.113.9', { trusted: ['10.0.0.0/8'] }, '::ffff:10.0.0.6'),
+		).toBe('::ffff:203.0.113.9')
+	})
+
+	it('with a trusted roster, stops at a hex-written hop and returns it as written', () => {
+		expect(
+			resolveForwardedFor('198.51.100.66, 0x0a.0.0.1', { trusted: ['10.0.0.0/8'] }, '10.0.0.6'),
+		).toBe('0x0a.0.0.1')
+	})
+
+	it('resolves a hop with a port as written: the resolved address is not validated', () => {
+		expect(resolveForwardedFor('198.51.100.66:4711', { proxies: 1 }, '10.0.0.6')).toBe(
+			'198.51.100.66:4711',
+		)
+		expect(
+			resolveForwardedFor('198.51.100.66, 10.0.0.5:8080', { trusted: ['10.0.0.0/8'] }, '10.0.0.6'),
+		).toBe('10.0.0.5:8080')
 	})
 
 	it('with a trusted roster, resolves a malformed hop the trusted peer appended as written', () => {

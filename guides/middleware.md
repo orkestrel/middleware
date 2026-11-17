@@ -185,6 +185,9 @@ const handle = compose<State>([boundary, security], async (_request, context) =>
 | `DEFAULT_BEARER_SCHEME`           | const | `"Bearer"`                                                                                             | Names `'Bearer'`, the default scheme prefix `createBearer` strips before verification.                                                                                                                                                             |
 | `CHALLENGE_TOKEN`                 | const | `Readonly<RegExp>`                                                                                     | Matches an RFC 9110 `token`, the form a challenge scheme and an auth-param name take.                                                                                                                                                              |
 | `CHALLENGE_VALUE`                 | const | `Readonly<RegExp>`                                                                                     | Matches the characters RFC 6750 § 3 admits in a quoted auth-param value: `%x20-21 / %x23-5B / %x5D-7E`.                                                                                                                                            |
+| `IPV4_ADDRESS`                    | const | `Readonly<RegExp>`                                                                                     | Matches a dotted-decimal IPv4 address: four decimal octets from 0 to 255, with no sign, hex digit, leading zero, or empty octet.                                                                                                                   |
+| `IPV4_MAPPED_PREFIX`              | const | `Readonly<RegExp>`                                                                                     | Matches the `::ffff:` prefix, in either case, of an IPv4-mapped IPv6 address written with its embedded dotted IPv4.                                                                                                                                |
+| `CIDR_LENGTH`                     | const | `Readonly<RegExp>`                                                                                     | Matches an IPv4 CIDR prefix length `createForwarded`'s roster admits: a decimal from 8 to 32, with no sign or leading zero.                                                                                                                        |
 | `DEFAULT_LIMITER_CAPACITY`        | const | `10000`                                                                                                | Holds `10_000`, the default maximum number of distinct rate-limit keys `createLimiter` tracks before LRU eviction.                                                                                                                                 |
 | `DEFAULT_LIMITER_MESSAGE`         | const | `"rate limit exceeded"`                                                                                | Holds `'rate limit exceeded'`, the default 429 body message `createLimiter` sends when a key is over budget.                                                                                                                                       |
 | `DEFAULT_SESSION_CAPACITY`        | const | `10000`                                                                                                | Holds `10_000`, the default maximum number of distinct session ids `createMemorySessionStore` tracks before LRU (by last write) eviction.                                                                                                          |
@@ -266,7 +269,7 @@ const handle = compose<State>([boundary, security], async (_request, context) =>
 | `buildRetryAfter`             | function | `(expiry: number, now: number) => string`                                                                                               | Builds the `Retry-After` header value — whole seconds until a window reset, floored at a minimum of `1`.                                                                                                                                                                                                                                                          |
 | `buildRateLimitField`         | function | `(remaining: number, expiry: number, now: number) => string`                                                                            | Builds the draft `RateLimit` structured header field — emitted only when `createLimiter`'s `policy` option is `true`.                                                                                                                                                                                                                                             |
 | `buildRateLimitPolicyField`   | function | `(max: number, window: number) => string`                                                                                               | Builds the draft `RateLimit-Policy` structured header field — emitted only when `createLimiter`'s `policy` option is `true`.                                                                                                                                                                                                                                      |
-| `matchesTrustedEntry`         | function | `(address: string, entry: string) => boolean`                                                                                           | Checks whether a candidate address is a bare (non-CIDR) trusted-hop match — an exact string match, or a simple prefix-CIDR match for IPv4 (`/8`–`/32`). An IPv6 entry matches by exact string only — there is no IPv6 CIDR support.                                                                                                                               |
+| `matchesTrustedEntry`         | function | `(address: string, entry: string) => boolean`                                                                                           | Checks whether a candidate address is a trusted-hop match — an exact match, or a prefix-CIDR match for IPv4 (`/8`–`/32`), with an IPv4-mapped address compared by its embedded IPv4. An IPv6 entry matches by exact string only — there is no IPv6 CIDR support.                                                                                                  |
 | `resolveForwardedFor`         | function | `(header: string \| undefined, trust: ForwardedOptions, peer: string \| undefined) => string \| undefined`                              | Resolves the client address from `X-Forwarded-For` and the socket peer — `createForwarded`'s core algorithm.                                                                                                                                                                                                                                                      |
 | `matchesScope`                | function | `(patterns: readonly CompiledPath[], pathname: string) => boolean`                                                                      | Checks whether a request pathname matches any compiled scope pattern — the test `only` and `except` apply, through the router's own `matchPath`.                                                                                                                                                                                                                  |
 | `detectEncodings`             | function | `(candidates: readonly Encoding[]) => readonly Encoding[]`                                                                              | Feature-detects which of `candidates` the runtime's `CompressionStream` actually supports — `createCompression`'s construction-time intersection.                                                                                                                                                                                                                 |
@@ -505,8 +508,15 @@ prevents:
    address the roster matches; the first address outside the roster is the
    client. An untrusted socket peer is the client, whatever its header says,
    and when the peer and every hop match, the leftmost hop is the client.
-   Before 0.0.35, `proxies: 1` resolved the hop left of the rightmost one, and
-   `trusted` began its walk at the rightmost hop instead of the socket peer.
+   The roster compares an IPv4-mapped address (`::ffff:10.0.0.6`, which Node
+   reports for an IPv4 client on a dual-stack listener) by its embedded IPv4,
+   and reads an IPv4 address only as four decimal octets from 0 to 255, so a
+   hop such as `0x0a.0.0.1` matches no IPv4 entry. The resolved address is not
+   validated: it is the peer or the hop as written, so a malformed hop, a hop
+   with a port (`198.51.100.66:4711`), or an IPv4-mapped hop resolves
+   unchanged. Before 0.0.35, `proxies: 1` resolved the hop left of the
+   rightmost one, and `trusted` began its walk at the rightmost hop instead of
+   the socket peer.
 10. **`createETag` sits inside `createCompression`.** The hash is computed
     over the uncompressed representation — hashing the compressed bytes
     would break revalidation the instant the negotiated coding changes.
@@ -622,11 +632,15 @@ prevents:
     message never reaches the body); an `HTTPError`'s own `message` always
     surfaces (it is the handler's deliberate signal); a `report` sink's own
     throw is swallowed and can never alter the response.
-25. **`only`/`except` match as the router does.** Each path is a route
-    pattern compiled by `@orkestrel/router`'s `compilePath` and matched
-    against `context.url.pathname` by its `matchPath`, the matcher the
-    dispatcher routes with. A pattern matches case-sensitively, with one
-    trailing slash optional, so `/admin` covers `/admin` and `/admin/`. A
+25. **`only`/`except` match through the router's path grammar.** Each path
+    is a route pattern compiled by `@orkestrel/router`'s `compilePath` and
+    matched against `context.url.pathname` by its `matchPath`. A pattern
+    matches case-sensitively whatever the dispatcher's `sensitive` option, with
+    one trailing slash optional, so `/admin` covers `/admin` and `/admin/`.
+    Under `createDispatcher({ sensitive: false })`, a case variant such as
+    `/ADMIN` dispatches to the `/admin` route, but it falls outside
+    `only('/admin', …)`, which skips its battery, and inside
+    `except('/admin', …)`, which runs it. A
     pattern covers no path beneath it: `/admin` does not cover `/admin/users`.
     To scope a subtree, list `/admin` and `/admin/*rest`; a `*name` wildcard
     matches one or more characters across segments and must be the final

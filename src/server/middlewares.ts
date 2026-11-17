@@ -786,10 +786,13 @@ export function createCSRF<TState extends CSRFState & SessionState>(
  *
  * @remarks
  * Each pattern compiles through the router's `compilePath` and matches
- * `context.url.pathname` through its `matchPath`, as the dispatcher matches a route:
- * case-sensitive, with one trailing slash optional, so `/admin` covers `/admin` and
- * `/admin/`. A pattern covers no path beneath it: `/admin` skips `/admin/users`. Add
- * `/admin/*rest` to cover the paths beneath, and `:name` matches one segment.
+ * `context.url.pathname` through its `matchPath`: case-sensitive whatever the
+ * dispatcher's `sensitive` option, with one trailing slash optional, so `/admin`
+ * covers `/admin` and `/admin/`. Under a dispatcher created with `sensitive: false`,
+ * a case variant such as `/ADMIN` reaches the `/admin` route but falls outside the
+ * pattern, so the battery does not run. A pattern covers no path beneath it: `/admin`
+ * skips `/admin/users`. Add `/admin/*rest` to cover the paths beneath, and `:name`
+ * matches one segment.
  *
  * @typeParam TState - The consumer's opaque per-request state type
  * @param paths - One route pattern, or a set of route patterns
@@ -823,8 +826,10 @@ export function only<TState>(
  *
  * @remarks
  * A pattern matches as `only` documents: through the router's `compilePath` and
- * `matchPath`, case-sensitive, with one trailing slash optional, and covering no path
- * beneath it unless it ends in a `*name` wildcard.
+ * `matchPath`, case-sensitive whatever the dispatcher's `sensitive` option, with one
+ * trailing slash optional, and covering no path beneath it unless it ends in a `*name`
+ * wildcard. Under a dispatcher created with `sensitive: false`, a case variant such as
+ * `/ADMIN` reaches the `/admin` route but falls outside the pattern, so the battery runs.
  *
  * @typeParam TState - The consumer's opaque per-request state type
  * @param paths - One route pattern, or a set of route patterns

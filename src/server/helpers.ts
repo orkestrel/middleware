@@ -51,7 +51,6 @@ import {
 	isArrayBuffer,
 	isError,
 	isFiniteNumber,
-	isInteger,
 	isObject,
 	isRecord,
 	isString,
@@ -61,6 +60,7 @@ import {
 import {
 	CHALLENGE_TOKEN,
 	CHALLENGE_VALUE,
+	CIDR_LENGTH,
 	DEFAULT_CONTENT_TYPE,
 	DEFAULT_STATIC_INDEX,
 	DEFAULT_MULTIPART_FIELD_SIZE,
@@ -69,6 +69,8 @@ import {
 	DEFAULT_MULTIPART_FILE_COUNT,
 	DEFAULT_MULTIPART_TOTAL,
 	EXTENSION_TYPES,
+	IPV4_ADDRESS,
+	IPV4_MAPPED_PREFIX,
 	RESERVED_DEVICE_NAMES,
 } from './constants.js'
 
@@ -1022,22 +1024,19 @@ export function buildRateLimitPolicyField(max: number, window: number): string {
 }
 
 /**
- * Checks whether a candidate address is a bare (non-CIDR) trusted-hop match — an
- * exact string match, or a simple prefix-CIDR match for IPv4 (`/8`–`/32`).
- * An IPv6 entry matches by exact string only — there is no IPv6 CIDR
- * support.
+ * Checks whether a candidate address is a trusted-hop match — an exact match, or a
+ * prefix-CIDR match for IPv4 (`/8`–`/32`), with an IPv4-mapped address compared by
+ * its embedded IPv4. An IPv6 entry matches by exact string only — there is no IPv6
+ * CIDR support.
  *
  * @remarks
- * Supports exact addresses and dotted-decimal IPv4 CIDR (`10.0.0.0/8`
- * through `/32`) verbatim. An IPv6 entry is matched by exact string only
- * (no CIDR expansion) — documented as the supported subset; `createForwarded`
- * never claims full CIDR generality beyond IPv4.
- *
- * @remarks
- * An IPv6 `trusted` roster entry is compared as an exact string — it must be
- * supplied in canonical form (no zero-compression normalization, no case
- * folding) by the caller; this function performs no IPv6 normalization of
- * its own.
+ * An IPv4-mapped address (`::ffff:a.b.c.d`, in either case), on either side,
+ * compares as its embedded IPv4, so `::ffff:10.0.0.6` matches `10.0.0.6` and
+ * `10.0.0.0/8`. A CIDR entry reads its network and the candidate only as four
+ * decimal octets from 0 to 255, with no sign, hex digit, leading zero, or empty
+ * octet, and its prefix length only as a decimal from 8 to 32; anything else is
+ * no match. Any other address or entry, IPv6 included, compares as an exact
+ * string, with no zero-compression normalization and no case folding.
  *
  * @param address - The candidate hop address
  * @param entry - One `trusted` roster entry — an exact address or an IPv4 CIDR
@@ -1046,22 +1045,22 @@ export function buildRateLimitPolicyField(max: number, window: number): string {
  * @example
  * ```ts
  * matchesTrustedEntry('10.1.2.3', '10.0.0.0/8') // true
+ * matchesTrustedEntry('::ffff:10.1.2.3', '10.0.0.0/8') // true
+ * matchesTrustedEntry('0x0a.1.2.3', '10.0.0.0/8') // false
  * matchesTrustedEntry('192.168.1.1', '10.0.0.0/8') // false
  * ```
  */
 export function matchesTrustedEntry(address: string, entry: string): boolean {
+	const candidate = address.replace(IPV4_MAPPED_PREFIX, '')
 	const slash = entry.indexOf('/')
-	if (slash === -1) return address === entry
+	if (slash === -1) return candidate === entry.replace(IPV4_MAPPED_PREFIX, '')
 	const network = entry.slice(0, slash)
-	const bits = Number(entry.slice(slash + 1))
-	const networkParts = network.split('.')
-	const addressParts = address.split('.')
-	if (networkParts.length !== 4 || addressParts.length !== 4) return false
-	if (!isInteger(bits) || bits < 8 || bits > 32) return false
-	const networkOctets = networkParts.map(Number)
-	const addressOctets = addressParts.map(Number)
-	if (networkOctets.some((value) => !isInteger(value) || value < 0 || value > 255)) return false
-	if (addressOctets.some((value) => !isInteger(value) || value < 0 || value > 255)) return false
+	const length = entry.slice(slash + 1)
+	if (!CIDR_LENGTH.test(length)) return false
+	if (!IPV4_ADDRESS.test(network) || !IPV4_ADDRESS.test(candidate)) return false
+	const bits = Number(length)
+	const networkOctets = network.split('.').map(Number)
+	const addressOctets = candidate.split('.').map(Number)
 	const networkInt =
 		((networkOctets[0] ?? 0) << 24) |
 		((networkOctets[1] ?? 0) << 16) |

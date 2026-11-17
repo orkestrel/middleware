@@ -184,7 +184,11 @@ export interface DeadlineOptions {
  *   through exactly that many proxies.
  * - `trusted` — the exact addresses and IPv4 CIDR entries of the trusted
  *   proxies; the walk starts at the socket peer and the first address outside
- *   the roster is the client.
+ *   the roster is the client. An IPv4-mapped address (`::ffff:10.0.0.6`)
+ *   compares by its embedded IPv4.
+ *
+ * The resolved address is not validated: it is the socket peer or a hop as
+ * written, so a malformed hop or a hop with a port resolves unchanged.
  */
 export type ForwardedOptions =
 	| { readonly proxies: number }

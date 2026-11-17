@@ -2195,6 +2195,19 @@ describe('createForwarded', () => {
 		expect(state.client?.ip).toBe('192.0.2.55')
 	})
 
+	it('with an IPv4 roster, walks past a socket peer a dual-stack listener reports IPv4-mapped', async () => {
+		const forwarded = createForwarded<ClientState>({ trusted: ['10.0.0.0/8'] })
+		const request = buildTestRequest('/', {
+			headers: { 'x-forwarded-for': '198.51.100.66, 203.0.113.9, 10.0.0.5' },
+		})
+		const state: ClientState = {}
+		const context = createTestContext(request, state, {
+			connection: { ip: '::ffff:10.0.0.6', encrypted: false },
+		})
+		await runChain([forwarded], createEchoTerminal(), request, context)
+		expect(state.client?.ip).toBe('203.0.113.9')
+	})
+
 	it('reads no Forwarded header: a Forwarded hop alone resolves the socket peer', async () => {
 		const forwarded = createForwarded<ClientState>({ proxies: 1 })
 		const request = buildTestRequest('/', { headers: { forwarded: 'for=198.51.100.66' } })
@@ -4155,6 +4168,20 @@ describe('only', () => {
 		expect(texts).toEqual(['reached', 'reached', 'reached', 'reached'])
 	})
 
+	it('matches case-sensitively when the dispatcher folds case, so a routed case variant falls outside', async () => {
+		const dispatcher = createDispatcher<object>({ sensitive: false })
+		dispatcher.add({ method: 'GET', path: '/admin', handler: async () => new Response('routed') })
+		const scoped = only<object>('/admin', createEchoTerminal())
+		const request = buildTestRequest('/ADMIN')
+		const response = await runChain(
+			[scoped],
+			async (arrived) => dispatcher.handle(arrived, {}),
+			request,
+			createTestContext<object>(request, {}),
+		)
+		expect(await response.text()).toBe('routed')
+	})
+
 	it('refuses a wildcard segment that is not the final segment at construction', () => {
 		expect(() => only('/files/*rest/edit', createEchoTerminal())).toThrow(ContractError)
 		expect(() => only(['/a', '/files/*rest/edit'], createEchoTerminal())).toThrow(ContractError)
@@ -4237,6 +4264,20 @@ describe('except', () => {
 			createTestContext(buildTestRequest('/files/report.txt'), {}),
 		)
 		expect(await response.text()).toBe('reached')
+	})
+
+	it('matches case-sensitively when the dispatcher folds case, so a routed case variant falls inside', async () => {
+		const dispatcher = createDispatcher<object>({ sensitive: false })
+		dispatcher.add({ method: 'GET', path: '/admin', handler: async () => new Response('routed') })
+		const scoped = except<object>('/admin', createEchoTerminal())
+		const request = buildTestRequest('/ADMIN')
+		const response = await runChain(
+			[scoped],
+			async (arrived) => dispatcher.handle(arrived, {}),
+			request,
+			createTestContext<object>(request, {}),
+		)
+		expect(await response.text()).toBe(ECHO_MARKER)
 	})
 
 	it('refuses a wildcard segment that is not the final segment at construction', () => {
