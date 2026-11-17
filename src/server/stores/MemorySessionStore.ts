@@ -24,11 +24,11 @@ import { admitOptions, sessionExpired } from '../helpers.js'
  * an absent id is a no-op.
  *
  * Capacity is enforced as least-recently-used: a `set` and a live `get` each
- * refresh an id's recency (deleting then re-inserting so the Map's iteration
- * tail is the most recently used id). Inserting a brand-new id once the store
- * is at `capacity` evicts the least recently used id (the Map's head), in time
- * that does not grow with the store's size; an expired entry leaves at its own
- * `get` or when it reaches the head. `options.evict` — when provided — is
+ * refresh an id's recency (each write takes the next number from a counter, and the
+ * lowest number held is the least recently used id). Inserting a brand-new id once the store
+ * is at `capacity` evicts the least recently used id, in time that does not grow with
+ * the store's size and without retaining heap per read; an expired entry leaves at its own
+ * `get` or when it is the least recently used. `options.evict` — when provided — is
  * invoked (throw-isolated) with the id on every eviction the store's own
  * policy performs (a capacity eviction or an expired read), but never for an
  * explicit `delete`.
@@ -42,17 +42,17 @@ import { admitOptions, sessionExpired } from '../helpers.js'
  * ```
  */
 export class MemorySessionStore<S extends SessionInterface> implements SessionStoreInterface<S> {
-	readonly #entries: Map<string, SessionEntry<S>>
+	readonly #entries = new Map<string, SessionEntry<S> & { readonly tick: number }>()
+	readonly #order = new Map<number, string>()
 	readonly #ttl: number | undefined
 	readonly #lifetime: number | undefined
 	readonly #capacity: number
 	readonly #evict: ((id: string) => void) | undefined
-	#order: Iterator<string>
+	#tick = 0
+	#floor = 0
 
 	constructor(options?: MemorySessionStoreOptions) {
 		admitOptions('MemorySessionStore', MEMORY_SESSION_STORE_CONTRACT, options)
-		this.#entries = new Map()
-		this.#order = this.#entries.keys()
 		this.#ttl = options?.ttl
 		this.#lifetime = options?.lifetime
 		this.#capacity = options?.capacity ?? DEFAULT_SESSION_CAPACITY
@@ -63,26 +63,25 @@ export class MemorySessionStore<S extends SessionInterface> implements SessionSt
 		const entry = this.#entries.get(id)
 		if (entry === undefined) return undefined
 		if (this.#expired(entry, now)) {
-			this.#entries.delete(id)
+			this.#remove(id, entry.tick)
 			this.#notify(id)
 			return undefined
 		}
-		this.#entries.delete(id)
-		this.#entries.set(id, { session: entry.session, seen: now, created: entry.created })
+		this.#place(id, entry.session, now, entry.created, entry.tick)
 		return entry.session
 	}
 
 	async set(session: S, now: number): Promise<void> {
 		const id = session.id
+		if (!this.#entries.has(id)) this.#reserve()
+		// An evict callback can write this id during `#reserve`, so read the entry after it.
 		const existing = this.#entries.get(id)
-		if (existing === undefined) this.#reserve()
-		const created = existing?.created ?? now
-		this.#entries.delete(id)
-		this.#entries.set(id, { session, seen: now, created })
+		this.#place(id, session, now, existing?.created ?? now, existing?.tick)
 	}
 
 	async delete(id: string): Promise<void> {
-		this.#entries.delete(id)
+		const entry = this.#entries.get(id)
+		if (entry !== undefined) this.#remove(id, entry.tick)
 	}
 
 	// Whether `entry` has aged past its idle timeout or absolute lifetime as of `now`.
@@ -93,25 +92,36 @@ export class MemorySessionStore<S extends SessionInterface> implements SessionSt
 		})
 	}
 
-	// Makes room for a brand-new id at capacity by evicting the least recently used id, the
-	// Map's head, without visiting any other entry.
-	#reserve(): void {
-		if (this.#entries.size < this.#capacity) return
-		const oldest = this.#readOldest()
-		if (oldest === undefined) return
-		this.#entries.delete(oldest)
-		this.#notify(oldest)
+	// Stores `id` under the next tick, the most recent, and drops the tick it held before.
+	#place(
+		id: string,
+		session: S,
+		seen: number,
+		created: number,
+		previous: number | undefined,
+	): void {
+		if (previous !== undefined) this.#order.delete(previous)
+		const tick = this.#tick
+		this.#tick = tick + 1
+		this.#order.set(tick, id)
+		this.#entries.set(id, { session, seen, created, tick })
 	}
 
-	// Reads the least recently used id through one long-lived iterator. Every key it has passed
-	// was evicted or moved to the tail, so its next key is the Map's oldest live one; a fresh
-	// `keys()` would walk the deleted slots at the head again on every eviction.
-	#readOldest(): string | undefined {
-		const next = this.#order.next()
-		if (next.done !== true) return next.value
-		this.#order = this.#entries.keys()
-		const first = this.#order.next()
-		return first.done === true ? undefined : first.value
+	// Drops `id` and its tick together, so the two maps never disagree.
+	#remove(id: string, tick: number): void {
+		this.#entries.delete(id)
+		this.#order.delete(tick)
+	}
+
+	// Makes room for a brand-new id at capacity by evicting the least recently used id, the
+	// lowest live tick. The cursor crosses each tick once, so no eviction revisits an earlier one.
+	#reserve(): void {
+		if (this.#entries.size < this.#capacity) return
+		while (!this.#order.has(this.#floor)) this.#floor += 1
+		const oldest = this.#order.get(this.#floor)
+		if (oldest === undefined) return
+		this.#remove(oldest, this.#floor)
+		this.#notify(oldest)
 	}
 
 	// Invokes the configured evict callback, throw-isolated.
