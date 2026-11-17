@@ -25,7 +25,7 @@ seam.
 
 ### Mount a battery
 
-The fence composes an error boundary and the security battery over `compose`, then answers with the request identifier `createSecurity` stashed on `context.state`.
+The fence composes the security battery outside an error boundary over `compose`, then answers with the request identifier `createSecurity` stashed on `context.state`.
 
 ```ts
 import { createBoundary, createSecurity } from '@orkestrel/middleware'
@@ -37,7 +37,7 @@ interface State extends IdentifierState {}
 const boundary = createBoundary({ expose: false })
 const security = createSecurity({ hsts: true })
 
-const handle = compose<State>([boundary, security], async (_request, context) => {
+const handle = compose<State>([security, boundary], async (_request, context) => {
 	return Response.json({ identifier: context.state.identifier })
 })
 ```
@@ -46,7 +46,7 @@ const handle = compose<State>([boundary, security], async (_request, context) =>
 
 | Name                | Kind     | Signature                                                                                                                                                      | Summary                                                                                                                                                                                                              |
 | ------------------- | -------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `createBoundary`    | function | `<TState>(options?: BoundaryOptions) => MiddlewareHandler<TState>`                                                                                             | Creates the outermost error-rendering battery — catches a downstream throw and renders it as a `Response`.                                                                                                           |
+| `createBoundary`    | function | `<TState>(options?: BoundaryOptions) => MiddlewareHandler<TState>`                                                                                             | Creates the error-rendering battery — catches a downstream throw and renders it as a `Response`.                                                                                                                     |
 | `createTelemetry`   | function | `<TState>(options: TelemetryOptions) => MiddlewareHandler<TState>`                                                                                             | Creates the access-log/timing seam — records one `TelemetryEntry` per request after the response settles.                                                                                                            |
 | `createCompression` | function | `<TState>(options?: CompressionOptions) => MiddlewareHandler<TState>`                                                                                          | Creates the response-body compression battery — negotiates and compresses a buffered response body over the runtime's feature-detected `CompressionStream` codings.                                                  |
 | `createSecurity`    | function | `<TState extends IdentifierState>(options?: SecurityOptions) => MiddlewareHandler<TState>`                                                                     | Creates the security-headers + request-identifier battery — sets each documented header default, and mints or echoes a request identifier.                                                                           |
@@ -76,7 +76,7 @@ const handle = compose<State>([boundary, security], async (_request, context) =>
 | Name                        | Kind      | Signature                                                                                            | Summary                                                                                                                                                                                                                                                                                                           |
 | --------------------------- | --------- | ---------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `ForeignContract`           | interface | `{ expected, is }`                                                                                   | Describes a foreign implementation contract an options key admits — the members its published interface declares, checked as that interface declares them.                                                                                                                                                        |
-| `BoundaryOptions`           | interface | `{ expose?, report? }`                                                                               | Configures `createBoundary` — the outermost error-rendering battery. The factory admits the bag whole, and a refusal is a `ContractError`. The bag must be a plain object; a class instance refuses.                                                                                                              |
+| `BoundaryOptions`           | interface | `{ expose?, report? }`                                                                               | Configures `createBoundary` — the error-rendering battery. The factory admits the bag whole, and a refusal is a `ContractError`. The bag must be a plain object; a class instance refuses.                                                                                                                        |
 | `TelemetryEntry`            | interface | `{ method, pathname, status, duration }`                                                             | Represents one access-log-style entry `createTelemetry` records after a response settles — the access-log/timing seam's payload shape.                                                                                                                                                                            |
 | `TelemetryOptions`          | interface | `{ record }`                                                                                         | Configures `createTelemetry` — the request timing/access-log seam. The factory admits the bag whole, and a refusal is a `ContractError`. The bag must be a plain object; a class instance refuses.                                                                                                                |
 | `CompressionOptions`        | interface | `{ threshold?, encodings?, filter? }`                                                                | Configures `createCompression` — response-body compression. The factory admits the bag whole, and a refusal is a `ContractError`. The bag must be a plain object; a class instance refuses.                                                                                                                       |
@@ -215,6 +215,7 @@ const handle = compose<State>([boundary, security], async (_request, context) =>
 | `DEFAULT_MULTIPART_TOTAL`         | const | `52428800`                                                                                             | Holds `52_428_800`, `createMultipart`'s default combined request-body byte-size cap.                                                                                                                                                               |
 | `MULTIPART_MAX_HEADER_BLOCK`      | const | `16384`                                                                                                | Holds `16_384`, the maximum bytes a single multipart part's header block may occupy before it is malformed.                                                                                                                                        |
 | `MULTIPART_MAX_PREAMBLE`          | const | `65536`                                                                                                | Holds `65_536`, the maximum bytes scanned before the first multipart boundary is found before it is malformed.                                                                                                                                     |
+| `MULTIPART_MAX_BOUNDARY`          | const | `70`                                                                                                   | Holds `70`, the maximum length of a multipart boundary, which RFC 2046 § 5.1.1 fixes.                                                                                                                                                              |
 | `RESERVED_DEVICE_NAMES`           | const | `ReadonlySet<string>`                                                                                  | Lists the Windows reserved device-name stems (CVE-2025-27210) — matched case-insensitively against the segment's stem (before its first `.`).                                                                                                      |
 | `EXTENSION_TYPES`                 | const | `Readonly<Record<string, string>>`                                                                     | Holds the file-extension (lowercase, with leading `.`) → MIME type lookup table for static serving.                                                                                                                                                |
 
@@ -333,7 +334,7 @@ Before 0.0.35, `isSessionControl` refused every class instance, a real `SessionC
 | `streamUploadedFile`        | function | `(file: UploadedFile) => ReadableStream<Uint8Array>`                                                                      | Opens a staged/moved uploaded file as a web `ReadableStream`.                                                                                                                                                                                                                                                                                                                                                                                                                                                                               |
 | `readUploadedFile`          | function | `(file: UploadedFile) => Promise<Uint8Array>`                                                                             | Reads a staged/moved uploaded file's full contents into memory.                                                                                                                                                                                                                                                                                                                                                                                                                                                                             |
 | `moveUploadedFile`          | function | `(file: UploadedFile, destination: string) => Promise<UploadedFile>`                                                      | Moves a staged uploaded file to its final `destination`.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    |
-| `unlinkStagedFiles`         | function | `(body: MultipartBody) => Promise<void>`                                                                                  | Attempts to unlink every still-`'staged'` file in a parsed `MultipartBody` — the fail-closed cleanup `createMultipart` runs when its downstream handler throws, mirroring `parseMultipartRequest`'s own cleanup pattern (a missing file is already gone; failures are swallowed).                                                                                                                                                                                                                                                           |
+| `unlinkStagedFiles`         | function | `(body: MultipartBody) => Promise<void>`                                                                                  | Attempts to unlink every still-`'staged'` file in a parsed `MultipartBody` — the cleanup `createMultipart` runs when its downstream handler settles, mirroring `parseMultipartRequest`'s own cleanup pattern (a missing file is already gone; failures are swallowed).                                                                                                                                                                                                                                                                      |
 
 ### Parsers — node
 
@@ -480,7 +481,11 @@ These invariants hold across `src/server` ↔ `middleware.md`.
 The canonical onion, outermost first, is `createTelemetry`, `createNodeCompression`,
 `createSecurity`, `createCORS`, `createBoundary`, `createDeadline`, `createForwarded`,
 `createETag`, `createBearer`, `createLimiter`, `createBody`, `createSession`, and `createCSRF`.
-Each item names a position and the failure it prevents:
+Before 0.0.35, the canonical onion mounted `createCompression` where it mounts
+`createNodeCompression`, and placed `createSecurity` and `createCORS` inside `createBoundary` and
+`createDeadline`, so an error the boundary rendered from a throw, and the deadline's answer,
+carried no security headers and no `Vary: Origin`. Each item names a position and the failure it
+prevents:
 
 3. **`createTelemetry` is outermost.** It sees the mapped status (after
    `createBoundary` renders) and measures honest wall-clock duration —
@@ -488,6 +493,15 @@ Each item names a position and the failure it prevents:
 4. **Compression sits outside `createBoundary`.** An error `Response`
    the boundary renders from a caught throw still passes through
    compression — mount it inside instead and error bodies ship uncompressed.
+   Compression leaves a `206` response and a response whose `Cache-Control` carries
+   `no-transform` identity-coded (`matchesUntransformableResponse`), because the
+   `Content-Range` of a `206` counts bytes of the identity representation; before
+   0.0.35 it compressed both. Mount `createNodeCompression`, as the canonical
+   onion does, and mount `createCompression` only on a host without
+   `node:zlib`: in the kernel readings of 2026-11-16 on middleware 0.0.33 and
+   Node 22.23.5, gzip through `CompressionStream` took 542 µs per 1 KiB
+   response against 327 µs through `node:zlib`, and 815 µs against 617 µs at
+   64 KiB.
 5. **`createBoundary` is the renderer.** Everything mounted beneath it may
    throw `HTTPError` (or anything else) and have it mapped to a `Response`;
    nothing below it needs its own try/catch.
@@ -537,6 +551,15 @@ Each item names a position and the failure it prevents:
 10. **`createETag` sits inside compression.** The hash is computed
     over the uncompressed representation — hashing the compressed bytes
     would break revalidation the instant the negotiated coding changes.
+    Behind compression, a strong tag on a coded body gains `W/`, because one
+    tag across two codings is no strong validator (RFC 9110 § 8.8.1), and the
+    weak tag still revalidates. A `304` carries the tag and the `Vary` header
+    that the `200` response would have carried. The `304` that `createETag` answers states the
+    length of the `200` body it stands for, and compression drops that length
+    from a `304` whose `200` it would code. Before 0.0.35, a coded body kept
+    its strong tag, a `304` passed compression with the strong tag and no
+    `Vary: Accept-Encoding`, and the `304` that `createETag` answered carried
+    no `Content-Length`.
 11. **`createBearer` sits before `createLimiter`.** The limiter's default key
     derivation prefers a string `BearerState.token` (the `token:<value>` idiom)
     over a client-IP fallback — bearer must have already stashed it. An object
@@ -552,9 +575,14 @@ Each item names a position and the failure it prevents:
 
 14. **CORS.** In list mode `Vary: Origin` is merged on every response and
     preflight, from an allowed origin, a disallowed origin, or no `Origin`
-    alike, and never in `'*'` wildcard or fixed-string mode. The literal `Origin: null` is never
-    reflected even when the string `'null'` is allow-listed.
-15. **Headers.** A hostile `X-Request-ID` (off-charset, oversize, or
+    alike, and never in `'*'` wildcard or fixed-string mode. A preflight from a
+    disallowed origin, or with no `Origin`, answers `204` with `Vary: Origin`
+    and no `Access-Control-*` header. The literal `Origin: null` is never
+    reflected even when the string `'null'` is allow-listed. Before 0.0.35,
+    list mode merged `Vary: Origin` only for an allowed origin, every preflight
+    carried `Access-Control-Allow-Methods` and `Access-Control-Allow-Headers`,
+    and the battery and its options were named `createCors` and `CorsOptions`.
+15. **Headers.** A malformed `X-Request-ID` (off-charset, oversize, or
     CRLF-bearing) is never echoed — `createSecurity` mints a fresh
     `crypto.randomUUID()` instead; a custom `csp` string replaces the
     default wholesale (never merges); `X-Content-Type-Options: nosniff` is
@@ -563,8 +591,8 @@ Each item names a position and the failure it prevents:
     and for a credential `verify` refuses, and a throw from `verify` propagates
     unchanged. With `verify: (token) => verifyToken(token, signer)`, `verifyToken` is
     total over garbage, tampered, or expired input — every failure
-    renders `401`, never a crash; the signer server's `createSigner` returns
-    compares signature bytes only through `timingSafeEqual`. The `401` is a returned response, so each outer
+    renders `401`, never a crash; the signer that the `createSigner` function of
+    `@orkestrel/server` returns compares signature bytes only through `timingSafeEqual`. The `401` is a returned response, so each outer
     battery decorates it and `createBoundary`'s `report` never sees it; read
     refusals from `createTelemetry`'s status.
 17. **Limiter.** The key derivation never reads `X-Forwarded-For` itself (only
@@ -628,12 +656,18 @@ Each item names a position and the failure it prevents:
     so a multipart form sends its token in the header, and its stream stays
     unread for `createMultipart`. The token format changed in 0.0.35: a token
     an earlier release issued stops verifying at the upgrade, so a page
-    rendered before it must reload before its next write. A handler that
+    rendered before it must reload before its next write. Before 0.0.35, the
+    `signToken` function signed the session id, or a random value without a
+    session, into the token, and every safe response wrote that token into a
+    script-readable cookie named by the `cookie` option, which a mutating
+    request's token had to equal. A handler that
     starts a session (the first write to a fresh one), regenerates it, or
     destroys it changes the binding: `state.csrf` in that handler holds a
     token bound to the binding the request arrived with, and tokens minted
     earlier stop verifying under the new one. Such a handler answers with a
     redirect; § CSRF: redirect after a session change states the contract.
+    Before 0.0.35, the battery re-minted the token for a regenerated session,
+    and cleared it for a destroyed one, on the handler's own response.
 21. **Static.** Every served response is opened as a `FileHandle` and its
     headers (`Content-Length`/`ETag`) are computed from that same handle's
     `fstat` — the bytes `streamFile` later reads can never diverge from the
@@ -647,6 +681,13 @@ Each item names a position and the failure it prevents:
     multi-range or malformed `Range` header serves the full body (`200`),
     never a partial guess; the SPA fallback shell path is a fixed,
     non-user-controlled join — never re-run through the traversal resolver.
+    A `Range` under any `If-Range` serves the full `200`, because no validator
+    the battery sends compares strongly. A `prefix` and a fallback `exclude`
+    hold one slash law: each compares case-sensitively, one trailing slash on
+    it is optional, so `/static/` covers `/static`, and it covers a path
+    beneath it only on a segment boundary. Before 0.0.35, a `Range` under
+    `If-Range` answered `206` whatever the validator, and a `prefix` or an
+    `exclude` written `/static/` did not cover `/static`.
 22. **Assets.** `createAssets` decodes a browser-relative key and refuses
     malformed escapes, backslashes, empty segments, `.`/`..`, and dotfiles
     before it calls `AssetSourceInterface.read`. A successful value is copied
@@ -673,7 +714,16 @@ Each item names a position and the failure it prevents:
     never surfaced as an upload; staged files default to a
     process-owned `mkdtemp` directory under `os.tmpdir()` locked to mode
     `0o700`, with each staged file opened at mode `0o600` (both overridable
-    through `options.directory`).
+    through `options.directory`). A file the `allowed` list refuses is
+    refused before a byte of it is staged. A boundary longer than
+    `MULTIPART_MAX_BOUNDARY` is refused `400` as malformed. A header block
+    exactly at `MULTIPART_MAX_HEADER_BLOCK` is admitted however its chunks
+    arrive. When the handler settles, by a return or a throw, `createMultipart`
+    unlinks every file still at its staged path, so a handler moves or reads
+    each file it keeps before it returns. Before 0.0.35, a normal return left
+    staged files on disk, a file the `allowed` list refused was written to disk
+    first, a boundary of any length was taken, and that header block was
+    refused when it arrived in small chunks.
 24. **Boundary.** `expose: false` leaks nothing (a non-`HTTPError` throw's
     message never reaches the body); an `HTTPError`'s own `message` always
     surfaces (it is the handler's deliberate signal); a `report` sink's own
@@ -934,7 +984,8 @@ equal, and a CSRF token sent as the session cookie resolves no session.
 A handler that starts a session (the first write to a fresh one), regenerates it, or destroys it
 answers with a redirect to a page, such as a `303` to `/account`. The tokens the client holds
 were bound to the session or nonce the request arrived with, and `state.csrf` in that handler
-still is; the page the redirect loads renders a token from the session the client then holds.
+still is; the page the redirect loads renders a token bound to the session or nonce the client
+then holds.
 
 ```ts
 import type { CSRFState, SessionState } from '@orkestrel/middleware'
@@ -1220,7 +1271,7 @@ console.log(extractFieldToken({ csrf: 'credential' }, 'csrf'))
   retired silently), and the README pitch against this guide's tagline.
 - [`tests/src/server/validators.test.ts`](../tests/src/server/validators.test.ts) —
   the `isSession`/`isSessionControl`/`isMultipartFile`/`isMultipartBody`
-  totality guards, each driven over a well-shaped value and over the hostile
+  totality guards, each driven over a well-shaped value and over the malformed
   inputs it must answer `false` to.
 - [`tests/src/server/Session.test.ts`](../tests/src/server/Session.test.ts) —
   the entity shape (`id`, an independent `state` view and its mutators per instance).

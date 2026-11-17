@@ -146,8 +146,8 @@ import { SessionControl } from './SessionControl.js'
 import { computeBodyETag, matchesETag } from '@orkestrel/server'
 
 /**
- * Creates the outermost error-rendering battery — catches a downstream throw and
- * renders it as a `Response`.
+ * Creates the error-rendering battery — catches a downstream throw and renders it
+ * as a `Response`.
  *
  * @typeParam TState - The consumer's opaque per-request state type
  * @param options - See {@link BoundaryOptions}
@@ -165,7 +165,7 @@ import { computeBodyETag, matchesETag } from '@orkestrel/server'
  * const boundary = createBoundary({ expose: false })
  * const security = createSecurity({ hsts: true })
  *
- * const handle = compose<State>([boundary, security], async (_request, context) => {
+ * const handle = compose<State>([security, boundary], async (_request, context) => {
  * 	return Response.json({ identifier: context.state.identifier })
  * })
  * ```

@@ -5,7 +5,7 @@ import type { Guard } from '@orkestrel/contract'
 import type { CookieOptions, Encoding, MiddlewareContext, SignerInterface } from '@orkestrel/server'
 
 /**
- * Configures `createBoundary` — the outermost error-rendering battery. The factory admits the bag whole, and a refusal is a `ContractError`. The bag must be a plain object; a class instance refuses.
+ * Configures `createBoundary` — the error-rendering battery. The factory admits the bag whole, and a refusal is a `ContractError`. The bag must be a plain object; a class instance refuses.
  *
  * @remarks
  * - `expose` — when `true`, a non-`HTTPError` throw's `error.message` is

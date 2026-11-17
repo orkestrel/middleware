@@ -239,7 +239,7 @@ await new GuideCommand({
 			const boundary = createBoundary({ expose: false })
 			const security = createSecurity({ hsts: true })
 
-			const handle = compose<State>([boundary, security], async (_request, context) => {
+			const handle = compose<State>([security, boundary], async (_request, context) => {
 				return Response.json({ identifier: context.state.identifier })
 			})
 
@@ -263,7 +263,7 @@ await new GuideCommand({
 			expect(guideText).toContain('const boundary = createBoundary({ expose: false })')
 			expect(guideText).toContain('const security = createSecurity({ hsts: true })')
 			expect(guideText).toContain(
-				'const handle = compose<State>([boundary, security], async (_request, context) => {',
+				'const handle = compose<State>([security, boundary], async (_request, context) => {',
 			)
 			expect(guideText).toContain('return Response.json({ identifier: context.state.identifier })')
 		})

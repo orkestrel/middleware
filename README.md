@@ -18,14 +18,16 @@ line.
 ## Install
 
 ```sh
-npm install @orkestrel/middleware @orkestrel/server
+npm install @orkestrel/middleware @orkestrel/server @orkestrel/router
 ```
 
 ## Requirements
 
-- Node.js >= 22.12.0
+- Node.js ^22.18.0 or >= 24.4.0
 - `@orkestrel/server` as a peer dependency (the seam and substrate are
   imported, never bundled)
+- `@orkestrel/router` as a peer dependency (`only` and `except` match through
+  its path grammar)
 - Dual ESM and CommonJS entry: one server-only entry (`.`) that carries every
   battery, including the node-bound ones
 
@@ -41,7 +43,7 @@ interface State extends IdentifierState {}
 const boundary = createBoundary({ expose: false })
 const security = createSecurity({ hsts: true })
 
-const handle = compose<State>([boundary, security], async (_request, context) => {
+const handle = compose<State>([security, boundary], async (_request, context) => {
 	return Response.json({ identifier: context.state.identifier })
 })
 ```
