@@ -1082,10 +1082,10 @@ export function createMultipart<TState extends MultipartState>(
  * @remarks
  * Peer-type limitation, the same one `createCompression` carries: the shipped
  * `@orkestrel/server` `Encoding` union is `'gzip' | 'deflate' | 'identity'`
- * — it does not include `'br'`, so this battery cannot honestly type or
- * negotiate a guaranteed brotli coding despite `node:zlib` shipping
- * `brotliCompress`. It guarantees `gzip`/`deflate` through `node:zlib` (never
- * feature-detected — always available) and negotiates only those.
+ * — it does not include `'br'`, so this battery cannot type or negotiate a
+ * brotli coding although `node:zlib` ships `brotliCompress`. It compresses
+ * `gzip` and `deflate` through `node:zlib`, which every Node runtime bundles,
+ * so it never feature-detects them, and it negotiates only those two.
  *
  * @typeParam TState - The consumer's opaque per-request state type
  * @param options - See {@link NodeCompressionOptions}

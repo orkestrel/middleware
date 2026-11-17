@@ -343,7 +343,8 @@ export function computeFileETag(size: number, mtimeMs: number): string {
 }
 
 /**
- * Compresses response bytes with Node's guaranteed zlib gzip/deflate codecs.
+ * Compresses response bytes with the gzip or deflate codec of `node:zlib`, which every Node
+ * runtime bundles.
  *
  * @param bytes - The uncompressed response bytes
  * @param encoding - The negotiated actionable coding
