@@ -470,6 +470,63 @@ export function createWritingTerminal<TState extends SessionState>(
 	}
 }
 
+/** Describes one handler step against a held session and how many stores `createSession` makes after it. */
+export interface SessionWriteCase {
+	readonly title: string
+	readonly write: (session: SessionInterface) => void
+	readonly stored: number
+}
+
+/** Lists the handler steps against a session held with `mark` = `lamp`: which count as a write and which do not. */
+export const SESSION_WRITE_CASES: readonly SessionWriteCase[] = Object.freeze([
+	{
+		title: 'delete of a held key',
+		write: (session: SessionInterface): void => {
+			session.delete('mark')
+		},
+		stored: 1,
+	},
+	{ title: 'clear', write: (session: SessionInterface): void => session.clear(), stored: 1 },
+	{
+		title: 'set of another value',
+		write: (session: SessionInterface): void => session.set('mark', 'wick'),
+		stored: 1,
+	},
+	{
+		title: 'delete of an absent key',
+		write: (session: SessionInterface): void => {
+			session.delete('absent')
+		},
+		stored: 0,
+	},
+	{
+		title: 'set of the held value',
+		write: (session: SessionInterface): void => session.set('mark', 'lamp'),
+		stored: 0,
+	},
+])
+
+/**
+ * Builds a plain record carrying every member `SessionControlInterface` declares, each at its
+ * declared type, for a guard proof to vary one member at a time.
+ *
+ * @returns A record with `destroyed`, `successor`, `fresh`, `regenerate`, and `destroy`
+ *
+ * @example
+ * ```ts
+ * isSessionControl(buildControlRecord()) // true
+ * ```
+ */
+export function buildControlRecord(): Readonly<Record<string, unknown>> {
+	return {
+		destroyed: false,
+		successor: undefined,
+		fresh: false,
+		regenerate: () => undefined,
+		destroy: () => undefined,
+	}
+}
+
 /** Describes what one safe request through a CSRF chain hands a page. */
 export interface IssuedTokenInterface {
 	/** The token `state.csrf` held, or `''` when the chain stashed none. */
@@ -590,10 +647,11 @@ export function createRecordingSigner(signer: SignerInterface): RecordingSignerI
 
 /**
  * Bounds the growth ratio t(4n)/t(n) of a `MemorySessionStore` insert at capacity, where an
- * insert evicts one entry. Read on 2026-11-16 at n = 2,000 with the host's load average near 1.5,
- * 30 readings per arm: identical sides (n against n) read NOISE_RANGE, the constant-time store
- * read CONSTANT_RANGE, and the base store that scans every entry at capacity (`c00f055`) read
- * LINEAR_RANGE.
+ * insert evicts one entry. Read on 2026-11-16 at n = 2,000, 30 solo readings per arm: the base
+ * store that scans every entry at capacity (`c00f055`, load average 1.6 to 2.4) read 3.52 to
+ * 4.16 beside identical sides (n against n) at 0.95 to 1.09; the store that evicts through one
+ * long-lived iterator (load average near 4) read 1.08 to 1.36 beside identical sides at 0.88 to
+ * 1.25. 2 sits above the constant arm's maximum and below the scanning arm's minimum.
  */
 export const SESSION_GROWTH_BOUND = 2
 
@@ -670,10 +728,10 @@ export async function measureSessionGrowth(small: number, large: number): Promis
 	const probe = Array.from({ length: 64 }, (_, index) => new Session(`probe-${index}`))
 	const warm = timeSessionInserts(stores.small, probe)
 	const repeat = Math.max(64, Math.ceil((20 * probe.length) / Math.max(warm, 0.001)))
-	const rounds = Array.from({ length: 5 }, (_, round) => {
+	const rounds = Array.from({ length: 5 }, (_round, round) => {
 		const batch = {
-			small: Array.from({ length: repeat }, (_, index) => new Session(`s${round}-${index}`)),
-			large: Array.from({ length: repeat }, (_, index) => new Session(`l${round}-${index}`)),
+			small: Array.from({ length: repeat }, (_slot, index) => new Session(`s${round}-${index}`)),
+			large: Array.from({ length: repeat }, (_slot, index) => new Session(`l${round}-${index}`)),
 		}
 		return round % 2 === 0
 			? {

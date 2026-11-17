@@ -7,7 +7,7 @@ import {
 	SessionControl,
 } from '@src/server'
 import { describe, expect, it } from 'vitest'
-import { buildSession } from '../../setup.js'
+import { buildControlRecord, buildSession } from '../../setup.js'
 import { withoutKey } from '../../setupServer.js'
 
 // ============================================================================
@@ -91,17 +91,9 @@ describe('isSession', () => {
 
 describe('isSessionControl', () => {
 	it('accepts a value carrying every declared member at its declared type', () => {
-		const control = {
-			destroyed: false,
-			successor: undefined,
-			fresh: false,
-			regenerate: () => undefined,
-			destroy: () => undefined,
-		}
+		const control = buildControlRecord()
 		expect(isSessionControl(control)).toBe(true)
-		expect(isSessionControl({ ...control, successor: new Session('next'), fresh: true })).toBe(
-			true,
-		)
+		expect(isSessionControl({ ...control, successor: new Session('next'), fresh: true })).toBe(true)
 		expect(isSessionControl({ ...control, destroyed: true, extra: 1 })).toBe(true)
 	})
 
@@ -115,29 +107,14 @@ describe('isSessionControl', () => {
 	})
 
 	it('accepts a callable object carrying every declared member', () => {
-		expect(
-			isSessionControl(
-				Object.assign(() => undefined, {
-					destroyed: false,
-					successor: undefined,
-					fresh: true,
-					regenerate: () => undefined,
-					destroy: () => undefined,
-				}),
-			),
-		).toBe(true)
+		expect(isSessionControl(Object.assign(() => undefined, buildControlRecord()))).toBe(true)
 	})
 
 	it('refuses a value missing any one declared member, or holding one at another type', () => {
-		const control = {
-			destroyed: false,
-			successor: undefined,
-			fresh: false,
-			regenerate: () => undefined,
-			destroy: () => undefined,
-		}
+		const control = buildControlRecord()
 		const variants = [
 			withoutKey(control, 'destroyed'),
+			withoutKey(control, 'successor'),
 			withoutKey(control, 'fresh'),
 			withoutKey(control, 'regenerate'),
 			withoutKey(control, 'destroy'),
@@ -147,11 +124,9 @@ describe('isSessionControl', () => {
 			{ ...control, successor: { id: 'next' } },
 			{ ...control, regenerate: 'nope' },
 			{ ...control, destroy: true },
-			{ regenerate: () => undefined, destroy: () => undefined },
+			withoutKey(withoutKey(withoutKey(control, 'destroyed'), 'successor'), 'fresh'),
 		]
-		expect(variants.map((variant) => isSessionControl(variant))).toEqual(
-			variants.map(() => false),
-		)
+		expect(variants.map((variant) => isSessionControl(variant))).toEqual(variants.map(() => false))
 	})
 
 	it('rejects a class instance that lacks destroy', () => {

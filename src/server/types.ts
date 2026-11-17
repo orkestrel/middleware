@@ -351,7 +351,7 @@ export interface ClientState {
  * `state` is a `ReadonlyMap` view a handler reads directly: TypeScript
  * refuses a write through it, and `set`, `delete`, and `clear` are the write
  * path. `createSession` persists the state to the configured
- * {@link SessionStoreInterface} on the way out. `clear` empties the state
+ * {@link SessionStoreInterface} on the way out, after a handler wrote to it. `clear` empties the state
  * without ending the session — `SessionControlInterface.destroy` does that.
  */
 export interface SessionInterface {
@@ -566,7 +566,8 @@ export type SessionRestoreFunction = (value: unknown) => SessionInterface | unde
  * `read` is total (a malformed/tampered credential resolves `undefined`,
  * never throws). `write` and `clear` mutate the returned `Response` on the
  * way out — the returning onion makes "before send" automatic. `write` is
- * called only when a session is freshly minted or regenerated; `clear` is
+ * called only when a session minted on the request is first written, or when a
+ * session is regenerated; `clear` is
  * called on `destroy()`. `write`'s `encrypted` flag is the request's resolved
  * transport security (derived from `context.url.protocol`) so a cookie
  * transport can resolve its own `Secure` attribute through `resolveSecure`
@@ -619,7 +620,8 @@ export interface SessionTransportInterface {
  * - `create` — builds a fresh session's public entity from a minted id;
  *   defaults to `new Session(id)`.
  * - `mint` — decides whether to auto-mint a session when none resolves;
- *   defaults to always minting (auto-session).
+ *   defaults to always minting (auto-session). A minted session is stored, and its
+ *   credential written, only after a handler writes to it or regenerates it.
  * - `required` — when `true`, a request that resolves no session and does not
  *   mint one renders a 404 instead of proceeding sessionless. Defaults to `false`.
  * - `clock` — the injected time source fed to the store; defaults to `Date.now`.
@@ -676,10 +678,11 @@ export interface HeaderTransportOptions {
  * - `lifetime` — the absolute lifetime in milliseconds from first `set`
  *   (evicts even a continuously-touched session).
  * - `capacity` — the maximum number of distinct session ids tracked before
- *   the least-recently-written id is evicted (LRU by last write — every
- *   `set` refreshes an id's recency); defaults to {@link DEFAULT_SESSION_CAPACITY}.
+ *   the least recently used id is evicted, in time that does not grow with the
+ *   store's size (every `set` and every live `get` refreshes an id's recency);
+ *   defaults to {@link DEFAULT_SESSION_CAPACITY}.
  * - `evict` — invoked with a session id when it is evicted by the store's
- *   own policy (a capacity eviction or an expired-entry prune) — never for
+ *   own policy (a capacity eviction or an expired read) — never for
  *   an explicit `delete`. Its own throw is swallowed. It is a notification
  *   sink only — it must never call back into the store (no re-entrant
  *   `get`/`set`); mutations during eviction are unsupported.
@@ -690,26 +693,27 @@ export interface MemorySessionStoreOptions extends SessionLimits {
 }
 
 /**
- * Describes the CSRF state slice `createCSRF` stashes — the raw token a safe-method
- * response exposes for a subsequent mutating request to submit back.
+ * Describes the CSRF state slice `createCSRF` stashes — a token bound to the session the
+ * request arrived with, or to the battery's nonce, for the page to submit back.
  */
 export interface CSRFState {
 	readonly csrf?: string
 }
 
 /**
- * Configures `createCSRF` — session-bound double-submit CSRF protection. The factory admits the bag whole, and a refusal is a `ContractError`. The bag must be a plain object; a class instance refuses.
+ * Configures `createCSRF` — signed double-submit CSRF protection, bound to the session the client holds or to the battery's own nonce. The factory admits the bag whole, and a refusal is a `ContractError`. The bag must be a plain object; a class instance refuses.
  *
  * @remarks
  * - `signer` — the {@link SignerInterface} the CSRF token is signed with; the
  *   implementation checks only `sign` and `verify`, accepts a class instance, and ignores
  *   every other member.
- * - `cookie` — the signed-cookie name; defaults to {@link DEFAULT_CSRF_COOKIE}.
+ * - `cookie` — the name of the HttpOnly cookie that holds the battery's nonce while the
+ *   client holds no session; defaults to {@link DEFAULT_CSRF_COOKIE}.
  * - `header` — the header a mutating request submits its token in; defaults
  *   to {@link DEFAULT_CSRF_HEADER}.
  * - `field` — the body field a mutating request may submit its token in
- *   instead of the header (requires `createBody` ahead for form posts);
- *   defaults to {@link DEFAULT_CSRF_FIELD}.
+ *   instead of the header, read from a JSON or urlencoded body only, so a multipart
+ *   form sends its token in the header; defaults to {@link DEFAULT_CSRF_FIELD}.
  * - `safe` — the methods that mint instead of verify; defaults to
  *   {@link DEFAULT_CSRF_SAFE_METHODS}.
  */

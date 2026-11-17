@@ -87,7 +87,7 @@ export const CHALLENGE_VALUE = Object.freeze(/^[\x20\x21\x23-\x5B\x5D-\x7E]*$/u)
 /** Holds `10_000`, the default maximum number of distinct rate-limit keys `createLimiter` tracks before LRU eviction. */
 export const DEFAULT_LIMITER_CAPACITY = 10_000
 
-/** Holds `10_000`, the default maximum number of distinct session ids `createMemorySessionStore` tracks before LRU (by last write) eviction. */
+/** Holds `10_000`, the default maximum number of distinct session ids `createMemorySessionStore` tracks before least-recently-used eviction. */
 export const DEFAULT_SESSION_CAPACITY = 10_000
 
 /** Holds `'rate limit exceeded'`, the default 429 body message `createLimiter` sends when a key is over budget. */
@@ -99,8 +99,23 @@ export const DEFAULT_SESSION_COOKIE = 'session'
 /** Names `'session-id'`, the default header `createHeaderTransport` carries the session id in. */
 export const DEFAULT_SESSION_HEADER = 'session-id'
 
-/** Names `'csrf'`, the default signed cookie `createCSRF` writes the CSRF token under. */
+/** Names `'csrf'`, the default cookie `createCSRF` keeps its nonce in when the client holds no session. */
 export const DEFAULT_CSRF_COOKIE = 'csrf'
+
+/** Opens every message `createCSRF` signs; its `:` lies outside the base64url alphabet, so no base64url `signToken` payload equals a CSRF message. */
+export const CSRF_LABEL = 'csrf:'
+
+/** Holds `32`, the byte count of a CSRF nonce and of a CSRF token's random part. */
+export const CSRF_NONCE_BYTES = 32
+
+/** Matches a CSRF nonce or a CSRF token's random part: the 43 base64url characters that encode {@link CSRF_NONCE_BYTES} bytes. */
+export const CSRF_NONCE_PATTERN = Object.freeze(/^[A-Za-z0-9_-]{43}$/)
+
+/** Lists the media types whose body `createCSRF` reads its field from: the two the server decodes to a record. */
+export const CSRF_FIELD_TYPES: readonly string[] = Object.freeze([
+	'application/json',
+	'application/x-www-form-urlencoded',
+])
 
 /** Names `'x-csrf-token'`, the default header `createCSRF` reads a mutating request's submitted token from. */
 export const DEFAULT_CSRF_HEADER = 'x-csrf-token'

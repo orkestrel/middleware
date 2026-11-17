@@ -172,8 +172,7 @@ export const SESSION_CONTRACT = createContract(
 
 /**
  * Admits `CookieTransportOptions` whole for `createCookieTransport`: a string `name`, a required
- * `signer` that {@link SIGNER_FOREIGN} checks after admission, and an owned `cookie` record of the
- * six optional members
+ * `signer`, checked as a foreign key, and an owned `cookie` record of the six optional members
  * `@orkestrel/server` declares: string `path` and `domain`, a finite number `maxAge` (a
  * non-finite value writes `Max-Age=NaN` or `Max-Age=Infinity` into `Set-Cookie`), boolean
  * `httpOnly` and `secure`, and a `sameSite` of `'Strict'`, `'Lax'`, or `'None'`.

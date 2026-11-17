@@ -46,24 +46,35 @@ export function isSession(value: unknown): value is SessionInterface {
 
 /**
  * Determines whether a value implements {@link SessionControlInterface} — a
- * total structural guard: callable `regenerate` and `destroy`. Prototype-agnostic
- * — accepts a plain object, a callable object, and a class instance (a real
- * `SessionControl`). A member read that throws, as on a revoked proxy, answers false.
+ * total structural guard over every declared member: boolean `destroyed` and
+ * `fresh`, a `successor` that is `undefined` or satisfies {@link isSession}, and
+ * callable `regenerate` and `destroy`. Prototype-agnostic — accepts a plain
+ * object, a callable object, and a class instance (a real `SessionControl`), and
+ * ignores unknown members. A value missing a declared member answers false, and
+ * so does a member read that throws, as on a revoked proxy.
  *
  * @param value - The candidate value
  * @returns True if `value` is shaped like a {@link SessionControlInterface}; false otherwise
  *
  * @example
  * ```ts
- * isSessionControl({ regenerate() {}, destroy() {} }) // true
  * isSessionControl(new SessionControl(new Session('a'))) // true
+ * isSessionControl({ regenerate() {}, destroy() {} }) // false — destroyed, successor, and fresh are missing
  * ```
  */
 export function isSessionControl(value: unknown): value is SessionControlInterface {
 	if (!isObject(value) && !isFunction(value)) return false
-	return holds(
-		() => isFunction(Reflect.get(value, 'regenerate')) && isFunction(Reflect.get(value, 'destroy')),
-	)
+	return holds(() => {
+		const successor = Reflect.get(value, 'successor')
+		return (
+			isBoolean(Reflect.get(value, 'destroyed')) &&
+			isBoolean(Reflect.get(value, 'fresh')) &&
+			Reflect.has(value, 'successor') &&
+			(successor === undefined || isSession(successor)) &&
+			isFunction(Reflect.get(value, 'regenerate')) &&
+			isFunction(Reflect.get(value, 'destroy'))
+		)
+	})
 }
 
 /**

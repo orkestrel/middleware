@@ -25,7 +25,8 @@ import type {
 import type { Stats } from 'node:fs'
 import type { FileHandle } from 'node:fs/promises'
 import type { CompiledPath } from '@orkestrel/router'
-import type { Connection, Encoding, MiddlewareContext } from '@orkestrel/server'
+import type { Connection, Encoding, MiddlewareContext, SignerInterface } from '@orkestrel/server'
+import { randomBytes } from 'node:crypto'
 import { createReadStream } from 'node:fs'
 import {
 	computeBodyETag,
@@ -61,6 +62,9 @@ import {
 import {
 	CHALLENGE_TOKEN,
 	CHALLENGE_VALUE,
+	CSRF_LABEL,
+	CSRF_NONCE_BYTES,
+	CSRF_NONCE_PATTERN,
 	DEFAULT_CONTENT_TYPE,
 	DEFAULT_STATIC_INDEX,
 	DEFAULT_MULTIPART_FIELD_SIZE,
@@ -1377,6 +1381,101 @@ export function transferSessionState(from: SessionInterface, to: SessionInterfac
 }
 
 /**
+ * Checks whether two session states hold the same keys, each bound to the same value by
+ * `Object.is` — the test `createSession` applies to decide whether a handler wrote to a session.
+ *
+ * @param before - The state the request arrived with, copied before the handler ran
+ * @param after - The state after the handler ran
+ * @returns True if both hold the same keys and the same values; false otherwise
+ *
+ * @example
+ * ```ts
+ * matchesSessionState(new Map([['mark', 'lamp']]), new Map([['mark', 'lamp']])) // true
+ * matchesSessionState(new Map([['mark', 'lamp']]), new Map([['mark', 'wick']])) // false
+ * ```
+ */
+export function matchesSessionState(
+	before: ReadonlyMap<string, unknown>,
+	after: ReadonlyMap<string, unknown>,
+): boolean {
+	if (before.size !== after.size) return false
+	return [...before].every(([key, value]) => after.has(key) && Object.is(after.get(key), value))
+}
+
+/**
+ * Generates a random nonce: 32 bytes from the platform's cryptographic source, as 43 base64url
+ * characters — the nonce `createCSRF` keeps in its cookie and a CSRF token's random part.
+ *
+ * @returns A nonce that matches {@link CSRF_NONCE_PATTERN}
+ *
+ * @example
+ * ```ts
+ * generateNonce() // 'b3Vy…' — 43 base64url characters
+ * ```
+ */
+export function generateNonce(): string {
+	return randomBytes(CSRF_NONCE_BYTES).toString('base64url')
+}
+
+/**
+ * Signs a CSRF token bound to `binding`: `random.signature`, where `signature` is the signer's
+ * HMAC over {@link CSRF_LABEL}, `binding`, and `random`, so the token carries no form of the
+ * binding.
+ *
+ * @remarks
+ * `random` is a fresh {@link generateNonce} value, so every call returns another token, and every
+ * one verifies for `binding`. Its fixed length makes the signed message injective: no other
+ * binding and random part spell the same message.
+ *
+ * @param signer - The signer whose first key signs
+ * @param binding - The value the token binds to: a session id, or the battery's nonce
+ * @returns The token
+ *
+ * @example
+ * ```ts
+ * const token = await signCSRFToken(createSigner('shh'), 'session-7f3a')
+ * ```
+ */
+export async function signCSRFToken(signer: SignerInterface, binding: string): Promise<string> {
+	const random = generateNonce()
+	return `${random}.${await signer.sign(`${CSRF_LABEL}${binding}${random}`)}`
+}
+
+/**
+ * Verifies a CSRF token against `binding`: the token's random part must match
+ * {@link CSRF_NONCE_PATTERN}, and its signature must be the signer's HMAC over
+ * {@link CSRF_LABEL}, `binding`, and that random part, under any held key.
+ *
+ * @remarks
+ * A token with no `.` or a random part outside the pattern answers `false` before the signer is
+ * called. The answer is otherwise the signer's: server's `Signer` never rejects, and a consumer
+ * signer whose `verify` rejects makes this call reject with its error.
+ *
+ * @param signer - The signer whose keys verify
+ * @param binding - The value the token must be bound to
+ * @param token - The submitted token
+ * @returns True if the token is a CSRF token bound to `binding`; false otherwise
+ *
+ * @example
+ * ```ts
+ * const signer = createSigner('shh')
+ * const token = await signCSRFToken(signer, 'session-7f3a')
+ * await verifyCSRFToken(signer, 'session-7f3a', token) // true
+ * await verifyCSRFToken(signer, 'session-9c1d', token) // false
+ * ```
+ */
+export async function verifyCSRFToken(
+	signer: SignerInterface,
+	binding: string,
+	token: string,
+): Promise<boolean> {
+	const dot = token.indexOf('.')
+	const random = token.slice(0, dot)
+	if (dot < 0 || !CSRF_NONCE_PATTERN.test(random)) return false
+	return signer.verify(`${CSRF_LABEL}${binding}${random}`, token.slice(dot + 1))
+}
+
+/**
  * Determines whether a request is a CORS preflight — an `OPTIONS` request
  * carrying an `Access-Control-Request-Method` header.
  *
@@ -1410,8 +1509,8 @@ export function buildClient(ip: string | undefined): Client {
 }
 
 /**
- * Compares two strings in constant time — `createCSRF`'s double-submit token
- * comparison, avoiding a timing oracle on the submitted-vs-cookie match.
+ * Compares two strings in constant time once their lengths match, so a
+ * per-character mismatch never changes how long the comparison takes.
  *
  * @remarks
  * Length-guarded XOR-accumulate over char codes: a length mismatch short

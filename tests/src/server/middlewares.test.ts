@@ -85,6 +85,7 @@ import {
 	issueToken,
 	readChainStatus,
 	runChain,
+	SESSION_WRITE_CASES,
 	TEST_SIGNER,
 } from '../../setup.js'
 
@@ -3151,31 +3152,9 @@ describe('createSession', () => {
 		expect((await memory.get('held', Date.now()))?.state.get('mark')).toBe('wick')
 	})
 
-	it('counts a delete of a held key and a clear of a held state as writes, and a set of the held value as none', async () => {
-		const cases = [
-			{
-				title: 'delete',
-				write: (target: SessionInterface): void => {
-					target.delete('mark')
-				},
-				stored: 1,
-			},
-			{ title: 'clear', write: (target: SessionInterface): void => target.clear(), stored: 1 },
-			{
-				title: 'delete of an absent key',
-				write: (target: SessionInterface): void => {
-					target.delete('absent')
-				},
-				stored: 0,
-			},
-			{
-				title: 'set of the held value',
-				write: (target: SessionInterface): void => target.set('mark', 'lamp'),
-				stored: 0,
-			},
-		]
+	it('counts a delete of a held key, a clear, and a set of another value as writes, and a set of the held value as none', async () => {
 		const observed = await Promise.all(
-			cases.map(async (entry) => {
+			SESSION_WRITE_CASES.map(async (entry) => {
 				const count = new MiddlewareValue(0)
 				const memory = createMemorySessionStore<SessionInterface>()
 				await memory.set(buildSession('held', 'lamp'), Date.now())
@@ -3192,12 +3171,14 @@ describe('createSession', () => {
 						return new Response(ECHO_MARKER)
 					},
 					request,
-					createTestContext(request, {}),
+					createTestContext<SessionState>(request, {}),
 				)
 				return { title: entry.title, stored: count.value }
 			}),
 		)
-		expect(observed).toEqual(cases.map((entry) => ({ title: entry.title, stored: entry.stored })))
+		expect(observed).toEqual(
+			SESSION_WRITE_CASES.map((entry) => ({ title: entry.title, stored: entry.stored })),
+		)
 	})
 
 	it('a flood of requests with no credential that write nothing keeps a written session in a full store', async () => {
@@ -3674,7 +3655,7 @@ describe('createCSRF', () => {
 			`${random}.${signature.slice(1)}A`,
 			`x${random.slice(1)}.${signature}`,
 			foreign.token,
-			'\uD800'.repeat(87),
+			`${random}.${'A'.repeat(8_192)}`,
 		]
 		const statuses = await Promise.all(
 			tokens.map((value) =>
@@ -3984,7 +3965,7 @@ describe('createCSRF session rotation', () => {
 				return Response.redirect(new URL('/', context.url), 303)
 			},
 			loginRequest,
-			createTestContext(loginRequest, {}),
+			createTestContext<CSRFState & SessionState>(loginRequest, {}),
 		)
 		const [[handed = '', successor = ''] = []] = seen.calls
 		const rotated = loginResponse.headers.get('x-test-session') ?? ''

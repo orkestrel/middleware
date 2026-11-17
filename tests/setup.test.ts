@@ -1,6 +1,14 @@
 import { describe, expect, it } from 'vitest'
-import { ContentTooLargeError, createSigner, signToken, verifyToken } from '@orkestrel/server'
+import type { SessionState } from '@src/server'
 import {
+	ContentTooLargeError,
+	createSigner,
+	HTTPError,
+	signToken,
+	verifyToken,
+} from '@orkestrel/server'
+import {
+	buildControlRecord,
 	buildTestRequest,
 	buildSession,
 	buildStore,
@@ -8,14 +16,21 @@ import {
 	createEchoTerminal,
 	createManualClock,
 	createRecordingNext,
+	createRecordingSigner,
 	createRecordingTerminal,
 	createTestContext,
 	createTestTransport,
+	createWritingTerminal,
 	decompress,
 	ECHO_MARKER,
+	fillSessionStore,
+	issueToken,
+	measureSessionGrowth,
+	readChainStatus,
 	runChain,
 	TEST_BODY_LIMIT,
 	TEST_SIGNER,
+	timeSessionInserts,
 } from './setup.js'
 
 // ── tests/setup.ts — the host-independent middleware harness ──────────────────
@@ -329,5 +344,96 @@ describe('buildStore', () => {
 		const second = buildStore()
 		await first.store.set(buildSession('id-1'), 0)
 		expect(await second.store.get('id-1', 0)).toBeUndefined()
+	})
+})
+
+describe('createWritingTerminal', () => {
+	it('writes the mark into the session on state, and answers the echo marker', async () => {
+		const state: SessionState = { session: buildSession('id-1') }
+		const request = buildTestRequest('/')
+		const response = await createWritingTerminal('wick')(request, createTestContext(request, state))
+		expect(state.session?.state.get('mark')).toBe('wick')
+		expect(await response.text()).toBe(ECHO_MARKER)
+	})
+})
+
+describe('createRecordingSigner', () => {
+	it('records each message in call order and answers as the real signer does', async () => {
+		const recording = createRecordingSigner(TEST_SIGNER)
+		const signature = await recording.sign('lamp')
+		expect(signature).toBe(await TEST_SIGNER.sign('lamp'))
+		expect(await recording.verify('lamp', signature)).toBe(true)
+		expect(await recording.verify('wick', signature)).toBe(false)
+		expect(recording.signed).toEqual(['lamp'])
+		expect(recording.verified).toEqual(['lamp', 'wick'])
+	})
+})
+
+describe('issueToken and readChainStatus', () => {
+	it('reads the stashed token and every Set-Cookie pair, and maps a thrown HTTPError to its status', async () => {
+		const issued = await issueToken([
+			async (_request, context, next) => {
+				Object.assign(context.state, { csrf: 'lamp-token' })
+				const response = await next()
+				response.headers.append('set-cookie', 'one=1; Path=/')
+				response.headers.append('set-cookie', 'two=2; HttpOnly')
+				return response
+			},
+		])
+		expect(issued.token).toBe('lamp-token')
+		expect(issued.cookie).toBe('one=1; two=2')
+		expect(await readChainStatus([async (_request, _context, next) => next()], {})).toBe(200)
+		expect(
+			await readChainStatus(
+				[
+					async () => {
+						throw new HTTPError(403, 'refused')
+					},
+				],
+				{ method: 'POST' },
+			),
+		).toBe(403)
+		await expect(
+			readChainStatus(
+				[
+					async () => {
+						throw new Error('fault')
+					},
+				],
+				{ method: 'POST' },
+			),
+		).rejects.toThrow('fault')
+	})
+})
+
+describe('buildControlRecord', () => {
+	it('carries every SessionControlInterface member at its declared type, fresh on every call', () => {
+		const record = buildControlRecord()
+		expect(Object.keys(record).sort()).toEqual([
+			'destroy',
+			'destroyed',
+			'fresh',
+			'regenerate',
+			'successor',
+		])
+		expect(record).not.toBe(buildControlRecord())
+	})
+})
+
+describe('the eviction cost row', () => {
+	it('fills a store to its capacity, so its next unseen id evicts the oldest', async () => {
+		const store = await fillSessionStore(4)
+		expect((await store.get('full-0', 0))?.id).toBe('full-0')
+		expect(
+			timeSessionInserts(store, [buildSession('lamp'), buildSession('wick')]),
+		).toBeGreaterThanOrEqual(0)
+		expect(await store.get('full-1', 0)).toBeUndefined()
+		expect((await store.get('wick', 0))?.id).toBe('wick')
+	})
+
+	it('reads a finite positive growth ratio', async () => {
+		const growth = await measureSessionGrowth(64, 256)
+		expect(Number.isFinite(growth)).toBe(true)
+		expect(growth).toBeGreaterThan(0)
 	})
 })

@@ -58,7 +58,7 @@ const handle = compose<State>([boundary, security], async (_request, context) =>
 | `createLimiter`     | function | `<TState extends BearerState<unknown> & ClientState>(options: LimiterOptions<TState>) => MiddlewareHandler<TState>`                                            | Creates the fixed-window rate-limiting battery — checks a key's budget before consuming it, so one window admits exactly `max` requests.                                                                             |
 | `createBody`        | function | `<TState extends BodyState = BodyState>() => MiddlewareHandler<TState>`                                                                                        | Creates the body-driving battery — eagerly awaits the cached `context.body()` so its throws (or a malformed-JSON `undefined`) surface before the handler runs, and stashes the resolved value onto `BodyState.body`. |
 | `createSession`     | function | `<S extends SessionInterface = SessionInterface, TState extends SessionState = SessionState>(options: SessionOptions<S, TState>) => MiddlewareHandler<TState>` | Creates the generic session battery — resolves, mints, and persists a session across the request, with a mid-handler `regenerate`/`destroy` control handle.                                                          |
-| `createCSRF`        | function | `<TState extends CSRFState & SessionState>(options: CSRFOptions) => MiddlewareHandler<TState>`                                                                 | Creates the session-bound double-submit CSRF protection battery.                                                                                                                                                     |
+| `createCSRF`        | function | `<TState extends CSRFState & SessionState>(options: CSRFOptions) => MiddlewareHandler<TState>`                                                                 | Creates the CSRF protection battery: a signed double submit bound to the session the client holds, or to the battery's own nonce cookie when it holds none.                                                          |
 | `only`              | function | `<TState>(paths: string \| readonly string[], handler: MiddlewareHandler<TState>) => MiddlewareHandler<TState>`                                                | Scopes a battery to the paths its route patterns match and nowhere else — outside them it steps aside through `next()`.                                                                                              |
 | `except`            | function | `<TState>(paths: string \| readonly string[], handler: MiddlewareHandler<TState>) => MiddlewareHandler<TState>`                                                | Scopes a battery to every path its route patterns do not match — on the matched paths it steps aside through `next()`.                                                                                               |
 
@@ -95,13 +95,13 @@ const handle = compose<State>([boundary, security], async (_request, context) =>
 | `Client`                    | interface | `{ ip? }`                                                                                            | Describes the resolved client connection facts `createForwarded` stashes.                                                                                                                                                                                                                                         |
 | `ClientState`               | interface | `{ client? }`                                                                                        | Describes the client-facts state slice `createForwarded` stashes.                                                                                                                                                                                                                                                 |
 | `SessionInterface`          | interface | `{ id, state, set(), delete(), clear() }`                                                            | Represents a server-managed session's public surface — an id, its live state, and the mutators that write it.                                                                                                                                                                                                     |
-| `SessionControlInterface`   | interface | `{ destroyed, successor, regenerate(), destroy() }`                                                  | Describes the mid-handler control handle `createSession` stashes alongside the session itself — the OWASP anti-fixation / logout primitives.                                                                                                                                                                      |
+| `SessionControlInterface`   | interface | `{ destroyed, successor, fresh, regenerate(), destroy() }`                                           | Describes the mid-handler control handle `createSession` stashes alongside the session itself — the OWASP anti-fixation / logout primitives.                                                                                                                                                                      |
 | `SessionState`              | interface | `{ session?, control? }`                                                                             | Describes the session state slice `createSession` stashes.                                                                                                                                                                                                                                                        |
 | `BodyState`                 | interface | `{ body? }`                                                                                          | Describes the body state slice `createBody` stashes.                                                                                                                                                                                                                                                              |
 | `SessionStoreInterface`     | interface | `{ get(), set(), delete() }`                                                                         | Describes the pluggable session persistence seam `createSession`'s `store` option implements — a point-access store keyed by session id.                                                                                                                                                                          |
 | `SessionTransportInterface` | interface | `{ read(), write(), clear() }`                                                                       | Describes the transport seam `createSession`'s `transport` option implements — how a session id travels to and from the client (a signed cookie, a header, …).                                                                                                                                                    |
 | `SessionOptions`            | interface | `{ transport, store?, ttl?, lifetime?, capacity?, evict?, create?, mint?, required?, clock? }`       | Configures `createSession` — the generic session battery. The factory admits the bag whole, and a refusal is a `ContractError`. The bag must be a plain object; a class instance refuses.                                                                                                                         |
-| `CookieTransportOptions`    | interface | `{ name?, secret, cookie? }`                                                                         | Configures `createCookieTransport` — the signed-cookie `SessionTransportInterface`. The factory admits the bag whole, and a refusal is a `ContractError`. The bag must be a plain object; a class instance refuses.                                                                                               |
+| `CookieTransportOptions`    | interface | `{ name?, signer, cookie? }`                                                                         | Configures `createCookieTransport` — the signed-cookie `SessionTransportInterface`. The factory admits the bag whole, and a refusal is a `ContractError`. The bag must be a plain object; a class instance refuses.                                                                                               |
 | `HeaderTransportOptions`    | interface | `{ header? }`                                                                                        | Configures `createHeaderTransport` — the bare-header `SessionTransportInterface`. The factory admits the bag whole, and a refusal is a `ContractError`. The bag must be a plain object; a class instance refuses.                                                                                                 |
 | `MemorySessionStoreOptions` | interface | `{ capacity?, evict? }`                                                                              | Configures `createMemorySessionStore` — the default in-process `SessionStoreInterface`. The factory admits the bag whole, and a refusal is a `ContractError`. The bag must be a plain object; a class instance refuses.                                                                                           |
 | `SessionLimits`             | interface | `{ ttl?, lifetime? }`                                                                                | Describes the idle and absolute-lifetime thresholds a session store enforces — `sessionExpired`'s limits argument and both shipped stores' construction options. `createDatabaseSessionStore` admits the bag whole, and a refusal is a `ContractError`. The bag must be a plain object; a class instance refuses. |
@@ -110,8 +110,8 @@ const handle = compose<State>([boundary, security], async (_request, context) =>
 | `SessionEntry`              | interface | `{ session }`                                                                                        | Represents one in-process session entry — the payload `MemorySessionStore` holds against an id, alongside the same cursors a persisted row carries.                                                                                                                                                               |
 | `SessionSnapshot`           | interface | `{ id, state }`                                                                                      | Represents a session's serializable projection — the value `snapshotSession` produces and a durable store's `set` writes.                                                                                                                                                                                         |
 | `SessionRestoreFunction`    | type      | `(value: unknown) => SessionInterface \| undefined`                                                  | Rebuilds a session entity from an untrusted stored snapshot, or resolves `undefined` when the value is malformed.                                                                                                                                                                                                 |
-| `CSRFState`                 | interface | `{ csrf? }`                                                                                          | Describes the CSRF state slice `createCSRF` stashes — the raw token a safe-method response exposes for a subsequent mutating request to submit back.                                                                                                                                                              |
-| `CSRFOptions`               | interface | `{ secret, cookie?, header?, field?, safe? }`                                                        | Configures `createCSRF` — session-bound double-submit CSRF protection. The factory admits the bag whole, and a refusal is a `ContractError`. The bag must be a plain object; a class instance refuses.                                                                                                            |
+| `CSRFState`                 | interface | `{ csrf? }`                                                                                          | Describes the CSRF state slice `createCSRF` stashes — a token bound to the session the request arrived with, or to the battery's nonce, for the page to submit back.                                                                                                                                              |
+| `CSRFOptions`               | interface | `{ signer, cookie?, header?, field?, safe? }`                                                        | Configures `createCSRF` — signed double-submit CSRF protection, bound to the session the client holds or to the battery's own nonce. The factory admits the bag whole, and a refusal is a `ContractError`. The bag must be a plain object; a class instance refuses.                                              |
 | `MultipartFile`             | interface | `{ field, name, size, mime, validated, status, path }`                                               | Represents one staged multipart upload's public record — the shape the node-face `createMultipart` battery (`@orkestrel/middleware`) produces per uploaded file.                                                                                                                                                  |
 | `MultipartBody`             | interface | `{ files, fields }`                                                                                  | Describes the parsed multipart request body `createMultipart` stashes — files keyed by their field name, plus every plain text field.                                                                                                                                                                             |
 | `MultipartState`            | interface | `{ multipart? }`                                                                                     | Describes the multipart state slice `createMultipart` stashes.                                                                                                                                                                                                                                                    |
@@ -148,7 +148,7 @@ const handle = compose<State>([boundary, security], async (_request, context) =>
 
 | Name                       | Kind     | Signature                                                                                                                      | Summary                                                                             |
 | -------------------------- | -------- | ------------------------------------------------------------------------------------------------------------------------------ | ----------------------------------------------------------------------------------- |
-| `SessionControl`           | class    | `new (session: SessionInterface, create?: (id: string) => SessionInterface) => SessionControlInterface`                        | Records one request's session regeneration or destruction intent.                   |
+| `SessionControl`           | class    | `new (session: SessionInterface, create?: (id: string) => SessionInterface, fresh?: boolean) => SessionControlInterface`       | Records one request's session regeneration or destruction intent.                   |
 | `MemoryLimiterStore`       | class    | `new (options?: MemoryLimiterStoreOptions) => LimiterStoreInterface`                                                           | Stores fixed-window budgets with atomic admission and bounded LRU retention.        |
 | `MemoryAssetStore`         | class    | `new () => AssetStoreInterface`                                                                                                | Stores asset representations by key for the lifetime of the store.                  |
 | `createMemoryLimiterStore` | function | `(options?: MemoryLimiterStoreOptions) => LimiterStoreInterface`                                                               | Creates a bounded in-memory atomic limiter store.                                   |
@@ -187,10 +187,14 @@ const handle = compose<State>([boundary, security], async (_request, context) =>
 | `CHALLENGE_VALUE`                 | const | `Readonly<RegExp>`                                                                                     | Matches the characters RFC 6750 § 3 admits in a quoted auth-param value: `%x20-21 / %x23-5B / %x5D-7E`.                                                                                                                                            |
 | `DEFAULT_LIMITER_CAPACITY`        | const | `10000`                                                                                                | Holds `10_000`, the default maximum number of distinct rate-limit keys `createLimiter` tracks before LRU eviction.                                                                                                                                 |
 | `DEFAULT_LIMITER_MESSAGE`         | const | `"rate limit exceeded"`                                                                                | Holds `'rate limit exceeded'`, the default 429 body message `createLimiter` sends when a key is over budget.                                                                                                                                       |
-| `DEFAULT_SESSION_CAPACITY`        | const | `10000`                                                                                                | Holds `10_000`, the default maximum number of distinct session ids `createMemorySessionStore` tracks before LRU (by last write) eviction.                                                                                                          |
+| `DEFAULT_SESSION_CAPACITY`        | const | `10000`                                                                                                | Holds `10_000`, the default maximum number of distinct session ids `createMemorySessionStore` tracks before least-recently-used eviction.                                                                                                          |
 | `DEFAULT_SESSION_COOKIE`          | const | `"session"`                                                                                            | Names `'session'`, the default cookie `createCookieTransport` writes the signed session id under.                                                                                                                                                  |
 | `DEFAULT_SESSION_HEADER`          | const | `"session-id"`                                                                                         | Names `'session-id'`, the default header `createHeaderTransport` carries the session id in.                                                                                                                                                        |
-| `DEFAULT_CSRF_COOKIE`             | const | `"csrf"`                                                                                               | Names `'csrf'`, the default signed cookie `createCSRF` writes the CSRF token under.                                                                                                                                                                |
+| `DEFAULT_CSRF_COOKIE`             | const | `"csrf"`                                                                                               | Names `'csrf'`, the default cookie `createCSRF` keeps its nonce in when the client holds no session.                                                                                                                                               |
+| `CSRF_LABEL`                      | const | `"csrf:"`                                                                                              | Opens every message `createCSRF` signs; its `:` lies outside the base64url alphabet, so no base64url `signToken` payload equals a CSRF message.                                                                                                    |
+| `CSRF_NONCE_BYTES`                | const | `32`                                                                                                   | Holds `32`, the byte count of a CSRF nonce and of a CSRF token's random part.                                                                                                                                                                      |
+| `CSRF_NONCE_PATTERN`              | const | `Readonly<RegExp>`                                                                                     | Matches a CSRF nonce or a CSRF token's random part: the 43 base64url characters that encode `CSRF_NONCE_BYTES` bytes.                                                                                                                              |
+| `CSRF_FIELD_TYPES`                | const | `readonly string[]`                                                                                    | Lists the media types whose body `createCSRF` reads its field from: the two the server decodes to a record.                                                                                                                                        |
 | `DEFAULT_CSRF_HEADER`             | const | `"x-csrf-token"`                                                                                       | Names `'x-csrf-token'`, the default header `createCSRF` reads a mutating request's submitted token from.                                                                                                                                           |
 | `DEFAULT_CSRF_FIELD`              | const | `"_csrf"`                                                                                              | Names `'_csrf'`, the default body field `createCSRF` falls back to reading a mutating request's submitted token from.                                                                                                                              |
 | `DEFAULT_CSRF_SAFE_METHODS`       | const | `readonly string[]`                                                                                    | Lists `['GET', 'HEAD', 'OPTIONS']`, the default methods `createCSRF` treats as safe (mint instead of verify).                                                                                                                                      |
@@ -227,12 +231,12 @@ const handle = compose<State>([boundary, security], async (_request, context) =>
 | `BEARER_CONTRACT`               | const | `import("@orkestrel/contract").ContractInterface<Readonly<{ verify: (...args: never[]) => unknown; } & { header?: string; scheme?: string; challenge?: { readonly [k: string]: string; }; }>>`                                                                                                                                                                                             | Admits `BearerOptions` whole for `createBearer`: a required function `verify`, string `header` and `scheme`, and a `challenge` record of strings.                                                                                                                                                                                                                                                                                                        |
 | `LIMITER_CONTRACT`              | const | `import("@orkestrel/contract").ContractInterface<Readonly<{ max: number; window: number; } & { store?: unknown; capacity?: number; key?: (...args: never[]) => unknown; message?: string; clock?: (...args: never[]) => unknown; policy?: boolean; evict?: (...args: never[]) => unknown; }>>`                                                                                             | Admits `LimiterOptions` whole for `createLimiter`: an integer `max` of at least 1, a positive finite `window`, an integer `capacity` of at least 1, and the declared functions; `store` is a foreign key that `LIMITER_STORE_FOREIGN` checks after admission.                                                                                                                                                                                            |
 | `SESSION_CONTRACT`              | const | `import("@orkestrel/contract").ContractInterface<Readonly<{ transport: unknown; } & { store?: unknown; ttl?: number; lifetime?: number; capacity?: number; evict?: (...args: never[]) => unknown; create?: (...args: never[]) => unknown; mint?: (...args: never[]) => unknown; required?: boolean; clock?: (...args: never[]) => unknown; }>>`                                            | Admits `SessionOptions` whole for `createSession`: positive finite `ttl` and `lifetime`, an integer `capacity` of at least 1, and the declared functions; `transport` and `store` are foreign keys that `SESSION_TRANSPORT_FOREIGN` and `SESSION_STORE_FOREIGN` check after admission.                                                                                                                                                                   |
-| `COOKIE_TRANSPORT_CONTRACT`     | const | `import("@orkestrel/contract").ContractInterface<Readonly<{ secret: string \| readonly string[]; } & { name?: string; cookie?: Readonly<{} & { path?: string; domain?: string; maxAge?: number; httpOnly?: boolean; secure?: boolean; sameSite?: "Lax" \| "None" \| "Strict"; }>; }>>`                                                                                                     | Admits `CookieTransportOptions` whole for `createCookieTransport`: a string `name`, a `secret` that is a string or a string array, and an owned `cookie` record of the six optional members `@orkestrel/server` declares: string `path` and `domain`, a finite number `maxAge` (a non-finite value writes `Max-Age=NaN` or `Max-Age=Infinity` into `Set-Cookie`), boolean `httpOnly` and `secure`, and a `sameSite` of `'Strict'`, `'Lax'`, or `'None'`. |
+| `COOKIE_TRANSPORT_CONTRACT`     | const | `import("@orkestrel/contract").ContractInterface<Readonly<{ signer: unknown; } & { name?: string; cookie?: Readonly<{} & { path?: string; domain?: string; maxAge?: number; httpOnly?: boolean; secure?: boolean; sameSite?: "Lax" \| "None" \| "Strict"; }>; }>>`                                                                                                                         | Admits `CookieTransportOptions` whole for `createCookieTransport`: a string `name`, a required `signer`, checked as a foreign key, and an owned `cookie` record of the six optional members `@orkestrel/server` declares: string `path` and `domain`, a finite number `maxAge` (a non-finite value writes `Max-Age=NaN` or `Max-Age=Infinity` into `Set-Cookie`), boolean `httpOnly` and `secure`, and a `sameSite` of `'Strict'`, `'Lax'`, or `'None'`. |
 | `HEADER_TRANSPORT_CONTRACT`     | const | `import("@orkestrel/contract").ContractInterface<Readonly<{} & { header?: string; }>>`                                                                                                                                                                                                                                                                                                     | Admits `HeaderTransportOptions` whole for `createHeaderTransport`: a string `header`.                                                                                                                                                                                                                                                                                                                                                                    |
 | `SESSION_LIMITS_CONTRACT`       | const | `import("@orkestrel/contract").ContractInterface<Readonly<{} & { ttl?: number; lifetime?: number; }>>`                                                                                                                                                                                                                                                                                     | Admits `SessionLimits` whole for `createDatabaseSessionStore`: positive finite `ttl` and `lifetime`.                                                                                                                                                                                                                                                                                                                                                     |
 | `MEMORY_SESSION_STORE_CONTRACT` | const | `import("@orkestrel/contract").ContractInterface<Readonly<{} & { ttl?: number; lifetime?: number; capacity?: number; evict?: (...args: never[]) => unknown; }>>`                                                                                                                                                                                                                           | Admits `MemorySessionStoreOptions` whole for `createMemorySessionStore`: positive finite `ttl` and `lifetime`, an integer `capacity` of at least 1, and a function `evict`.                                                                                                                                                                                                                                                                              |
 | `MEMORY_LIMITER_STORE_CONTRACT` | const | `import("@orkestrel/contract").ContractInterface<Readonly<{} & { capacity?: number; evict?: (...args: never[]) => unknown; }>>`                                                                                                                                                                                                                                                            | Admits `MemoryLimiterStoreOptions` whole for `createMemoryLimiterStore`: an integer `capacity` of at least 1 and a function `evict`.                                                                                                                                                                                                                                                                                                                     |
-| `CSRF_CONTRACT`                 | const | `import("@orkestrel/contract").ContractInterface<Readonly<{ secret: string \| readonly string[]; } & { cookie?: string; header?: string; field?: string; safe?: readonly string[]; }>>`                                                                                                                                                                                                    | Admits `CSRFOptions` whole for `createCSRF`: a required `secret` that is a string or a string array, string `cookie`, `header`, and `field`, and a `safe` string array.                                                                                                                                                                                                                                                                                  |
+| `CSRF_CONTRACT`                 | const | `import("@orkestrel/contract").ContractInterface<Readonly<{ signer: unknown; } & { cookie?: string; header?: string; field?: string; safe?: readonly string[]; }>>`                                                                                                                                                                                                                        | Admits `CSRFOptions` whole for `createCSRF`: a required `signer` that `SIGNER_FOREIGN` checks after admission, string `cookie`, `header`, and `field`, and a `safe` string array.                                                                                                                                                                                                                                                                        |
 | `SCOPE_CONTRACT`                | const | `import("@orkestrel/contract").ContractInterface<Readonly<{ paths: string \| readonly string[]; handler: (...args: never[]) => unknown; } & {}>>`                                                                                                                                                                                                                                          | Admits the arguments of `only` and `except` whole: `paths` is a string or a string array, and `handler` is a function.                                                                                                                                                                                                                                                                                                                                   |
 | `ASSET_CONTRACT`                | const | `import("@orkestrel/contract").ContractInterface<Readonly<{ source: unknown; } & { store?: unknown; }>>`                                                                                                                                                                                                                                                                                   | Admits `AssetOptions` whole for `createAssets`: both keys are foreign, so `ASSET_SOURCE_FOREIGN` and `ASSET_STORE_FOREIGN` check them after admission.                                                                                                                                                                                                                                                                                                   |
 | `STATIC_CONTRACT`               | const | `import("@orkestrel/contract").ContractInterface<Readonly<{ root: string; } & { prefix?: string; index?: string; dotfiles?: "allow" \| "deny" \| "ignore"; cache?: number; etag?: boolean; fallback?: boolean \| Readonly<{} & { exclude?: string; }>; }>>`                                                                                                                                | Admits `StaticOptions` whole for `createStatic`: a non-empty string `root`, a non-negative finite `cache`, a `dotfiles` literal, and a `fallback` that is a boolean or `{ exclude? }`.                                                                                                                                                                                                                                                                   |
@@ -241,6 +245,7 @@ const handle = compose<State>([boundary, security], async (_request, context) =>
 | `LIMITER_STORE_FOREIGN`         | const | `import("./types.js").ForeignContract`                                                                                                                                                                                                                                                                                                                                                     | Holds the members `LimiterOptions.store` declares: `consume`.                                                                                                                                                                                                                                                                                                                                                                                            |
 | `SESSION_TRANSPORT_FOREIGN`     | const | `import("./types.js").ForeignContract`                                                                                                                                                                                                                                                                                                                                                     | Holds the members `SessionOptions.transport` declares: `read`, `write`, and `clear`.                                                                                                                                                                                                                                                                                                                                                                     |
 | `SESSION_STORE_FOREIGN`         | const | `import("./types.js").ForeignContract`                                                                                                                                                                                                                                                                                                                                                     | Holds the members `SessionOptions.store` declares: `get`, `set`, and `delete`.                                                                                                                                                                                                                                                                                                                                                                           |
+| `SIGNER_FOREIGN`                | const | `import("./types.js").ForeignContract`                                                                                                                                                                                                                                                                                                                                                     | Holds the members `CookieTransportOptions.signer` and `CSRFOptions.signer` declare: `sign` and `verify`.                                                                                                                                                                                                                                                                                                                                                 |
 | `ASSET_SOURCE_FOREIGN`          | const | `import("./types.js").ForeignContract`                                                                                                                                                                                                                                                                                                                                                     | Holds the members `AssetOptions.source` declares: `read`.                                                                                                                                                                                                                                                                                                                                                                                                |
 | `ASSET_STORE_FOREIGN`           | const | `import("./types.js").ForeignContract`                                                                                                                                                                                                                                                                                                                                                     | Holds the members `AssetOptions.store` declares: `get`, `set`, and `delete`.                                                                                                                                                                                                                                                                                                                                                                             |
 
@@ -276,26 +281,30 @@ const handle = compose<State>([boundary, security], async (_request, context) =>
 | `rebuildResponse`             | function | `(body: ConstructorParameters<typeof Response>[0], response: Response, headers?: ConstructorParameters<typeof Headers>[0]) => Response` | Rebuilds a `Response` around a replacement body while preserving its status/statusText — the buffered-response reconstruction shared by the compression and ETag batteries after they have consumed `response.arrayBuffer()`.                                                                                                                                     |
 | `compressResponse`            | function | `(request: Request, context: MiddlewareContext<unknown>, response: Response, options: CompressResponseOptions) => Promise<Response>`    | Runs the shared negotiate → skip → threshold → compress → header-set skeleton `createCompression` and `createNodeCompression` compose — response-body compression over a caller-supplied set of feature-detected codings.                                                                                                                                         |
 | `transferSessionState`        | function | `(from: SessionInterface, to: SessionInterface) => void`                                                                                | Copies every entry of one session's `state` into another — the regenerate state-carry `createSession`'s `control.regenerate()` applies.                                                                                                                                                                                                                           |
+| `matchesSessionState`         | function | `(before: ReadonlyMap<string, unknown>, after: ReadonlyMap<string, unknown>) => boolean`                                                | Checks whether two session states hold the same keys, each bound to the same value by `Object.is` — the test `createSession` applies to decide whether a handler wrote to a session.                                                                                                                                                                              |
+| `generateNonce`               | function | `() => string`                                                                                                                          | Generates a random nonce: 32 bytes from the platform's cryptographic source, as 43 base64url characters — the nonce `createCSRF` keeps in its cookie and a CSRF token's random part.                                                                                                                                                                              |
+| `signCSRFToken`               | function | `(signer: SignerInterface, binding: string) => Promise<string>`                                                                         | Signs a CSRF token bound to `binding`: `random.signature`, where `signature` is the signer's HMAC over `CSRF_LABEL`, `binding`, and `random`, so the token carries no form of the binding.                                                                                                                                                                        |
+| `verifyCSRFToken`             | function | `(signer: SignerInterface, binding: string, token: string) => Promise<boolean>`                                                         | Verifies a CSRF token against `binding`: the token's random part must match `CSRF_NONCE_PATTERN`, and its signature must be the signer's HMAC over `CSRF_LABEL`, `binding`, and that random part, under any held key.                                                                                                                                             |
 | `sessionExpired`              | function | `(cursors: SessionCursors, now: number, limits: SessionLimits) => boolean`                                                              | Checks whether a session has aged past its idle timeout or absolute lifetime as of `now` — the pure expiry predicate `MemorySessionStore` delegates to.                                                                                                                                                                                                           |
 | `snapshotSession`             | function | `(session: SessionInterface) => SessionSnapshot`                                                                                        | Snapshots a session's `state` into a plain, serializable record — the projection a durable store's `set` writes to disk.                                                                                                                                                                                                                                          |
 | `admitForeign`                | function | `(door: string, path: readonly string[], foreign: ForeignContract, value: unknown) => void`                                             | Admits one foreign implementation key against the members its published interface declares, accepting a class instance and unknown members.                                                                                                                                                                                                                       |
 | `admitOptions`                | function | `<T>(door: string, contract: ContractInterface<T>, value: unknown) => void`                                                             | Admits an options bag whole against its compiled contract, refusing a missing required key, an undeclared key, and a value outside a declared range.                                                                                                                                                                                                              |
 | `isPreflight`                 | function | `(method: string, headers: Headers) => boolean`                                                                                         | Determines whether a request is a CORS preflight — an `OPTIONS` request carrying an `Access-Control-Request-Method` header.                                                                                                                                                                                                                                       |
 | `buildClient`                 | function | `(ip: string \| undefined) => Client`                                                                                                   | Builds the `Client` slice `createForwarded` stashes, from the resolved client IP — a leaf shaping helper.                                                                                                                                                                                                                                                         |
-| `equalsConstantTime`          | function | `(a: string, b: string) => boolean`                                                                                                     | Compares two strings in constant time — `createCSRF`'s double-submit token comparison, avoiding a timing oracle on the submitted-vs-cookie match.                                                                                                                                                                                                                 |
+| `equalsConstantTime`          | function | `(a: string, b: string) => boolean`                                                                                                     | Compares two strings in constant time once their lengths match, so a per-character mismatch never changes how long the comparison takes.                                                                                                                                                                                                                          |
 
 ### Validators — web-standard
 
 Each guard in the following table is total: it accepts any input, returns `false` off-shape, and never throws.
 
-| Name               | Kind     | Signature                                              | Summary                                                                                                                                                                                                                                                                                                                                                                       |
-| ------------------ | -------- | ------------------------------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `isSession`        | function | `(value: unknown) => value is SessionInterface`        | Determines whether a value implements `SessionInterface` — a total structural guard: an `id` string, a `state` `Map`, and the `set`, `delete`, and `clear` mutators. Prototype-agnostic — accepts a plain object, a null-prototype object, and a class instance (a real `Session`), because a restored or stored session is routinely a class instance rather than a literal. |
-| `isSessionControl` | function | `(value: unknown) => value is SessionControlInterface` | Determines whether a value implements `SessionControlInterface` — a total structural guard: callable `regenerate` and `destroy`. Prototype-agnostic — accepts a plain object, a callable object, and a class instance (a real `SessionControl`). A member read that throws, as on a revoked proxy, answers false.                                                             |
-| `isMultipartFile`  | function | `(value: unknown) => value is MultipartFile`           | Determines whether a value is one staged `MultipartFile` record — a total structural guard checking every required field's shape.                                                                                                                                                                                                                                             |
-| `isMultipartBody`  | function | `(value: unknown) => value is MultipartBody`           | Determines whether a value implements `MultipartBody` — a total structural guard: `files` keyed by field name to arrays of `MultipartFile`, and a `fields` string record.                                                                                                                                                                                                     |
+| Name               | Kind     | Signature                                              | Summary                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  |
+| ------------------ | -------- | ------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `isSession`        | function | `(value: unknown) => value is SessionInterface`        | Determines whether a value implements `SessionInterface` — a total structural guard: an `id` string, a `state` `Map`, and the `set`, `delete`, and `clear` mutators. Prototype-agnostic — accepts a plain object, a null-prototype object, and a class instance (a real `Session`), because a restored or stored session is routinely a class instance rather than a literal.                                                                                                                                            |
+| `isSessionControl` | function | `(value: unknown) => value is SessionControlInterface` | Determines whether a value implements `SessionControlInterface` — a total structural guard over every declared member: boolean `destroyed` and `fresh`, a `successor` that is `undefined` or satisfies `isSession`, and callable `regenerate` and `destroy`. Prototype-agnostic — accepts a plain object, a callable object, and a class instance (a real `SessionControl`), and ignores unknown members. A value missing a declared member answers false, and so does a member read that throws, as on a revoked proxy. |
+| `isMultipartFile`  | function | `(value: unknown) => value is MultipartFile`           | Determines whether a value is one staged `MultipartFile` record — a total structural guard checking every required field's shape.                                                                                                                                                                                                                                                                                                                                                                                        |
+| `isMultipartBody`  | function | `(value: unknown) => value is MultipartBody`           | Determines whether a value implements `MultipartBody` — a total structural guard: `files` keyed by field name to arrays of `MultipartFile`, and a `fields` string record.                                                                                                                                                                                                                                                                                                                                                |
 
-Before 0.0.35, `isSessionControl` refused every class instance, a real `SessionControl` included.
+Before 0.0.35, `isSessionControl` refused every class instance, a real `SessionControl` included, and accepted any value with callable `regenerate` and `destroy`. From 0.0.35, it also requires `destroyed`, `successor`, and `fresh` at their declared types, so a value that carries only the two methods answers false.
 
 ### Helpers — node
 
@@ -399,7 +408,10 @@ the write path.
 `regenerate` is the OWASP anti-fixation primitive (rotate the id, keep the
 state); `destroy` ends the session outright. Both record intent
 synchronously; the store I/O and transport write happen after `next()`
-returns (`destroy` supersedes a prior `regenerate`).
+returns (`destroy` supersedes a prior `regenerate`). `fresh` is `true` for a
+session minted on this request, which the client holds no credential for
+until a write or a `regenerate` persists it; `createCSRF` reads it to bind a
+token to the battery's nonce instead.
 
 | Method       | Returns | Summary                                                                           |
 | ------------ | ------- | --------------------------------------------------------------------------------- |
@@ -519,7 +531,7 @@ prevents:
     cached `context.body()` already resolved.
 13. **`createSession` sits before `createCSRF`.** CSRF's session-binding —
     the security acceptance bar's CSRF item — requires `context.state.session`
-    to already be stashed.
+    and `context.state.control` to already be stashed.
 
 ### The security acceptance bar, as documented behavior
 
@@ -533,10 +545,10 @@ prevents:
     unconditional, with no opt-out.
 16. **Bearer.** `createBearer` returns a `401` for a missing, wrong-scheme, or empty token
     and for a credential `verify` refuses, and a throw from `verify` propagates
-    unchanged. With `verify: (token) => verifyToken(token, secret)`, `verifyToken` is
-    total over garbage, tampered, expired, or empty-rotation input — every failure
-    renders `401`, never a crash; verification is constant-time through
-    `crypto.subtle.verify`. The `401` is a returned response, so each outer
+    unchanged. With `verify: (token) => verifyToken(token, signer)`, `verifyToken` is
+    total over garbage, tampered, or expired input — every failure
+    renders `401`, never a crash; the signer server's `createSigner` returns
+    compares signature bytes only through `timingSafeEqual`. The `401` is a returned response, so each outer
     battery decorates it and `createBoundary`'s `report` never sees it; read
     refusals from `createTelemetry`'s status.
 17. **Limiter.** The key derivation never reads `X-Forwarded-For` itself (only
@@ -554,15 +566,26 @@ prevents:
     `prototype` scrub are the substrate's own `readBody` behavior
     (`ServerOptions.limit`) — this battery only drives the cache eagerly and
     maps its outcomes.
-19. **Session.** The default `MemorySessionStore` enforces both an idle
+19. **Session.** `createSession` stores a session, and writes its
+    credential, only after a handler writes to it or regenerates it. A write
+    is a `set`, `delete`, or `clear` that leaves the state holding other keys,
+    or other values by `Object.is`, than it held when the handler started; a
+    `set` of the value a key already holds is none, so replace a value rather
+    than changing it in place when the store is durable. A request with no
+    credential gets a session with `control.fresh` true, and when the handler
+    writes nothing, the store and the response carry no trace of it: a flood
+    of such requests leaves every written session in place. Since 0.0.35 the
+    session cookie first appears on the response to the first write, where
+    earlier releases set it on the first response. The default `MemorySessionStore` enforces both an idle
     timeout (`ttl`, lazy eviction on `get`) and an absolute lifetime
     (`lifetime`, evicting even a continuously-touched session — `created`
     is stamped once at first `set` and preserved across every later
     re-persist); it is also capacity-capped (`capacity`, default
-    `DEFAULT_SESSION_CAPACITY`) and evicts the least-recently-written id —
-    every `set` (not `get`) refreshes recency — invoking the optional
-    `evict` sink (throw-isolated) on a capacity eviction or an expired-entry
-    prune, but never for an explicit `delete`; `control.regenerate()` rotates the id while carrying the
+    `DEFAULT_SESSION_CAPACITY`) and evicts the least recently used id —
+    every `set` and every live `get` refreshes recency — in time that does
+    not grow with the store's size, invoking the optional
+    `evict` sink (throw-isolated) on a capacity eviction or an expired read,
+    but never for an explicit `delete`; `control.regenerate()` rotates the id while carrying the
     session's `state` over and invalidating the old id; a signed cookie
     transport inherits the full substrate injection-hardening matrix
     (`__Host-` spoof rejection, `Domain`/`Path` injection throws,
@@ -571,13 +594,30 @@ prevents:
     answers `404` when `required` is set and no session resolves or mints, and
     a consumer ending a session on `DELETE` mounts its own handler over
     `control.destroy()`.
-20. **CSRF.** With a session ahead, the minted token is bound to that
-    session's id (`signToken(sessionId)`) — a mutating request's recovered
-    bound id must equal its own session's id, so a token minted under
-    session A replayed against session B is `403` even with matching
-    double-submit halves; without a session, `createCSRF` falls back to
-    signed-random double-submit (documented weaker — no cross-session
-    binding is possible without one).
+20. **CSRF.** A token is `random.signature`, where `signature` is the
+    signer's HMAC over `CSRF_LABEL`, a binding, and `random`
+    (`signCSRFToken`), OWASP's signed double submit; it carries no form of the
+    binding. While the client holds a session (`state.session` with
+    `control.fresh` not true), the binding is the session id and the battery
+    writes no cookie, so a token minted under session A is `403` under
+    session B, and a nonce-bound token is `403` beside a session even with its
+    nonce cookie. While it holds none, the binding is the battery's own nonce:
+    a safe request without a valid nonce cookie mints one and sets it
+    HttpOnly, `SameSite=Lax`, and `Path=/` under `cookie`. Every request that
+    passes, safe or mutating, stashes a fresh token bound to the binding it
+    arrived with on `state.csrf`, so every tab's token verifies while the
+    session or the nonce holds. A mutating request submits its token in
+    `header`, or in `field` of an `application/json` or
+    `application/x-www-form-urlencoded` body; the battery reads no other body,
+    so a multipart form sends its token in the header, and its stream stays
+    unread for `createMultipart`. The token format changed in 0.0.35: a token
+    an earlier release issued stops verifying at the upgrade, so a page
+    rendered before it must reload before its next write. A handler that
+    starts a session (the first write to a fresh one), regenerates it, or
+    destroys it changes the binding: `state.csrf` in that handler holds a
+    token bound to the binding the request arrived with, and tokens minted
+    earlier stop verifying under the new one. Such a handler answers with a
+    redirect; § CSRF: redirect after a session change states the contract.
 21. **Static.** Every served response is opened as a `FileHandle` and its
     headers (`Content-Length`/`ETag`) are computed from that same handle's
     `fstat` — the bytes `streamFile` later reads can never diverge from the
@@ -679,10 +719,11 @@ import type {
 	IdentifierState,
 	SessionState,
 } from '@orkestrel/middleware'
-import { compose, verifyToken } from '@orkestrel/server'
+import { compose, createSigner, verifyToken } from '@orkestrel/server'
 
 interface State extends BearerState, ClientState, CSRFState, IdentifierState, SessionState {}
 
+const signer = createSigner('shh')
 const onion = [
 	createTelemetry({ record: (entry) => console.log(entry) }),
 	createCompression(),
@@ -692,11 +733,11 @@ const onion = [
 	createCors({ origin: ['https://app.example'] }),
 	createForwarded({ proxies: 1 }),
 	createETag(),
-	createBearer({ verify: (token) => verifyToken(token, 'shh') }),
+	createBearer({ verify: (token) => verifyToken(token, signer) }),
 	createLimiter({ max: 100, window: 60_000 }),
 	createBody(),
-	createSession({ transport: createCookieTransport({ secret: 'shh' }) }),
-	createCSRF({ secret: 'shh' }),
+	createSession({ transport: createCookieTransport({ signer }) }),
+	createCSRF({ signer }),
 ]
 
 const handle = compose<State>(onion, async (_request, context) => {
@@ -769,9 +810,16 @@ const session = createSession<import('@orkestrel/middleware').SessionInterface, 
 
 // Inside a handler downstream of `session`:
 declare const context: { readonly state: State }
+context.state.session?.set('user', 'u_1') // the first write stores the session and writes its id
 context.state.control?.regenerate() // rotate the id after a privilege change (anti-fixation)
 context.state.control?.destroy() // end the session outright
 ```
+
+A request with no credential reaches the handler with a session whose `control.fresh` is
+`true`. The battery stores it, and the transport writes its id, only after the handler writes
+to it or regenerates it, so the session header or cookie first appears on the response to that
+write. A request that reads a session and writes nothing leaves the store untouched beyond the
+store's own `get`.
 
 ### Session store seam — direct calls
 
@@ -836,20 +884,44 @@ await transport.write(response, 'abc', false) // sets the session-id header
 transport.clear(response) // removes it
 ```
 
-### CSRF: session-bound double-submit
+### CSRF: signed double submit over one signer
 
-The fence mounts the CSRF battery behind a cookie-transport session, which is what binds each minted token to that session's id.
+The fence mounts the CSRF battery behind a cookie-transport session, which binds each token a held session mints to that session's id.
 
 ```ts
 import { createCSRF, createSession, createCookieTransport } from '@orkestrel/middleware'
+import { createSigner } from '@orkestrel/server'
 import type { CSRFState, SessionState } from '@orkestrel/middleware'
 
 interface State extends SessionState, CSRFState {}
 
+const signer = createSigner(['current-secret', 'previous-secret'])
 const session = createSession<import('@orkestrel/middleware').SessionInterface, State>({
-	transport: createCookieTransport({ secret: 'session-secret' }),
+	transport: createCookieTransport({ signer }),
 })
-const csrf = createCSRF({ secret: 'csrf-secret' }) // session ahead binds the token to its id
+const csrf = createCSRF({ signer }) // session ahead binds the token to its id
+```
+
+No option takes a secret. `CookieTransportOptions.signer` and `CSRFOptions.signer` each take a
+`SignerInterface`, and a bag that still carries `secret` refuses as an undeclared key. Create the
+signer once per secret list with `createSigner` from `@orkestrel/server` and share it between the
+batteries: `createSigner` creates every key at that call, so no request imports a key. One signer
+is safe for both because a CSRF message opens with `CSRF_LABEL`, which no `signToken` payload can
+equal, and a CSRF token sent as the session cookie resolves no session.
+
+### CSRF: redirect after a session change
+
+A handler that starts a session (the first write to a fresh one), regenerates it, or destroys it
+answers with a redirect to a page, such as a `303` to `/account`. The tokens the client holds
+were bound to the session or nonce the request arrived with, and `state.csrf` in that handler
+still is; the page the redirect loads renders a token from the session the client then holds.
+
+```ts
+import type { CSRFState, SessionState } from '@orkestrel/middleware'
+
+declare const context: { readonly url: URL; readonly state: SessionState & CSRFState }
+context.state.control?.regenerate() // after a login check passes
+const response = Response.redirect(new URL('/account', context.url), 303)
 ```
 
 ### Multipart: node face, sniffed-type allow-list
@@ -957,9 +1029,10 @@ still served through the fallback, because the operator configured that path.
   way out.** `createSession` applies store I/O and transport writes after
   `next()` resolves: `destroy()` → `store.delete` + `transport.clear`;
   `regenerate()` → `store.set` the new session, `store.delete` the old,
-  `transport.write` the new id; otherwise → `store.set` the resolved/minted
-  session, `transport.write` only when freshly minted. `destroy()`
-  supersedes a prior `regenerate()`.
+  `transport.write` the new id; otherwise, after a write → `store.set` the
+  resolved or minted session, `transport.write` only when it was minted on
+  this request; otherwise nothing. `destroy()` supersedes a prior
+  `regenerate()`.
 
 ### Admission: option bags admitted whole
 
@@ -967,7 +1040,7 @@ Every factory admits its options bag whole through the strict `admitValue` funct
 
 Each refusal is a `ContractError`, and the message leads with the factory name. A refusal from `admitOptions` reports the first fault's path in `context.path`, every fault in `cause`, and, for an undeclared key, the declared keys in the message. `createForwarded` admits a union of its two forms, so its refusal carries the root path `[]` and a message that lists both forms. A foreign-key check (`admitForeign`) reports the key as `context.path`, such as `['store']`, with a message of the form `createSession: options.store must be an object with function members get, set, delete`. `renderChallenge` and the `createBearer` refusal of a `challenge` that names `error` report `['scheme']` or `['challenge', name]` as `context.path`, and carry no `cause`.
 
-An implementation key (`LimiterOptions.store`, `SessionOptions.transport`, `SessionOptions.store`, `AssetOptions.source`, and `AssetOptions.store`) is a foreign contract. The bag's contract carries it as present or absent, and `admitForeign` then checks each member the published interface declares, accepts a class instance and unknown members, and refuses a value that is not an object with every declared member a function, with a `ContractError` at the key. It reports the first implementation key that fails, in one sentence that names every member the interface declares, such as `get, set, delete`; it neither names the member that failed nor reports a fault for each member. The `cookie` record of `CookieTransportOptions` is an owned plain record the caller writes: the bag's contract admits its six members (`path`, `domain`, `maxAge`, `httpOnly`, `secure`, `sameSite`) and refuses any other key, so `maxage` refuses. `maxAge` is a finite number because a non-finite value writes `Max-Age=NaN` or `Max-Age=Infinity` into `Set-Cookie`.
+An implementation key (`LimiterOptions.store`, `SessionOptions.transport`, `SessionOptions.store`, `CookieTransportOptions.signer`, `CSRFOptions.signer`, `AssetOptions.source`, and `AssetOptions.store`) is a foreign contract. The bag's contract carries it as present or absent, and `admitForeign` then checks each member the published interface declares, accepts a class instance and unknown members, and refuses a value that is not an object with every declared member a function, with a `ContractError` at the key. It reports the first implementation key that fails, in one sentence that names every member the interface declares, such as `get, set, delete`; it neither names the member that failed nor reports a fault for each member. The `cookie` record of `CookieTransportOptions` is an owned plain record the caller writes: the bag's contract admits its six members (`path`, `domain`, `maxAge`, `httpOnly`, `secure`, `sameSite`) and refuses any other key, so `maxage` refuses. `maxAge` is a finite number because a non-finite value writes `Max-Age=NaN` or `Max-Age=Infinity` into `Set-Cookie`.
 
 ```ts
 import {
@@ -1012,6 +1085,7 @@ admitForeign('createSession', ['store'], store, {}) // throws a ContractError at
 import { Session, SessionControl } from '@orkestrel/middleware'
 
 const control = new SessionControl(new Session('original'))
+console.log(control.fresh) // false
 control.regenerate()
 console.log(control.successor?.id)
 control.destroy()
@@ -1135,7 +1209,9 @@ console.log(extractFieldToken({ csrf: 'credential' }, 'csrf'))
   the entity shape (`id`, an independent `state` view and its mutators per instance).
 - [`tests/src/server/stores/MemorySessionStore.test.ts`](../tests/src/server/stores/MemorySessionStore.test.ts) —
   construction guards, get/set/delete, idle + absolute-lifetime eviction,
-  `created` stamped once and preserved across re-set.
+  `created` stamped once and preserved across re-set, recency refreshed by a
+  live read, one eviction per insert at capacity, and the cost row that bounds
+  the time of an insert at capacity in a store of 4n sessions against one of n.
 - [`tests/src/server/stores/DatabaseSessionStore.test.ts`](../tests/src/server/stores/DatabaseSessionStore.test.ts) —
   get/set/delete over a real `@orkestrel/database` memory-driver table, idle +
   absolute-lifetime eviction (including the underlying row's removal),
@@ -1151,7 +1227,8 @@ console.log(extractFieldToken({ csrf: 'credential' }, 'csrf'))
   `resolveKey` precedence, `buildRetryAfter`/`buildRateLimitField`/
   `buildRateLimitPolicyField` exact wire strings, `matchesTrustedEntry`/
   `resolveForwardedFor` matrices, `detectEncodings`, `compressBytes`, buffering-eligibility
-  predicates, `transferSessionState`, `isPreflight`, `buildClient`,
+  predicates, `transferSessionState`, `matchesSessionState`, `generateNonce`,
+  `signCSRFToken` and `verifyCSRFToken` over the malformed-token table, `isPreflight`, `buildClient`,
   `admitOptions` and `admitForeign`, traversal and SPA-fallback resolution, byte-signature matching, node zlib
   compression, multipart limit resolution, boundary extraction, part-header
   parsing, `streamFile`'s pull-driven backpressure and descriptor release, and
