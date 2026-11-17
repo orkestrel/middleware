@@ -22,9 +22,7 @@ import {
 	holdsValue,
 	isHttpOnlyCookie,
 	listCORSHeaders,
-	listGreenCells,
 	listHeldValues,
-	listRedCells,
 	openSession,
 	readArms,
 	readBodies,
@@ -40,8 +38,7 @@ import {
 
 // The composed-stack oracle: a real `Server`, a real dispatcher, and a proxy fixture in front of
 // the full onion. Each expectation comes from a declared invariant, from what the fixture itself
-// sent or appended, or from a bare-route control; none comes from battery code. A cell the base
-// holds red registers as `it.fails` and names the unit that closes it.
+// sent or appended, or from a bare-route control; none comes from battery code.
 
 const stacks = await startStacks()
 const oracle = stacks.orders.oracle
@@ -56,25 +53,15 @@ describe('invariant 1: no 5xx unless the handler threw a non-HTTPError', () => {
 		expect(reply.status).toBe(500)
 	})
 
-	for (const cell of listGreenCells(FAULT_CELLS))
+	for (const cell of FAULT_CELLS)
 		it(`${cell.title}`, async () => {
-			expect((await driveCell(oracle, cell, createCookieJar())).status).toBeLessThan(500)
-		})
-
-	for (const cell of listRedCells(FAULT_CELLS))
-		it.fails(`${cell.title} [red until ${cell.closer}]`, async () => {
 			expect((await driveCell(oracle, cell, createCookieJar())).status).toBeLessThan(500)
 		})
 })
 
 describe('invariant 2: the credentialed and uncredentialed arms agree, route by route', () => {
-	for (const cell of listGreenCells(ARM_CELLS))
+	for (const cell of ARM_CELLS)
 		it(`${cell.title}`, async () => {
-			expect(await readArms(oracle, cell)).toEqual({ granted: 200, refused: true })
-		})
-
-	for (const cell of listRedCells(ARM_CELLS))
-		it.fails(`${cell.title} [red until ${cell.closer}]`, async () => {
 			expect(await readArms(oracle, cell)).toEqual({ granted: 200, refused: true })
 		})
 })
@@ -83,14 +70,8 @@ describe('invariant 3: the resolved IP is the socket peer or a hop the fixture a
 	const direct = FORWARDED_CELLS.filter((cell) => !cell.proxied)
 	const proxied = FORWARDED_CELLS.filter((cell) => cell.proxied)
 
-	for (const cell of listGreenCells(direct))
+	for (const cell of direct)
 		it(`${cell.title}`, async () => {
-			const { resolved, expected } = await readForwarded(stacks, cell)
-			expect(resolved).toBe(expected)
-		})
-
-	for (const cell of listRedCells(direct))
-		it.fails(`${cell.title} [red until ${cell.closer}]`, async () => {
 			const { resolved, expected } = await readForwarded(stacks, cell)
 			expect(resolved).toBe(expected)
 		})
@@ -105,14 +86,8 @@ describe('invariant 3: the resolved IP is the socket peer or a hop the fixture a
 				expect(requireValue(oracle.hops.at(-1))).not.toBe(oracle.peer)
 			})
 
-			for (const cell of listGreenCells(proxied))
+			for (const cell of proxied)
 				it(`${cell.title}`, async () => {
-					const { resolved, expected } = await readForwarded(stacks, cell)
-					expect(resolved).toBe(expected)
-				})
-
-			for (const cell of listRedCells(proxied))
-				it.fails(`${cell.title} [red until ${cell.closer}]`, async () => {
 					const { resolved, expected } = await readForwarded(stacks, cell)
 					expect(resolved).toBe(expected)
 				})
@@ -173,14 +148,8 @@ describe('invariant 4: no script-readable value holds the session id', () => {
 })
 
 describe('invariant 5: Vary: Origin sits on every response and preflight in list mode', () => {
-	for (const cell of listGreenCells(VARY_CELLS))
+	for (const cell of VARY_CELLS)
 		it(`${cell.title}`, async () => {
-			const { observed, expected } = await readVaryCell(oracle, cell)
-			expect(observed).toEqual(expected)
-		})
-
-	for (const cell of listRedCells(VARY_CELLS))
-		it.fails(`${cell.title} [red until ${cell.closer}]`, async () => {
 			const { observed, expected } = await readVaryCell(oracle, cell)
 			expect(observed).toEqual(expected)
 		})
@@ -203,14 +172,8 @@ describe('invariant 5: Vary: Origin sits on every response and preflight in list
 		expect(listCORSHeaders(reply.headers)).toEqual([])
 	})
 
-	for (const cell of listGreenCells(CANONICAL_VARY_CELLS))
+	for (const cell of CANONICAL_VARY_CELLS)
 		it(`${cell.title}`, async () => {
-			const { observed, expected } = await readVaryCell(stacks.orders.canonical, cell)
-			expect(observed).toEqual(expected)
-		})
-
-	for (const cell of listRedCells(CANONICAL_VARY_CELLS))
-		it.fails(`${cell.title} [red until ${cell.closer}]`, async () => {
 			const { observed, expected } = await readVaryCell(stacks.orders.canonical, cell)
 			expect(observed).toEqual(expected)
 		})
@@ -282,14 +245,8 @@ describe('invariant 7: security headers sit on redirects and on errors', () => {
 		expect(SECURITY_HEADERS.filter((name) => !reply.headers.has(name))).toEqual([])
 	})
 
-	for (const cell of listGreenCells(HEADER_CELLS))
+	for (const cell of HEADER_CELLS)
 		it(`${cell.title}`, async () => {
-			const { observed, expected } = await readSecurityCell(oracle, cell)
-			expect(observed).toEqual(expected)
-		})
-
-	for (const cell of listRedCells(HEADER_CELLS))
-		it.fails(`${cell.title} [red until ${cell.closer}]`, async () => {
 			const { observed, expected } = await readSecurityCell(oracle, cell)
 			expect(observed).toEqual(expected)
 		})
@@ -299,14 +256,8 @@ describe('invariant 7: security headers sit on redirects and on errors', () => {
 		expect(SECURITY_HEADERS.filter((name) => !reply.headers.has(name))).toEqual([])
 	})
 
-	for (const cell of listGreenCells(CANONICAL_HEADER_CELLS))
+	for (const cell of CANONICAL_HEADER_CELLS)
 		it(`${cell.title}`, async () => {
-			const { observed, expected } = await readSecurityCell(stacks.orders.canonical, cell)
-			expect(observed).toEqual(expected)
-		})
-
-	for (const cell of listRedCells(CANONICAL_HEADER_CELLS))
-		it.fails(`${cell.title} [red until ${cell.closer}]`, async () => {
 			const { observed, expected } = await readSecurityCell(stacks.orders.canonical, cell)
 			expect(observed).toEqual(expected)
 		})
@@ -335,13 +286,8 @@ describe('invariant 8: no 206 is content-coded', () => {
 		})
 	})
 
-	for (const cell of listGreenCells(RANGE_CELLS))
+	for (const cell of RANGE_CELLS)
 		it(`${cell.title}`, async () => {
-			expect(await readRangeCell(stacks, cell)).toEqual({ status: 206, coding: null })
-		})
-
-	for (const cell of listRedCells(RANGE_CELLS))
-		it.fails(`${cell.title} [red until ${cell.closer}]`, async () => {
 			expect(await readRangeCell(stacks, cell)).toEqual({ status: 206, coding: null })
 		})
 })

@@ -47,8 +47,6 @@ import {
 	holdsValue,
 	isHttpOnlyCookie,
 	listCORSHeaders,
-	listGreenCells,
-	listRedCells,
 	listVary,
 	readSecurityHeaders,
 	renderForwardedNode,
@@ -60,7 +58,7 @@ import {
 	refuseSession,
 	STACK_BOUNDARY,
 } from './setupServer.js'
-import type { StackCloser, StackReply } from './setupServer.js'
+import type { StackReply } from './setupServer.js'
 import type { SessionState } from '@src/server'
 import { createHeaderTransport, createSession } from '@src/server'
 import { MiddlewareValue, buildTestRequest, createTestContext } from './setup.js'
@@ -635,16 +633,6 @@ describe('the composed-stack fixtures', () => {
 		expect(Object.keys(read)).toEqual([...SECURITY_HEADERS])
 		expect(read['x-content-type-options']).toBe('nosniff')
 		expect(read['x-frame-options']).toBeNull()
-	})
-
-	it('splits a table into green and red cells by closer, in table order', () => {
-		const cells: ReadonlyArray<{ readonly title: string; readonly closer?: StackCloser }> = [
-			{ title: 'a' },
-			{ title: 'b', closer: 'M3' },
-			{ title: 'c' },
-		]
-		expect(listGreenCells(cells).map((cell) => cell.title)).toEqual(['a', 'c'])
-		expect(listRedCells(cells).map((cell) => cell.closer)).toEqual(['M3'])
 	})
 
 	it('adds the CSRF header only when a token is given', () => {

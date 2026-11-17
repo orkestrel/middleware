@@ -1647,9 +1647,6 @@ export type StackArrangement = 'oracle' | 'canonical' | 'deadline'
 /** Names the compression battery a stack mounts: `createCompression` or `createNodeCompression`. */
 export type StackEngine = 'web' | 'node'
 
-/** Names the unit that turns a red oracle cell green. */
-export type StackCloser = 'M3' | 'M6'
-
 /** Carries every state slice a battery of the composed stack reads or writes. */
 export interface StackState
 	extends
@@ -1709,11 +1706,10 @@ export interface StackReply {
 	readonly text: string
 }
 
-/** Describes one oracle cell: the request it sends with the CSRF token or without it, and the unit that closes it when the base holds it red. */
+/** Describes one oracle cell: the request it sends with the CSRF token or without it. */
 export interface StackCell {
 	readonly title: string
 	readonly build: (token: string | undefined) => StackRequest
-	readonly closer?: StackCloser
 }
 
 /** Describes one oracle cell whose route answers a status the fixture knows. */
@@ -1728,7 +1724,6 @@ export interface StackForwardedCell {
 	readonly proxied: boolean
 	readonly headers: Readonly<Record<string, string>>
 	readonly expect: 'peer' | 'hop'
-	readonly closer?: StackCloser
 }
 
 /** Describes one ranged-response cell: the compression battery its stack mounts and the request it sends. */
@@ -1923,42 +1918,6 @@ export function buildUploadRequest(token: string | undefined): StackRequest {
 		headers: buildTokenHeaders(token, { 'content-type': contentType }),
 		body: new Blob([Buffer.from(body)]),
 	}
-}
-
-/**
- * Lists the cells of a table the base holds green: those that name no closing unit.
- *
- * @param cells - The table
- * @returns The cells with no `closer`, in table order
- *
- * @example
- * ```ts
- * listGreenCells(FAULT_CELLS).every((cell) => cell.closer === undefined) // true
- * ```
- */
-export function listGreenCells<TCell extends { readonly closer?: StackCloser }>(
-	cells: readonly TCell[],
-): readonly TCell[] {
-	return cells.filter((cell) => cell.closer === undefined)
-}
-
-/**
- * Lists the cells of a table the base holds red: those that name the unit that closes them.
- *
- * @param cells - The table
- * @returns The cells with a `closer`, in table order
- *
- * @example
- * ```ts
- * listRedCells(FAULT_CELLS).map((cell) => cell.closer) // []
- * ```
- */
-export function listRedCells<TCell extends { readonly closer?: StackCloser }>(
-	cells: readonly TCell[],
-): ReadonlyArray<TCell & { readonly closer: StackCloser }> {
-	return cells.filter(
-		(cell): cell is TCell & { readonly closer: StackCloser } => cell.closer !== undefined,
-	)
 }
 
 /** Lists invariant 1's cells: each request through the oracle stack, which answers no 5xx unless its handler threw a non-`HTTPError`. */
