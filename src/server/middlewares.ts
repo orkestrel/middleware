@@ -30,6 +30,7 @@ import type { CookieOptions, MiddlewareHandler } from '@orkestrel/server'
 import { realpath } from 'node:fs/promises'
 import { relative, resolve as resolvePath } from 'node:path'
 import { ContractError, isArray, isError, isRecord, isString } from '@orkestrel/contract'
+import { compilePath } from '@orkestrel/router'
 import {
 	clearCookie,
 	HTTPError,
@@ -115,6 +116,7 @@ import {
 	extractBearerToken,
 	extractFieldToken,
 	isDotfilePath,
+	matchesScope,
 	matchesUnbufferableResponse,
 	isPreflight,
 	openStaticFile,
@@ -433,8 +435,7 @@ export function createForwarded<TState extends ClientState>(
 	const trust = 'proxies' in options ? { proxies: options.proxies } : { trusted: options.trusted }
 	return async (request, context, next) => {
 		const header = request.headers.get('x-forwarded-for') ?? undefined
-		const resolved = resolveForwardedFor(header, trust)
-		const ip = resolved ?? context.connection.ip
+		const ip = resolveForwardedFor(header, trust, context.connection.ip)
 		Object.assign(context.state, { client: buildClient(ip) })
 		return next()
 	}
@@ -780,18 +781,31 @@ export function createCSRF<TState extends CSRFState & SessionState>(
 }
 
 /**
- * Scopes a battery to a set of exact pathnames and nowhere else — outside that set
- * it steps aside through `next()`.
+ * Scopes a battery to the paths its route patterns match and nowhere else — outside
+ * them it steps aside through `next()`.
+ *
+ * @remarks
+ * Each pattern compiles through the router's `compilePath` and matches
+ * `context.url.pathname` through its `matchPath`: case-sensitive whatever the
+ * dispatcher's `sensitive` option, with one trailing slash optional, so `/admin`
+ * covers `/admin` and `/admin/`. Under a dispatcher created with `sensitive: false`,
+ * a case variant such as `/ADMIN` reaches the `/admin` route but falls outside the
+ * pattern, so the battery does not run. A pattern covers no path beneath it: `/admin`
+ * skips `/admin/users`. Add `/admin/*rest` to cover the paths beneath, and `:name`
+ * matches one segment.
  *
  * @typeParam TState - The consumer's opaque per-request state type
- * @param paths - One pathname, or a set of pathnames, matched exactly against `context.url.pathname`
- * @param handler - The battery to run when `paths` matches
+ * @param paths - One route pattern, or a set of route patterns
+ * @param handler - The battery to run when a pattern matches
  * @returns A `MiddlewareHandler<TState>`
- * @throws {ContractError} When `paths` is not a string or a string array, or `handler` is not a function
+ * @throws {ContractError} When `paths` is not a string or a string array, `handler` is not a function, or a pattern places a `*name` wildcard before its final segment
  *
  * @example
  * ```ts
- * const scoped = only('/admin', createBearer({ verify: (token) => verifyToken(token, secret) }))
+ * const scoped = only(
+ * 	['/admin', '/admin/*rest'],
+ * 	createBearer({ verify: (token) => verifyToken(token, secret) }),
+ * )
  * ```
  */
 export function only<TState>(
@@ -799,22 +813,29 @@ export function only<TState>(
 	handler: MiddlewareHandler<TState>,
 ): MiddlewareHandler<TState> {
 	admitOptions('only', SCOPE_CONTRACT, { paths, handler })
-	const matches = new Set(isString(paths) ? [paths] : paths)
+	const patterns = (isString(paths) ? [paths] : paths).map((path) => compilePath(path))
 	return async (request, context, next) => {
-		if (matches.has(context.url.pathname)) return handler(request, context, next)
+		if (matchesScope(patterns, context.url.pathname)) return handler(request, context, next)
 		return next()
 	}
 }
 
 /**
- * Scopes a battery to every pathname outside a set of exact ones — on that set it
- * steps aside through `next()`.
+ * Scopes a battery to every path its route patterns do not match — on the matched
+ * paths it steps aside through `next()`.
+ *
+ * @remarks
+ * A pattern matches as `only` documents: through the router's `compilePath` and
+ * `matchPath`, case-sensitive whatever the dispatcher's `sensitive` option, with one
+ * trailing slash optional, and covering no path beneath it unless it ends in a `*name`
+ * wildcard. Under a dispatcher created with `sensitive: false`, a case variant such as
+ * `/ADMIN` reaches the `/admin` route but falls outside the pattern, so the battery runs.
  *
  * @typeParam TState - The consumer's opaque per-request state type
- * @param paths - One pathname, or a set of pathnames, matched exactly against `context.url.pathname`
- * @param handler - The battery to run when `paths` does not match
+ * @param paths - One route pattern, or a set of route patterns
+ * @param handler - The battery to run when no pattern matches
  * @returns A `MiddlewareHandler<TState>`
- * @throws {ContractError} When `paths` is not a string or a string array, or `handler` is not a function
+ * @throws {ContractError} When `paths` is not a string or a string array, `handler` is not a function, or a pattern places a `*name` wildcard before its final segment
  *
  * @example
  * ```ts
@@ -826,9 +847,9 @@ export function except<TState>(
 	handler: MiddlewareHandler<TState>,
 ): MiddlewareHandler<TState> {
 	admitOptions('except', SCOPE_CONTRACT, { paths, handler })
-	const matches = new Set(isString(paths) ? [paths] : paths)
+	const patterns = (isString(paths) ? [paths] : paths).map((path) => compilePath(path))
 	return async (request, context, next) => {
-		if (matches.has(context.url.pathname)) return next()
+		if (matchesScope(patterns, context.url.pathname)) return next()
 		return handler(request, context, next)
 	}
 }

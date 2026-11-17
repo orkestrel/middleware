@@ -24,6 +24,7 @@ import type {
 } from './types.js'
 import type { Stats } from 'node:fs'
 import type { FileHandle } from 'node:fs/promises'
+import type { CompiledPath } from '@orkestrel/router'
 import type { Connection, Encoding, MiddlewareContext } from '@orkestrel/server'
 import { createReadStream } from 'node:fs'
 import {
@@ -39,6 +40,7 @@ import { copyFile, open, readFile, realpath, rename, stat, unlink } from 'node:f
 import { extname, isAbsolute, join, normalize, relative, resolve, sep } from 'node:path'
 import { promisify } from 'node:util'
 import { brotliDecompressSync, deflate as zlibDeflate, gzip as zlibGzip } from 'node:zlib'
+import { matchPath } from '@orkestrel/router'
 import type { ContractInterface } from '@orkestrel/contract'
 import {
 	admitValue,
@@ -49,7 +51,6 @@ import {
 	isArrayBuffer,
 	isError,
 	isFiniteNumber,
-	isInteger,
 	isObject,
 	isRecord,
 	isString,
@@ -59,6 +60,7 @@ import {
 import {
 	CHALLENGE_TOKEN,
 	CHALLENGE_VALUE,
+	CIDR_LENGTH,
 	DEFAULT_CONTENT_TYPE,
 	DEFAULT_STATIC_INDEX,
 	DEFAULT_MULTIPART_FIELD_SIZE,
@@ -67,6 +69,8 @@ import {
 	DEFAULT_MULTIPART_FILE_COUNT,
 	DEFAULT_MULTIPART_TOTAL,
 	EXTENSION_TYPES,
+	IPV4_ADDRESS,
+	IPV4_MAPPED_PREFIX,
 	RESERVED_DEVICE_NAMES,
 } from './constants.js'
 
@@ -90,6 +94,26 @@ export function isUnderPath(pathname: string, prefix: string): boolean {
 	if (pathname === prefix) return true
 	const boundary = prefix.endsWith('/') ? prefix : `${prefix}/`
 	return pathname.startsWith(boundary)
+}
+
+/**
+ * Checks whether a request pathname matches any compiled scope pattern — the test
+ * `only` and `except` apply, through the router's own `matchPath`.
+ *
+ * @param patterns - The patterns, each compiled by the router's `compilePath`
+ * @param pathname - The request pathname, `context.url.pathname`
+ * @returns True if any pattern matches `pathname`; false otherwise
+ *
+ * @example
+ * ```ts
+ * import { compilePath } from '@orkestrel/router'
+ *
+ * matchesScope([compilePath('/admin')], '/admin/') // true
+ * matchesScope([compilePath('/admin')], '/admin/users') // false
+ * ```
+ */
+export function matchesScope(patterns: readonly CompiledPath[], pathname: string): boolean {
+	return patterns.some((pattern) => matchPath(pattern, pathname) !== undefined)
 }
 
 /**
@@ -1000,22 +1024,19 @@ export function buildRateLimitPolicyField(max: number, window: number): string {
 }
 
 /**
- * Checks whether a candidate address is a bare (non-CIDR) trusted-hop match — an
- * exact string match, or a simple prefix-CIDR match for IPv4 (`/8`–`/32`).
- * An IPv6 entry matches by exact string only — there is no IPv6 CIDR
- * support.
+ * Checks whether a candidate address is a trusted-hop match — an exact match, or a
+ * prefix-CIDR match for IPv4 (`/8`–`/32`), with an IPv4-mapped address compared by
+ * its embedded IPv4. An IPv6 entry matches by exact string only — there is no IPv6
+ * CIDR support.
  *
  * @remarks
- * Supports exact addresses and dotted-decimal IPv4 CIDR (`10.0.0.0/8`
- * through `/32`) verbatim. An IPv6 entry is matched by exact string only
- * (no CIDR expansion) — documented as the supported subset; `createForwarded`
- * never claims full CIDR generality beyond IPv4.
- *
- * @remarks
- * An IPv6 `trusted` roster entry is compared as an exact string — it must be
- * supplied in canonical form (no zero-compression normalization, no case
- * folding) by the caller; this function performs no IPv6 normalization of
- * its own.
+ * An IPv4-mapped address (`::ffff:a.b.c.d`, in either case), on either side,
+ * compares as its embedded IPv4, so `::ffff:10.0.0.6` matches `10.0.0.6` and
+ * `10.0.0.0/8`. A CIDR entry reads its network and the candidate only as four
+ * decimal octets from 0 to 255, with no sign, hex digit, leading zero, or empty
+ * octet, and its prefix length only as a decimal from 8 to 32; anything else is
+ * no match. Any other address or entry, IPv6 included, compares as an exact
+ * string, with no zero-compression normalization and no case folding.
  *
  * @param address - The candidate hop address
  * @param entry - One `trusted` roster entry — an exact address or an IPv4 CIDR
@@ -1024,22 +1045,22 @@ export function buildRateLimitPolicyField(max: number, window: number): string {
  * @example
  * ```ts
  * matchesTrustedEntry('10.1.2.3', '10.0.0.0/8') // true
+ * matchesTrustedEntry('::ffff:10.1.2.3', '10.0.0.0/8') // true
+ * matchesTrustedEntry('0x0a.1.2.3', '10.0.0.0/8') // false
  * matchesTrustedEntry('192.168.1.1', '10.0.0.0/8') // false
  * ```
  */
 export function matchesTrustedEntry(address: string, entry: string): boolean {
+	const candidate = address.replace(IPV4_MAPPED_PREFIX, '')
 	const slash = entry.indexOf('/')
-	if (slash === -1) return address === entry
+	if (slash === -1) return candidate === entry.replace(IPV4_MAPPED_PREFIX, '')
 	const network = entry.slice(0, slash)
-	const bits = Number(entry.slice(slash + 1))
-	const networkParts = network.split('.')
-	const addressParts = address.split('.')
-	if (networkParts.length !== 4 || addressParts.length !== 4) return false
-	if (!isInteger(bits) || bits < 8 || bits > 32) return false
-	const networkOctets = networkParts.map(Number)
-	const addressOctets = addressParts.map(Number)
-	if (networkOctets.some((value) => !isInteger(value) || value < 0 || value > 255)) return false
-	if (addressOctets.some((value) => !isInteger(value) || value < 0 || value > 255)) return false
+	const length = entry.slice(slash + 1)
+	if (!CIDR_LENGTH.test(length)) return false
+	if (!IPV4_ADDRESS.test(network) || !IPV4_ADDRESS.test(candidate)) return false
+	const bits = Number(length)
+	const networkOctets = network.split('.').map(Number)
+	const addressOctets = candidate.split('.').map(Number)
 	const networkInt =
 		((networkOctets[0] ?? 0) << 24) |
 		((networkOctets[1] ?? 0) << 16) |
@@ -1055,52 +1076,51 @@ export function matchesTrustedEntry(address: string, entry: string): boolean {
 }
 
 /**
- * Walks `X-Forwarded-For` right-to-left and resolves the first untrusted hop
- * address — `createForwarded`'s core algorithm.
+ * Resolves the client address from `X-Forwarded-For` and the socket peer —
+ * `createForwarded`'s core algorithm.
  *
  * @remarks
- * Parses `X-Forwarded-For` only. With `proxies` set, trusts exactly that
- * many hops counted from the right (the closest to this server) and returns
- * the next one left of them; with `trusted` set, trusts every consecutive
- * hop from the right that matches one of the roster
- * ({@link matchesTrustedEntry}) and returns the first hop that does not. If
- * the rightmost hop (the immediate sender) does not match the roster, the
- * whole header is untrustworthy and this returns `undefined` rather than
- * returning any client-supplied hop value. When every hop is trusted, or the
- * header is absent/empty, returns `undefined` (the caller falls back to the
- * socket peer).
+ * Reads `X-Forwarded-For` only, and skips its empty entries. With `proxies`
+ * set, each of that many proxies appended one hop, so the client is the hop
+ * at index `length − proxies`: one proxy resolves the rightmost hop. A header
+ * with fewer hops than `proxies` resolves the socket peer. With `trusted` set,
+ * the walk starts at the socket peer and moves left through every address
+ * that matches the roster ({@link matchesTrustedEntry}); the first address
+ * that does not match is the client. An untrusted or unknown socket peer is
+ * therefore the client, and its header is never read. When the peer and every
+ * hop match, the leftmost hop is the client.
  *
  * @param header - The raw `X-Forwarded-For` header value (comma-separated hops), if present
  * @param trust - The {@link ForwardedOptions} form in force — a trusted hop count or a `trusted` CIDR/exact roster
- * @returns The first untrusted hop address, or `undefined` when none qualifies
+ * @param peer - The socket peer address, `context.connection.ip`, if known
+ * @returns The resolved client address, or `undefined` when the resolution reaches an unknown socket peer
  *
  * @example
  * ```ts
- * resolveForwardedFor('203.0.113.7, 10.0.0.1', { proxies: 1 }) // '203.0.113.7'
+ * resolveForwardedFor('203.0.113.7, 10.0.0.1', { proxies: 1 }, '10.0.0.2') // '10.0.0.1'
+ * resolveForwardedFor('203.0.113.7, 10.0.0.1', { trusted: ['10.0.0.0/8'] }, '10.0.0.2') // '203.0.113.7'
+ * resolveForwardedFor('203.0.113.7, 10.0.0.1', { trusted: ['10.0.0.0/8'] }, '198.51.100.9') // '198.51.100.9'
  * ```
  */
 export function resolveForwardedFor(
 	header: string | undefined,
 	trust: ForwardedOptions,
+	peer: string | undefined,
 ): string | undefined {
-	if (header === undefined) return undefined
-	const hops = header
+	const hops = (header ?? '')
 		.split(',')
 		.map((hop) => hop.trim())
 		.filter((hop) => hop.length > 0)
-	if (hops.length === 0) return undefined
 	if ('proxies' in trust) {
-		const index = hops.length - trust.proxies - 1
-		return index >= 0 ? hops[index] : undefined
+		const index = hops.length - trust.proxies
+		return index >= 0 ? hops[index] : peer
 	}
-	const rightmost = hops[hops.length - 1]
-	if (rightmost === undefined) return undefined
-	const rightmostTrusted = trust.trusted.some((entry) => matchesTrustedEntry(rightmost, entry))
-	if (!rightmostTrusted) return undefined
-	return hops
-		.slice(0, -1)
-		.reverse()
-		.find((hop) => !trust.trusted.some((entry) => matchesTrustedEntry(hop, entry)))
+	const chain = [peer, ...hops.toReversed()]
+	const index = chain.findIndex(
+		(address) =>
+			address === undefined || !trust.trusted.some((entry) => matchesTrustedEntry(address, entry)),
+	)
+	return index === -1 ? chain.at(-1) : chain[index]
 }
 
 /**

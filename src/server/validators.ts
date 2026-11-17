@@ -5,6 +5,7 @@ import type {
 	SessionInterface,
 } from './types.js'
 import {
+	holds,
 	isArray,
 	isBoolean,
 	isFunction,
@@ -33,18 +34,21 @@ import {
  */
 export function isSession(value: unknown): value is SessionInterface {
 	if (!isObject(value)) return false
-	const id: unknown = Reflect.get(value, 'id')
-	const state: unknown = Reflect.get(value, 'state')
-	if (!isString(id) || !isInstance(state, Map)) return false
-	const set: unknown = Reflect.get(value, 'set')
-	const remove: unknown = Reflect.get(value, 'delete')
-	const clear: unknown = Reflect.get(value, 'clear')
-	return isFunction(set) && isFunction(remove) && isFunction(clear)
+	return holds(
+		() =>
+			isString(Reflect.get(value, 'id')) &&
+			isInstance(Reflect.get(value, 'state'), Map) &&
+			isFunction(Reflect.get(value, 'set')) &&
+			isFunction(Reflect.get(value, 'delete')) &&
+			isFunction(Reflect.get(value, 'clear')),
+	)
 }
 
 /**
  * Determines whether a value implements {@link SessionControlInterface} — a
- * total structural guard: callable `regenerate` and `destroy`.
+ * total structural guard: callable `regenerate` and `destroy`. Prototype-agnostic
+ * — accepts a plain object, a callable object, and a class instance (a real
+ * `SessionControl`). A member read that throws, as on a revoked proxy, answers false.
  *
  * @param value - The candidate value
  * @returns True if `value` is shaped like a {@link SessionControlInterface}; false otherwise
@@ -52,11 +56,14 @@ export function isSession(value: unknown): value is SessionInterface {
  * @example
  * ```ts
  * isSessionControl({ regenerate() {}, destroy() {} }) // true
+ * isSessionControl(new SessionControl(new Session('a'))) // true
  * ```
  */
 export function isSessionControl(value: unknown): value is SessionControlInterface {
-	if (!isRecord(value)) return false
-	return isFunction(value.regenerate) && isFunction(value.destroy)
+	if (!isObject(value) && !isFunction(value)) return false
+	return holds(
+		() => isFunction(Reflect.get(value, 'regenerate')) && isFunction(Reflect.get(value, 'destroy')),
+	)
 }
 
 /**

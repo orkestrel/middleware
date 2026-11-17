@@ -36,7 +36,19 @@ import {
 	SECOND_DEVICE_CANDIDATES,
 	spreadBag,
 	withoutKey,
+	appendForwardedHops,
+	buildTokenHeaders,
+	holdsValue,
+	isHttpOnlyCookie,
+	listCorsHeaders,
+	listGreenCells,
+	listRedCells,
+	listVary,
+	readSecurityHeaders,
+	renderForwardedNode,
+	SECURITY_HEADERS,
 } from './setupServer.js'
+import type { StackCloser } from './setupServer.js'
 
 // ── tests/setupServer.ts — the Node-only fixtures ─────────────────────────────
 //
@@ -430,5 +442,74 @@ describe('the admission tables', () => {
 		expect(runAdmission(deadline, admitted).refusal).toBeUndefined()
 		expect(runAdmission(deadline, refused).refusal).toBe('ContractError')
 		expect(runAdmission(deadline, refused).path).toEqual(['status'])
+	})
+})
+
+describe('the composed-stack fixtures', () => {
+	it('renders an IPv4 node bare, an IPv6 node quoted in brackets, and an absent one as unknown', () => {
+		expect(renderForwardedNode('127.0.0.1')).toBe('127.0.0.1')
+		expect(renderForwardedNode('::1')).toBe('"[::1]"')
+		expect(renderForwardedNode(undefined)).toBe('unknown')
+	})
+
+	it('appends one hop to both forwarding headers and drops Connection', () => {
+		const written = appendForwardedHops(
+			{ 'x-forwarded-for': '198.51.100.66', forwarded: 'for=198.51.100.66', connection: 'close' },
+			'127.0.0.1',
+		)
+		expect(written['x-forwarded-for']).toBe('198.51.100.66, 127.0.0.1')
+		expect(written.forwarded).toBe('for=198.51.100.66, for=127.0.0.1')
+		expect(written.connection).toBeUndefined()
+		expect(appendForwardedHops({}, '127.0.0.1')['x-forwarded-for']).toBe('127.0.0.1')
+	})
+
+	it('finds a value nested in base64url JSON twice over, and not one the text lacks', () => {
+		const inner = Buffer.from(JSON.stringify({ value: 'lamp-id-7' })).toString('base64url')
+		const outer = Buffer.from(JSON.stringify({ value: inner })).toString('base64url')
+		expect(holdsValue(`${outer}.signature`, 'lamp-id-7')).toBe(true)
+		expect(holdsValue(encodeURIComponent(outer), 'lamp-id-7')).toBe(true)
+		expect(holdsValue(`${outer}.signature`, 'wick-id-9')).toBe(false)
+	})
+
+	it('reads HttpOnly as an attribute after the pair, in any case, and never in the value', () => {
+		expect(isHttpOnlyCookie('sid=abc; Path=/; HttpOnly')).toBe(true)
+		expect(isHttpOnlyCookie('sid=abc; httponly')).toBe(true)
+		expect(isHttpOnlyCookie('HttpOnly=abc; Path=/')).toBe(false)
+	})
+
+	it('lists Vary names lower-cased and CORS header names by prefix', () => {
+		expect(listVary(new Headers({ vary: 'Accept-Encoding, Origin' }))).toEqual([
+			'accept-encoding',
+			'origin',
+		])
+		expect(listVary(new Headers())).toEqual([])
+		expect(
+			listCorsHeaders(new Headers({ 'access-control-allow-origin': '*', vary: 'Origin' })),
+		).toEqual(['access-control-allow-origin'])
+	})
+
+	it('reads every declared security header, null where absent', () => {
+		const read = readSecurityHeaders(new Headers({ 'x-content-type-options': 'nosniff' }))
+		expect(Object.keys(read)).toEqual([...SECURITY_HEADERS])
+		expect(read['x-content-type-options']).toBe('nosniff')
+		expect(read['x-frame-options']).toBeNull()
+	})
+
+	it('splits a table into green and red cells by closer, in table order', () => {
+		const cells: ReadonlyArray<{ readonly title: string; readonly closer?: StackCloser }> = [
+			{ title: 'a' },
+			{ title: 'b', closer: 'M3' },
+			{ title: 'c' },
+		]
+		expect(listGreenCells(cells).map((cell) => cell.title)).toEqual(['a', 'c'])
+		expect(listRedCells(cells).map((cell) => cell.closer)).toEqual(['M3'])
+	})
+
+	it('adds the CSRF header only when a token is given', () => {
+		expect(buildTokenHeaders('abc', { accept: 'text/html' })).toEqual({
+			accept: 'text/html',
+			'x-csrf-token': 'abc',
+		})
+		expect(buildTokenHeaders(undefined, { accept: 'text/html' })).toEqual({ accept: 'text/html' })
 	})
 })

@@ -1,4 +1,11 @@
-import { isMultipartBody, isMultipartFile, isSession, isSessionControl, Session } from '@src/server'
+import {
+	isMultipartBody,
+	isMultipartFile,
+	isSession,
+	isSessionControl,
+	Session,
+	SessionControl,
+} from '@src/server'
 import { describe, expect, it } from 'vitest'
 import { buildSession } from '../../setup.js'
 
@@ -60,11 +67,49 @@ describe('isSession', () => {
 		expect(isSession({ id: 1, state: new Map() })).toBe(false)
 		expect(isSession({})).toBe(false)
 	})
+
+	it('answers false, never throws, for a revoked proxy', () => {
+		const revocable = Proxy.revocable(new Session('a'), {})
+		revocable.revoke()
+		expect(isSession(revocable.proxy)).toBe(false)
+	})
+
+	it('answers false, never throws, for a throwing accessor', () => {
+		const throwing = Object.defineProperty(
+			{ id: 'a', set: () => undefined, delete: () => true, clear: () => undefined },
+			'state',
+			{
+				get: () => {
+					throw new Error('unreadable member')
+				},
+			},
+		)
+		expect(isSession(throwing)).toBe(false)
+	})
 })
 
 describe('isSessionControl', () => {
 	it('accepts a value with callable regenerate and destroy', () => {
 		expect(isSessionControl({ regenerate: () => undefined, destroy: () => undefined })).toBe(true)
+	})
+
+	it('accepts a real SessionControl class instance', () => {
+		expect(isSessionControl(new SessionControl(new Session('a')))).toBe(true)
+	})
+
+	it('accepts a callable object carrying regenerate and destroy', () => {
+		expect(
+			isSessionControl(
+				Object.assign(() => undefined, { regenerate: () => undefined, destroy: () => undefined }),
+			),
+		).toBe(true)
+	})
+
+	it('rejects a class instance that lacks destroy', () => {
+		class RegenerateOnly {
+			regenerate(): void {}
+		}
+		expect(isSessionControl(new RegenerateOnly())).toBe(false)
 	})
 
 	it('rejects hostile inputs totally', () => {
@@ -74,6 +119,18 @@ describe('isSessionControl', () => {
 		expect(isSessionControl({ regenerate: () => undefined })).toBe(false)
 		expect(isSessionControl({ regenerate: 'nope', destroy: () => undefined })).toBe(false)
 		expect(isSessionControl({})).toBe(false)
+	})
+
+	it('answers false, never throws, for a revoked proxy and a throwing accessor', () => {
+		const revocable = Proxy.revocable(new SessionControl(new Session('a')), {})
+		revocable.revoke()
+		const throwing = Object.defineProperty({ destroy: () => undefined }, 'regenerate', {
+			get: () => {
+				throw new Error('unreadable member')
+			},
+		})
+		expect(isSessionControl(revocable.proxy)).toBe(false)
+		expect(isSessionControl(throwing)).toBe(false)
 	})
 })
 
