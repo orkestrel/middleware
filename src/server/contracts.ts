@@ -4,23 +4,23 @@ import {
 	createContract,
 	functionShape,
 	integerShape,
+	interfaceShape,
 	literalShape,
 	numberShape,
 	objectShape,
 	optionalShape,
-	rawShape,
 	recordShape,
 	stringShape,
 	unionShape,
 } from '@orkestrel/contract'
-import { buildForeignContract } from './combinators.js'
 
 /**
  * Admits `BoundaryOptions` whole for `createBoundary`: a boolean `expose` and a function `report`.
  *
  * @remarks
- * Every bag contract in this file refuses an undeclared key and a missing required key; a foreign
- * guard accepts a class instance and unknown members.
+ * Every bag contract in this file refuses an undeclared key and a missing required key; an
+ * `interfaceShape` key holds a class instance or a callable by identity and checks only its
+ * declared members.
  */
 export const BOUNDARY_CONTRACT = createContract(
 	objectShape({
@@ -132,12 +132,12 @@ export const BEARER_CONTRACT = createContract(
 
 /**
  * Admits `LimiterOptions` whole for `createLimiter`: an integer `max` of at least 1, a positive
- * finite `window`, an integer `capacity` of at least 1, and the declared functions; `store` is a
- * foreign key that {@link LIMITER_STORE_FOREIGN} checks after admission.
+ * finite `window`, an integer `capacity` of at least 1, and the declared functions; `store` is an
+ * implementation that declares the function `consume`.
  */
 export const LIMITER_CONTRACT = createContract(
 	objectShape({
-		store: optionalShape(rawShape({})),
+		store: optionalShape(interfaceShape({ consume: functionShape() })),
 		max: integerShape({ min: 1 }),
 		window: numberShape({ min: Number.MIN_VALUE }),
 		capacity: optionalShape(integerShape({ min: 1 })),
@@ -151,14 +151,20 @@ export const LIMITER_CONTRACT = createContract(
 
 /**
  * Admits `SessionOptions` whole for `createSession`: positive finite `ttl` and `lifetime`, an
- * integer `capacity` of at least 1, and the declared functions; `transport` and `store` are
- * foreign keys that {@link SESSION_TRANSPORT_FOREIGN} and {@link SESSION_STORE_FOREIGN} check
- * after admission.
+ * integer `capacity` of at least 1, and the declared functions; `transport` is an implementation
+ * that declares the functions `read`, `write`, and `clear`, and `store` one that declares `get`,
+ * `set`, and `delete`.
  */
 export const SESSION_CONTRACT = createContract(
 	objectShape({
-		transport: rawShape({}),
-		store: optionalShape(rawShape({})),
+		transport: interfaceShape({
+			read: functionShape(),
+			write: functionShape(),
+			clear: functionShape(),
+		}),
+		store: optionalShape(
+			interfaceShape({ get: functionShape(), set: functionShape(), delete: functionShape() }),
+		),
 		ttl: optionalShape(numberShape({ min: Number.MIN_VALUE })),
 		lifetime: optionalShape(numberShape({ min: Number.MIN_VALUE })),
 		capacity: optionalShape(integerShape({ min: 1 })),
@@ -172,7 +178,7 @@ export const SESSION_CONTRACT = createContract(
 
 /**
  * Admits `CookieTransportOptions` whole for `createCookieTransport`: a string `name`, a required
- * `signer`, checked as a foreign key, and an owned `cookie` record of the six optional members
+ * `signer` implementation that declares the functions `sign` and `verify`, and an owned `cookie` record of the six optional members
  * `@orkestrel/server` declares: string `path` and `domain`, a finite number `maxAge` (a
  * non-finite value writes `Max-Age=NaN` or `Max-Age=Infinity` into `Set-Cookie`), boolean
  * `httpOnly` and `secure`, and a `sameSite` of `'Strict'`, `'Lax'`, or `'None'`.
@@ -180,7 +186,7 @@ export const SESSION_CONTRACT = createContract(
 export const COOKIE_TRANSPORT_CONTRACT = createContract(
 	objectShape({
 		name: optionalShape(stringShape()),
-		signer: rawShape({}),
+		signer: interfaceShape({ sign: functionShape(), verify: functionShape() }),
 		cookie: optionalShape(
 			objectShape({
 				path: optionalShape(stringShape()),
@@ -235,12 +241,13 @@ export const MEMORY_LIMITER_STORE_CONTRACT = createContract(
 )
 
 /**
- * Admits `CSRFOptions` whole for `createCSRF`: a required `signer` that {@link SIGNER_FOREIGN}
- * checks after admission, string `cookie`, `header`, and `field`, and a `safe` string array.
+ * Admits `CSRFOptions` whole for `createCSRF`: a required `signer` implementation that declares
+ * the functions `sign` and `verify`, string `cookie`, `header`, and `field`, and a `safe` string
+ * array.
  */
 export const CSRF_CONTRACT = createContract(
 	objectShape({
-		signer: rawShape({}),
+		signer: interfaceShape({ sign: functionShape(), verify: functionShape() }),
 		cookie: optionalShape(stringShape()),
 		header: optionalShape(stringShape()),
 		field: optionalShape(stringShape()),
@@ -260,13 +267,15 @@ export const SCOPE_CONTRACT = createContract(
 )
 
 /**
- * Admits `AssetOptions` whole for `createAssets`: both keys are foreign, so
- * {@link ASSET_SOURCE_FOREIGN} and {@link ASSET_STORE_FOREIGN} check them after admission.
+ * Admits `AssetOptions` whole for `createAssets`: `source` is an implementation that declares the
+ * function `read`, and `store` one that declares `get`, `set`, and `delete`.
  */
 export const ASSET_CONTRACT = createContract(
 	objectShape({
-		source: rawShape({}),
-		store: optionalShape(rawShape({})),
+		source: interfaceShape({ read: functionShape() }),
+		store: optionalShape(
+			interfaceShape({ get: functionShape(), set: functionShape(), delete: functionShape() }),
+		),
 	}),
 )
 
@@ -331,21 +340,3 @@ export const UPLOADED_FILE_CONTRACT = createContract(
 		path: stringShape(),
 	}),
 )
-
-/** Holds the members `LimiterOptions.store` declares: `consume`. */
-export const LIMITER_STORE_FOREIGN = buildForeignContract(['consume'])
-
-/** Holds the members `SessionOptions.transport` declares: `read`, `write`, and `clear`. */
-export const SESSION_TRANSPORT_FOREIGN = buildForeignContract(['read', 'write', 'clear'])
-
-/** Holds the members `SessionOptions.store` declares: `get`, `set`, and `delete`. */
-export const SESSION_STORE_FOREIGN = buildForeignContract(['get', 'set', 'delete'])
-
-/** Holds the members `CookieTransportOptions.signer` and `CSRFOptions.signer` declare: `sign` and `verify`. */
-export const SIGNER_FOREIGN = buildForeignContract(['sign', 'verify'])
-
-/** Holds the members `AssetOptions.source` declares: `read`. */
-export const ASSET_SOURCE_FOREIGN = buildForeignContract(['read'])
-
-/** Holds the members `AssetOptions.store` declares: `get`, `set`, and `delete`. */
-export const ASSET_STORE_FOREIGN = buildForeignContract(['get', 'set', 'delete'])

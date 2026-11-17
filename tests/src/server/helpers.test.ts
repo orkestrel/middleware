@@ -1,11 +1,11 @@
-import type { CompressResponseOptions } from '@src/server'
+import type { AssetRepresentation, CompressResponseOptions } from '@src/server'
 import { join, resolve as resolvePath } from 'node:path'
 import { tmpdir } from 'node:os'
 import { open, readFile, realpath, writeFile } from 'node:fs/promises'
 import { randomUUID } from 'node:crypto'
 import { brotliCompressSync, gunzipSync, inflateSync } from 'node:zlib'
 import { describe, expect, it } from 'vitest'
-import { ContractError, attempt } from '@orkestrel/contract'
+import { ContractError, attempt, settle } from '@orkestrel/contract'
 import { compilePath } from '@orkestrel/router'
 import { createRecorder, waitForCondition } from '@orkestrel/test'
 import { createScratch } from '@orkestrel/test/server'
@@ -34,9 +34,7 @@ import {
 	sessionExpired,
 	snapshotSession,
 	transferSessionState,
-	admitForeign,
 	admitOptions,
-	buildForeignContract,
 	SESSION_LIMITS_CONTRACT,
 	computeFileETag,
 	buildAssetResponse,
@@ -134,9 +132,40 @@ describe('asset stages', () => {
 			{ body: new Uint8Array([0]) },
 			{ get: (target, key) => (key === 'body' ? 'text' : Reflect.get(target, key)) },
 		)
-		await expect(readAssetRecord({ read: () => malformed }, 'a.txt')).rejects.toThrow(
-			'AssetSourceInterface.read must return an AssetRepresentation',
+		const outcome = await settle(() => readAssetRecord({ read: () => malformed }, 'a.txt'))
+		expect(outcome.success).toBe(false)
+		expect(outcome.success ? undefined : outcome.error).toBeInstanceOf(ContractError)
+		if (outcome.success || !(outcome.error instanceof ContractError)) return
+		expect(outcome.error.code).toBe('structure')
+		expect(outcome.error.message).toBe(
+			'readAssetRecord: asset.body must be an ArrayBuffer or a Uint8Array',
 		)
+		expect(outcome.error.context?.path).toEqual(['asset', 'body'])
+	})
+
+	it('refuses a source that returns a non-object or an encoding other than br', async () => {
+		// JSON.parse supplies the malformed member, absorbed by the annotated binding.
+		const text: AssetRepresentation = JSON.parse('"text"')
+		const nonObject = await settle(() => readAssetRecord({ read: () => text }, 'a.txt'))
+		expect(nonObject.success).toBe(false)
+		expect(nonObject.success ? undefined : nonObject.error).toBeInstanceOf(ContractError)
+		if (nonObject.success || !(nonObject.error instanceof ContractError)) return
+		expect(nonObject.error.code).toBe('structure')
+		expect(nonObject.error.message).toBe(
+			'readAssetRecord: asset must be an AssetRepresentation object',
+		)
+		expect(nonObject.error.context?.path).toEqual(['asset'])
+		const gzip = new Proxy(
+			{ body: new Uint8Array([0]) },
+			{ get: (target, key) => (key === 'encoding' ? 'gzip' : Reflect.get(target, key)) },
+		)
+		const encoded = await settle(() => readAssetRecord({ read: () => gzip }, 'a.txt'))
+		expect(encoded.success).toBe(false)
+		expect(encoded.success ? undefined : encoded.error).toBeInstanceOf(ContractError)
+		if (encoded.success || !(encoded.error instanceof ContractError)) return
+		expect(encoded.error.code).toBe('structure')
+		expect(encoded.error.message).toBe("readAssetRecord: asset.encoding must be 'br' or undefined")
+		expect(encoded.error.context?.path).toEqual(['asset', 'encoding'])
 	})
 
 	it('builds negotiated HEAD and conditional responses from a record', async () => {
@@ -868,7 +897,7 @@ describe('moveUploadedFile', () => {
 				path: stagedPath,
 			})
 			const destination = join(directory.path, 'no', 'such', 'dir', 'final.png')
-			await expect(moveUploadedFile(staged, destination)).rejects.toBeDefined()
+			await expect(moveUploadedFile(staged, destination)).rejects.toMatchObject({ code: 'ENOENT' })
 		} finally {
 			directory.destroy()
 		}
@@ -2357,30 +2386,6 @@ describe('admitOptions', () => {
 		expect(outcome.error.cause).toMatchObject({
 			faults: [{ path: ['ttl'] }, { path: ['undeclared'] }],
 		})
-	})
-})
-
-describe('admitForeign', () => {
-	it('returns for a class instance and for unknown members', () => {
-		class Store {
-			readonly extra = 1
-			get(): undefined {
-				return undefined
-			}
-		}
-		const foreign = buildForeignContract(['get'])
-		expect(admitForeign('createSession', ['store'], foreign, new Store())).toBeUndefined()
-		expect(admitForeign('createSession', ['store'], foreign, { get: () => 1 })).toBeUndefined()
-	})
-
-	it('throws a ContractError naming the door, the key, and the expected members', () => {
-		const foreign = buildForeignContract(['get', 'set'])
-		const outcome = attempt(() => admitForeign('createSession', ['store'], foreign, { get: 1 }))
-		expect(outcome.success).toBe(false)
-		if (outcome.success || !(outcome.error instanceof ContractError)) return
-		expect(outcome.error.message).toContain('createSession: options.store must be')
-		expect(outcome.error.message).toContain('get, set')
-		expect(outcome.error.context?.path).toEqual(['store'])
 	})
 })
 

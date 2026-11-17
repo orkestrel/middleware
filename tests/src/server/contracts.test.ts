@@ -22,7 +22,9 @@ import {
 	STATIC_CONTRACT,
 	TELEMETRY_CONTRACT,
 	UPLOADED_FILE_CONTRACT,
+	admitOptions,
 } from '@src/server'
+import { attempt, ContractError, isRecord } from '@orkestrel/contract'
 import { requireValue } from '@orkestrel/test'
 import { describe, expect, it } from 'vitest'
 import { TEST_SIGNER } from '../../setup.js'
@@ -95,6 +97,129 @@ describe('contracts', () => {
 			)
 			expect(runAdmission(door, refused).refusal).toBe('ContractError')
 		}
+	})
+})
+
+const SIGN_VERIFY = ['sign', 'verify']
+const STORE_MEMBERS = ['get', 'set', 'delete']
+
+// Each implementation key declares the members its published interface lists; a missing member refuses
+// at the member's own path. Every row's door admits the bag whole through the contract's own.
+const IMPLEMENTATION_ROWS = [
+	{
+		door: 'createLimiter',
+		key: 'store',
+		members: ['consume'],
+		bag: { max: 1, window: 1_000 },
+		own: (bag: unknown) => LIMITER_CONTRACT.own(bag),
+		admit: (bag: unknown) => admitOptions('createLimiter', LIMITER_CONTRACT, bag),
+	},
+	{
+		door: 'createSession',
+		key: 'transport',
+		members: ['read', 'write', 'clear'],
+		bag: { store: { get: () => undefined, set: () => undefined, delete: () => undefined } },
+		own: (bag: unknown) => SESSION_CONTRACT.own(bag),
+		admit: (bag: unknown) => admitOptions('createSession', SESSION_CONTRACT, bag),
+	},
+	{
+		door: 'createSession',
+		key: 'store',
+		members: STORE_MEMBERS,
+		bag: { transport: { read: () => undefined, write: () => undefined, clear: () => undefined } },
+		own: (bag: unknown) => SESSION_CONTRACT.own(bag),
+		admit: (bag: unknown) => admitOptions('createSession', SESSION_CONTRACT, bag),
+	},
+	{
+		door: 'createCookieTransport',
+		key: 'signer',
+		members: SIGN_VERIFY,
+		bag: {},
+		own: (bag: unknown) => COOKIE_TRANSPORT_CONTRACT.own(bag),
+		admit: (bag: unknown) => admitOptions('createCookieTransport', COOKIE_TRANSPORT_CONTRACT, bag),
+	},
+	{
+		door: 'createCSRF',
+		key: 'signer',
+		members: SIGN_VERIFY,
+		bag: {},
+		own: (bag: unknown) => CSRF_CONTRACT.own(bag),
+		admit: (bag: unknown) => admitOptions('createCSRF', CSRF_CONTRACT, bag),
+	},
+	{
+		door: 'createAssets',
+		key: 'source',
+		members: ['read'],
+		bag: {},
+		own: (bag: unknown) => ASSET_CONTRACT.own(bag),
+		admit: (bag: unknown) => admitOptions('createAssets', ASSET_CONTRACT, bag),
+	},
+	{
+		door: 'createAssets',
+		key: 'store',
+		members: STORE_MEMBERS,
+		bag: { source: { read: () => undefined } },
+		own: (bag: unknown) => ASSET_CONTRACT.own(bag),
+		admit: (bag: unknown) => admitOptions('createAssets', ASSET_CONTRACT, bag),
+	},
+]
+
+describe.each(IMPLEMENTATION_ROWS)('$door implementation key $key', (row) => {
+	it('holds an implementation that carries its members on a prototype by identity', () => {
+		const implementation: object = Object.create(
+			Object.fromEntries(row.members.map((member) => [member, () => undefined])),
+		)
+		const outcome = row.own({ ...row.bag, [row.key]: implementation })
+		expect(outcome.success).toBe(true)
+		if (!outcome.success) return
+		const held: unknown = outcome.value
+		expect(isRecord(held)).toBe(true)
+		if (!isRecord(held)) return
+		expect(held[row.key]).toBe(implementation)
+	})
+
+	it('holds a callable that carries its members and an unknown member by identity', () => {
+		const implementation = Object.assign(
+			() => undefined,
+			Object.fromEntries([...row.members, 'unknown'].map((member) => [member, () => undefined])),
+		)
+		const outcome = row.own({ ...row.bag, [row.key]: implementation })
+		expect(outcome.success).toBe(true)
+		if (!outcome.success) return
+		const held: unknown = outcome.value
+		expect(isRecord(held)).toBe(true)
+		if (!isRecord(held)) return
+		expect(held[row.key]).toBe(implementation)
+	})
+
+	it.each(row.members)('refuses an implementation that lacks %s at the member path', (member) => {
+		const implementation = Object.fromEntries(
+			row.members.filter((entry) => entry !== member).map((entry) => [entry, () => undefined]),
+		)
+		const outcome = attempt(() => row.admit({ ...row.bag, [row.key]: implementation }))
+		expect(outcome.success).toBe(false)
+		if (outcome.success || !(outcome.error instanceof ContractError)) return
+		expect(outcome.error.message).toContain(`${row.door}: `)
+		expect(outcome.error.code).toBe('structure')
+		expect(outcome.error.context?.path).toEqual([row.key, member])
+	})
+
+	it.each(row.members)('refuses an implementation whose %s is not a function', (member) => {
+		const implementation = Object.fromEntries([
+			...row.members.filter((entry) => entry !== member).map((entry) => [entry, () => undefined]),
+			[member, 1],
+		])
+		const outcome = attempt(() => row.admit({ ...row.bag, [row.key]: implementation }))
+		expect(outcome.success).toBe(false)
+		if (outcome.success || !(outcome.error instanceof ContractError)) return
+		expect(outcome.error.context?.path).toEqual([row.key, member])
+	})
+
+	it('refuses a value that is not an object at the key path', () => {
+		const outcome = attempt(() => row.admit({ ...row.bag, [row.key]: 'implementation' }))
+		expect(outcome.success).toBe(false)
+		if (outcome.success || !(outcome.error instanceof ContractError)) return
+		expect(outcome.error.context?.path).toEqual([row.key])
 	})
 })
 

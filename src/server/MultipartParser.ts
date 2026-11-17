@@ -3,6 +3,7 @@ import { randomUUID } from 'node:crypto'
 import { chmod, mkdtemp, unlink } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { settle } from '@orkestrel/contract'
 import { isDangerousKey } from '@orkestrel/server'
 import {
 	DEFAULT_CONTENT_TYPE,
@@ -231,11 +232,8 @@ export class MultipartParser {
 	// Unlinks one staged temp file best-effort and drops it from the staged
 	// roster, leaving the roster untouched when the path is not on it.
 	async #discard(path: string): Promise<void> {
-		try {
-			await unlink(path)
-		} catch {
-			// Already gone — cleanup is best-effort.
-		}
+		// A file already gone is a miss; cleanup is best-effort.
+		await settle(() => unlink(path))
 		const index = this.#staged.indexOf(path)
 		if (index !== -1) this.#staged.splice(index, 1)
 	}
@@ -248,11 +246,8 @@ export class MultipartParser {
 
 	async #cleanup(): Promise<void> {
 		for (const path of this.#staged) {
-			try {
-				await unlink(path)
-			} catch {
-				// Already gone — cleanup is best-effort.
-			}
+			// A file already gone is a miss; cleanup is best-effort.
+			await settle(() => unlink(path))
 		}
 	}
 

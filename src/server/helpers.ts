@@ -6,7 +6,6 @@ import type {
 	Client,
 	ClientState,
 	CompressResponseOptions,
-	ForeignContract,
 	ForwardedOptions,
 	MultipartBody,
 	SessionCursors,
@@ -44,19 +43,23 @@ import { brotliDecompressSync, deflate as zlibDeflate, gzip as zlibGzip } from '
 import { matchPath } from '@orkestrel/router'
 import type { ContractInterface } from '@orkestrel/contract'
 import {
-	admitValue,
 	attempt,
 	ContractError,
 	describeFaults,
 	extractPath,
 	isArrayBuffer,
-	isError,
+	isCodedError,
 	isFiniteNumber,
 	isObject,
 	isRecord,
 	isString,
 	isUint8Array,
+	literalOf,
+	optionalOf,
+	orOf,
 	preview,
+	refuseValue,
+	settle,
 } from '@orkestrel/contract'
 import {
 	CHALLENGE_TOKEN,
@@ -254,12 +257,8 @@ export async function resolveContainedRealPath(
 	candidate: string,
 	rootReal: string,
 ): Promise<string | undefined> {
-	try {
-		const real = await realpath(candidate)
-		return isContainedPath(real, rootReal) ? real : undefined
-	} catch {
-		return undefined
-	}
+	const real = await settle(() => realpath(candidate))
+	return real.success && isContainedPath(real.value, rootReal) ? real.value : undefined
 }
 
 /**
@@ -535,11 +534,8 @@ export async function unlinkStagedFiles(body: MultipartBody): Promise<void> {
 	for (const records of Object.values(body.files)) {
 		for (const file of records) {
 			if (file.status !== 'staged') continue
-			try {
-				await unlink(file.path)
-			} catch {
-				// Already gone — cleanup is best-effort.
-			}
+			// A file already gone is a miss; cleanup is best-effort.
+			await settle(() => unlink(file.path))
 		}
 	}
 }
@@ -670,18 +666,12 @@ export async function moveUploadedFile(
 	file: UploadedFile,
 	destination: string,
 ): Promise<UploadedFile> {
-	try {
-		await rename(file.path, destination)
-	} catch (error) {
-		// `isRecord` refuses a class instance, and every `node:fs` rejection is
-		// an `Error` instance, so the cross-device branch must narrow with
-		// `isError` to be reachable at all.
-		if (isError(error) && 'code' in error && error.code === 'EXDEV') {
-			await copyFile(file.path, destination)
-			await unlink(file.path)
-		} else {
-			throw error
-		}
+	const renamed = await settle(() => rename(file.path, destination))
+	if (!renamed.success) {
+		// Every `node:fs` rejection is an `Error` instance, which `isRecord` refuses.
+		if (!isCodedError(renamed.error) || renamed.error.code !== 'EXDEV') throw renamed.error
+		await copyFile(file.path, destination)
+		await unlink(file.path)
 	}
 	return Object.freeze({
 		field: file.field,
@@ -804,7 +794,7 @@ export function resolveAssetKey(pathname: string): string | undefined {
  * @param source - The bounded asset source.
  * @param key - The validated relative asset key.
  * @returns Owned representations, or undefined on a source miss.
- * @throws {TypeError} When the source returns malformed asset data.
+ * @throws {ContractError} When the source returns a value that is not an `AssetRepresentation`.
  * @throws {Error} When Brotli data cannot be decompressed.
  */
 export async function readAssetRecord(
@@ -813,15 +803,23 @@ export async function readAssetRecord(
 ): Promise<AssetRecord | undefined> {
 	const asset = source.read(key)
 	if (asset === undefined) return undefined
-	if (!isObject(asset))
-		throw new TypeError('AssetSourceInterface.read must return an AssetRepresentation')
+	refuseValue(asset, isObject, 'readAssetRecord', {
+		path: ['asset'],
+		limit: 'an AssetRepresentation object',
+		code: 'structure',
+	})
 	const body = asset.body
 	const encoding = asset.encoding
-	if (
-		(!isArrayBuffer(body) && !isUint8Array(body)) ||
-		(encoding !== undefined && encoding !== 'br')
-	)
-		throw new TypeError('AssetSourceInterface.read must return an AssetRepresentation')
+	refuseValue(body, orOf(isArrayBuffer, isUint8Array), 'readAssetRecord', {
+		path: ['asset', 'body'],
+		limit: 'an ArrayBuffer or a Uint8Array',
+		code: 'structure',
+	})
+	refuseValue(encoding, optionalOf(literalOf('br')), 'readAssetRecord', {
+		path: ['asset', 'encoding'],
+		limit: "'br' or undefined",
+		code: 'structure',
+	})
 	const content = isArrayBuffer(body)
 		? Uint8Array.from(new Uint8Array(body))
 		: Uint8Array.from(body)
@@ -1603,8 +1601,9 @@ export function sessionExpired(
 }
 
 /**
- * Admits an options bag whole against its compiled contract, refusing a missing
- * required key, an undeclared key, and a value outside a declared range.
+ * Admits an options bag whole against its compiled contract through the contract's `own`,
+ * refusing a missing required key, an undeclared key, a value outside a declared range, and an
+ * implementation key that lacks a member its `interfaceShape` declares.
  *
  * @typeParam T - The type the contract admits
  * @param door - The factory name a refusal message leads with
@@ -1625,7 +1624,7 @@ export function admitOptions<T>(
 	contract: ContractInterface<T>,
 	value: unknown,
 ): void {
-	const outcome = admitValue(contract, value === undefined ? {} : value)
+	const outcome = contract.own(value === undefined ? {} : value)
 	if (outcome.success) return
 	const first = outcome.error.faults[0]
 	throw new ContractError(`${door}: ${describeFaults(outcome.error.faults, contract.schema)}`, {
@@ -1633,36 +1632,6 @@ export function admitOptions<T>(
 		context: { path: first === undefined ? [] : extractPath(first), shape: door },
 		cause: outcome.error,
 	})
-}
-
-/**
- * Admits one foreign implementation key against the members its published interface
- * declares, accepting a class instance and unknown members.
- *
- * @param door - The factory name a refusal message leads with
- * @param path - The key's path inside the options bag
- * @param foreign - The {@link ForeignContract} the key's interface declares
- * @param value - The caller's implementation
- * @returns Nothing; a successful return means every declared member is present
- * @throws {ContractError} Thrown when `value` lacks a declared member; `context.path` holds `path`
- *
- * @example
- * ```ts
- * admitForeign('createSession', ['store'], SESSION_STORE_FOREIGN, new MemorySessionStore()) // returns
- * admitForeign('createSession', ['store'], SESSION_STORE_FOREIGN, {}) // throws a ContractError at ['store']
- * ```
- */
-export function admitForeign(
-	door: string,
-	path: readonly string[],
-	foreign: ForeignContract,
-	value: unknown,
-): void {
-	if (foreign.is(value)) return
-	throw new ContractError(
-		`${door}: options.${path.join('.')} must be ${foreign.expected}; received ${preview(value)}`,
-		{ code: 'structure', context: { path, shape: door, received: preview(value) } },
-	)
 }
 
 /**

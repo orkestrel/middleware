@@ -76,8 +76,6 @@ import {
 } from './constants.js'
 import {
 	ASSET_CONTRACT,
-	ASSET_SOURCE_FOREIGN,
-	ASSET_STORE_FOREIGN,
 	BEARER_CONTRACT,
 	BOUNDARY_CONTRACT,
 	COMPRESSION_CONTRACT,
@@ -87,21 +85,16 @@ import {
 	ETAG_CONTRACT,
 	FORWARDED_CONTRACT,
 	LIMITER_CONTRACT,
-	LIMITER_STORE_FOREIGN,
 	MULTIPART_CONTRACT,
 	NODE_COMPRESSION_CONTRACT,
 	SCOPE_CONTRACT,
 	SECURITY_CONTRACT,
 	SESSION_CONTRACT,
-	SESSION_STORE_FOREIGN,
-	SESSION_TRANSPORT_FOREIGN,
-	SIGNER_FOREIGN,
 	STATIC_CONTRACT,
 	TELEMETRY_CONTRACT,
 } from './contracts.js'
 import { isMultipartError } from './errors.js'
 import {
-	admitForeign,
 	admitOptions,
 	buildAssetResponse,
 	buildClient,
@@ -555,8 +548,6 @@ export function createLimiter<TState extends BearerState<unknown> & ClientState>
 	options: LimiterOptions<TState>,
 ): MiddlewareHandler<TState> {
 	admitOptions('createLimiter', LIMITER_CONTRACT, options)
-	if (options.store !== undefined)
-		admitForeign('createLimiter', ['store'], LIMITER_STORE_FOREIGN, options.store)
 	const max = options.max
 	const window = options.window
 	const capacity = options.capacity ?? DEFAULT_LIMITER_CAPACITY
@@ -656,9 +647,6 @@ export function createSession<
 	TState extends SessionState = SessionState,
 >(options: SessionOptions<S, TState>): MiddlewareHandler<TState> {
 	admitOptions('createSession', SESSION_CONTRACT, options)
-	admitForeign('createSession', ['transport'], SESSION_TRANSPORT_FOREIGN, options.transport)
-	if (options.store !== undefined)
-		admitForeign('createSession', ['store'], SESSION_STORE_FOREIGN, options.store)
 
 	const transport = options.transport
 	const clock = options.clock ?? Date.now
@@ -743,7 +731,6 @@ export function createCSRF<TState extends CSRFState & SessionState>(
 	options: CSRFOptions,
 ): MiddlewareHandler<TState> {
 	admitOptions('createCSRF', CSRF_CONTRACT, options)
-	admitForeign('createCSRF', ['signer'], SIGNER_FOREIGN, options.signer)
 
 	const signer = options.signer
 	const cookieName = options.cookie ?? DEFAULT_CSRF_COOKIE
@@ -884,7 +871,7 @@ export function except<TState>(
  * @param options - See {@link AssetOptions}
  * @returns A `MiddlewareHandler<TState>`
  * @throws {ContractError} When the bag is refused whole, or when `source` or `store` lacks a member its interface declares
- * @throws {TypeError} When the source returns malformed asset data
+ * @throws {ContractError} When the source returns a value that is not an `AssetRepresentation`
  * @throws {Error} When a source marks bytes as Brotli but they cannot be decompressed
  *
  * @example
@@ -903,9 +890,6 @@ export function except<TState>(
  */
 export function createAssets<TState>(options: AssetOptions): MiddlewareHandler<TState> {
 	admitOptions('createAssets', ASSET_CONTRACT, options)
-	admitForeign('createAssets', ['source'], ASSET_SOURCE_FOREIGN, options.source)
-	if (options.store !== undefined)
-		admitForeign('createAssets', ['store'], ASSET_STORE_FOREIGN, options.store)
 	const store = options.store ?? new MemoryAssetStore()
 
 	return async (request, context, next) => {

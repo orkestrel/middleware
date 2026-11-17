@@ -20,10 +20,9 @@ import { DEFAULT_SESSION_COOKIE, DEFAULT_SESSION_HEADER } from './constants.js'
 import {
 	COOKIE_TRANSPORT_CONTRACT,
 	HEADER_TRANSPORT_CONTRACT,
-	SIGNER_FOREIGN,
 	UPLOADED_FILE_CONTRACT,
 } from './contracts.js'
-import { admitForeign, admitOptions } from './helpers.js'
+import { admitOptions } from './helpers.js'
 import { Session } from './Session.js'
 import { DatabaseSessionStore } from './stores/DatabaseSessionStore.js'
 import { MemorySessionStore } from './stores/MemorySessionStore.js'
@@ -57,7 +56,6 @@ export function createMemoryLimiterStore(
  */
 export function createCookieTransport(options: CookieTransportOptions): SessionTransportInterface {
 	admitOptions('createCookieTransport', COOKIE_TRANSPORT_CONTRACT, options)
-	admitForeign('createCookieTransport', ['signer'], SIGNER_FOREIGN, options.signer)
 	const name = options.name ?? DEFAULT_SESSION_COOKIE
 	const signer = options.signer
 	const cookie = options.cookie

@@ -1,7 +1,6 @@
 import type { Stats } from 'node:fs'
 import type { FileHandle } from 'node:fs/promises'
 import type { BudgetInterface } from '@orkestrel/budget'
-import type { Guard } from '@orkestrel/contract'
 import type { CookieOptions, Encoding, MiddlewareContext, SignerInterface } from '@orkestrel/server'
 
 /**
@@ -489,19 +488,6 @@ export interface SessionStoreInterface<S extends SessionInterface> {
 export interface SessionLimits {
 	readonly ttl?: number
 	readonly lifetime?: number
-}
-
-/**
- * Describes a foreign implementation contract an options key admits — the members its
- * published interface declares, checked as that interface declares them.
- *
- * @remarks
- * - `expected` — the shape named in a refusal message.
- * - `is` — the guard that accepts a class instance and unknown members.
- */
-export interface ForeignContract {
-	readonly expected: string
-	readonly is: Guard<unknown>
 }
 
 /**
