@@ -1,3 +1,4 @@
+import type { CompressResponseOptions } from '@src/server'
 import { join, resolve as resolvePath } from 'node:path'
 import { tmpdir } from 'node:os'
 import { open, readFile, realpath, writeFile } from 'node:fs/promises'
@@ -6,7 +7,7 @@ import { brotliCompressSync, gunzipSync, inflateSync } from 'node:zlib'
 import { describe, expect, it } from 'vitest'
 import { ContractError, attempt } from '@orkestrel/contract'
 import { compilePath } from '@orkestrel/router'
-import { waitForCondition } from '@orkestrel/test'
+import { createRecorder, waitForCondition } from '@orkestrel/test'
 import { createScratch } from '@orkestrel/test/server'
 import {
 	buildClient,
@@ -1869,6 +1870,218 @@ describe('compressResponse', () => {
 			},
 		)
 		expect(result.headers.has('vary')).toBe(false)
+	})
+})
+
+describe('compressResponse on a GET 304', () => {
+	const options: CompressResponseOptions = {
+		threshold: 100,
+		encodings: ['gzip'],
+		compress: compressBytes,
+	}
+	const gzip = new Request('https://example.test/', { headers: { 'accept-encoding': 'gzip' } })
+
+	it('weakens a strong tag on a 304 with no Content-Length, stamps Vary, and sends no body', async () => {
+		const response = new Response(null, {
+			status: 304,
+			headers: { etag: '"lamp-1"', 'content-type': 'text/plain' },
+		})
+		const result = await compressResponse(
+			gzip,
+			createTestContext(buildTestRequest('/'), {}),
+			response,
+			options,
+		)
+		expect({
+			status: result.status,
+			etag: result.headers.get('etag'),
+			vary: result.headers.get('vary'),
+			length: result.headers.get('content-length'),
+			coding: result.headers.get('content-encoding'),
+			body: result.body,
+		}).toEqual({
+			status: 304,
+			etag: 'W/"lamp-1"',
+			vary: 'Accept-Encoding',
+			length: null,
+			coding: null,
+			body: null,
+		})
+	})
+
+	it('weakens the tag and deletes Content-Length when the stated length reaches the threshold', async () => {
+		const response = new Response(null, {
+			status: 304,
+			headers: { etag: '"lamp-1"', 'content-type': 'text/plain', 'content-length': '100' },
+		})
+		const result = await compressResponse(
+			gzip,
+			createTestContext(buildTestRequest('/'), {}),
+			response,
+			options,
+		)
+		expect([result.headers.get('etag'), result.headers.get('content-length')]).toEqual([
+			'W/"lamp-1"',
+			null,
+		])
+	})
+
+	it('keeps the tag and Content-Length, and stamps Vary, when the stated length is below the threshold', async () => {
+		const response = new Response(null, {
+			status: 304,
+			headers: { etag: '"lamp-1"', 'content-type': 'text/plain', 'content-length': '99' },
+		})
+		const result = await compressResponse(
+			gzip,
+			createTestContext(buildTestRequest('/'), {}),
+			response,
+			options,
+		)
+		expect([
+			result.headers.get('etag'),
+			result.headers.get('vary'),
+			result.headers.get('content-length'),
+		]).toEqual(['"lamp-1"', 'Accept-Encoding', '99'])
+	})
+
+	it('leaves a no-transform 304 unchanged', async () => {
+		const response = new Response(null, {
+			status: 304,
+			headers: { etag: '"lamp-1"', 'content-type': 'text/plain', 'cache-control': 'no-transform' },
+		})
+		const result = await compressResponse(
+			gzip,
+			createTestContext(buildTestRequest('/'), {}),
+			response,
+			options,
+		)
+		expect([result.headers.get('etag'), result.headers.get('vary')]).toEqual(['"lamp-1"', null])
+	})
+
+	it('stamps Vary and keeps the tag when the request carries no Accept-Encoding', async () => {
+		const response = new Response(null, {
+			status: 304,
+			headers: { etag: '"lamp-1"', 'content-type': 'text/plain' },
+		})
+		const result = await compressResponse(
+			new Request('https://example.test/'),
+			createTestContext(buildTestRequest('/'), {}),
+			response,
+			options,
+		)
+		expect([result.headers.get('etag'), result.headers.get('vary')]).toEqual([
+			'"lamp-1"',
+			'Accept-Encoding',
+		])
+	})
+
+	it('keeps the tag for an identity-only and a gzip;q=0 request', async () => {
+		const results = await Promise.all(
+			['identity', 'gzip;q=0'].map((coding) =>
+				compressResponse(
+					new Request('https://example.test/', { headers: { 'accept-encoding': coding } }),
+					createTestContext(buildTestRequest('/'), {}),
+					new Response(null, {
+						status: 304,
+						headers: { etag: '"lamp-1"', 'content-type': 'text/plain' },
+					}),
+					options,
+				),
+			),
+		)
+		expect(results.map((result) => result.headers.get('etag'))).toEqual(['"lamp-1"', '"lamp-1"'])
+	})
+
+	it('keeps the tag on a 304 of a non-compressible type', async () => {
+		const response = new Response(null, {
+			status: 304,
+			headers: { etag: '"lamp-1"', 'content-type': 'image/png' },
+		})
+		const result = await compressResponse(
+			gzip,
+			createTestContext(buildTestRequest('/'), {}),
+			response,
+			options,
+		)
+		expect(result.headers.get('etag')).toBe('"lamp-1"')
+	})
+
+	it('weakens the tag on a 304 with no Content-Type', async () => {
+		const response = new Response(null, { status: 304, headers: { etag: '"lamp-1"' } })
+		const result = await compressResponse(
+			gzip,
+			createTestContext(buildTestRequest('/'), {}),
+			response,
+			options,
+		)
+		expect(result.headers.get('etag')).toBe('W/"lamp-1"')
+	})
+
+	it('leaves a 304 that carries Content-Encoding unchanged', async () => {
+		const response = new Response(null, {
+			status: 304,
+			headers: { etag: '"lamp-1"', 'content-type': 'text/plain', 'content-encoding': 'br' },
+		})
+		const result = await compressResponse(
+			gzip,
+			createTestContext(buildTestRequest('/'), {}),
+			response,
+			options,
+		)
+		expect([result.headers.get('etag'), result.headers.get('vary')]).toEqual(['"lamp-1"', null])
+	})
+
+	it('leaves a HEAD 304 unchanged', async () => {
+		const response = new Response(null, {
+			status: 304,
+			headers: { etag: '"lamp-1"', 'content-type': 'text/plain' },
+		})
+		const result = await compressResponse(
+			gzip,
+			createTestContext(buildTestRequest('/', { method: 'HEAD' }), {}),
+			response,
+			options,
+		)
+		expect([result.headers.get('etag'), result.headers.get('vary')]).toEqual(['"lamp-1"', null])
+	})
+
+	it('hands the 304 to a filter, and leaves it unchanged when the filter declines', async () => {
+		const seen = createRecorder<[number]>()
+		const response = new Response(null, {
+			status: 304,
+			headers: { etag: '"lamp-1"', 'content-type': 'text/plain' },
+		})
+		const result = await compressResponse(
+			gzip,
+			createTestContext(buildTestRequest('/'), {}),
+			response,
+			{
+				...options,
+				filter: (_request, candidate) => {
+					seen.handler(candidate.status)
+					return false
+				},
+			},
+		)
+		expect([seen.calls, result.headers.get('etag'), result.headers.get('vary')]).toEqual([
+			[[304]],
+			'"lamp-1"',
+			null,
+		])
+	})
+
+	it('keeps an already weak tag as written', async () => {
+		const response = new Response(null, {
+			status: 304,
+			headers: { etag: 'W/"lamp-1"', 'content-type': 'text/plain' },
+		})
+		const result = await compressResponse(
+			gzip,
+			createTestContext(buildTestRequest('/'), {}),
+			response,
+			options,
+		)
+		expect(result.headers.get('etag')).toBe('W/"lamp-1"')
 	})
 })
 

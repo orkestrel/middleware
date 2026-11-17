@@ -10,6 +10,7 @@ import {
 	FORWARDED_CELLS,
 	HEADER_CELLS,
 	RANGE_CELLS,
+	REVALIDATION_CELLS,
 	SECURITY_HEADERS,
 	STACK_FOREIGN_ORIGIN,
 	STACK_ORIGIN,
@@ -30,6 +31,7 @@ import {
 	readFlood,
 	readForwarded,
 	readRangeCell,
+	readRevalidation,
 	readSecurityCell,
 	readVaryCell,
 	sendStack,
@@ -347,4 +349,17 @@ describe('invariant 10: the body is byte-equal in every order the guide permits'
 				const { variant, reference } = await readBodies(stacks, arrangement, cell)
 				expect(variant).toEqual(reference)
 			})
+})
+
+describe('invariant 11: a 304 carries the ETag and Vary the 200 to the same request carried', () => {
+	for (const [engine, set] of [
+		['createCompression', stacks.orders],
+		['createNodeCompression', stacks.nodes],
+	] as const)
+		for (const [arrangement, stack] of Object.entries(set))
+			for (const cell of REVALIDATION_CELLS)
+				it(`${cell.title}, ${engine}, the ${arrangement} order`, async () => {
+					const { observed, expected } = await readRevalidation(stack, cell)
+					expect(observed).toEqual(expected)
+				})
 })

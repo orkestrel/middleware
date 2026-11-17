@@ -468,7 +468,7 @@ export function createETag<TState>(options?: ETagOptions): MiddlewareHandler<TSt
 		if (ifNoneMatch !== null && matchesETag(ifNoneMatch, etag)) {
 			const headers = new Headers(response.headers)
 			headers.set('etag', etag)
-			headers.delete('content-length')
+			headers.set('content-length', String(bytes.byteLength))
 			return new Response(null, { status: 304, headers })
 		}
 		const headers = new Headers(response.headers)

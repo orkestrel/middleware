@@ -1509,7 +1509,7 @@ export interface StackFixtureInterface {
 export interface StackSetInterface {
 	readonly orders: Readonly<Record<StackArrangement, StackFixtureInterface>>
 	readonly trusted: StackFixtureInterface
-	readonly node: StackFixtureInterface
+	readonly nodes: Readonly<Record<StackArrangement, StackFixtureInterface>>
 	readonly capacity: StackFixtureInterface
 	readonly anonymous: StackFixtureInterface
 	readonly alias: boolean
@@ -2201,6 +2201,22 @@ export const RANGE_CELLS: readonly StackRangeCell[] = Object.freeze([
 	},
 ])
 
+/** Lists invariant 11's cells: each `GET` a client that accepts gzip revalidates, whose 304 carries the `ETag` and `Vary` of its 200. */
+export const REVALIDATION_CELLS: readonly StackCell[] = Object.freeze([
+	{
+		title: 'GET /page, a createETag body above the compression threshold',
+		build: () => ({ path: '/page', headers: { 'accept-encoding': 'gzip' } }),
+	},
+	{
+		title: 'GET /client, a createETag body below the compression threshold',
+		build: () => ({ path: '/client', headers: { 'accept-encoding': 'gzip' } }),
+	},
+	{
+		title: 'GET /static/large.txt, a createStatic file',
+		build: () => ({ path: '/static/large.txt', headers: { 'accept-encoding': 'gzip' } }),
+	},
+])
+
 /** Lists invariant 10's cells: each request whose body every permitted order answers byte for byte alike. */
 export const BODY_CELLS: readonly StackCell[] = Object.freeze([
 	{ title: 'GET /page', build: () => ({ path: '/page', headers: { 'accept-encoding': 'gzip' } }) },
@@ -2428,7 +2444,7 @@ export async function startStack(options: StackOptions): Promise<StackFixtureInt
 		boundary: createBoundary({ expose: false }),
 		deadline: createDeadline({ ms: STACK_DEADLINE }),
 		forwarded: createForwarded(options.forwarded),
-		etag: createETag(),
+		etag: createETag({ weak: false }),
 		bearer: only(
 			'/admin',
 			createBearer<StackState>({
@@ -2599,7 +2615,7 @@ export async function startStack(options: StackOptions): Promise<StackFixtureInt
 
 /**
  * Starts every stack the oracle drives: one per permitted order under `proxies: 1`, one under
- * `trusted`, one mounting `createNodeCompression`, one with a session store of
+ * `trusted`, one per permitted order mounting `createNodeCompression`, one with a session store of
  * {@link STACK_CAPACITY}, and one whose session battery mints no session for a cookie-less
  * request, so `createCSRF` runs on its own nonce.
  *
@@ -2618,20 +2634,42 @@ export async function startStacks(): Promise<StackSetInterface> {
 		engine: 'web',
 		...(alias ? { peer: STACK_PEER } : {}),
 	}
-	const [oracle, canonical, deadline, trusted, node, capacity, anonymous] = await Promise.all([
+	const [
+		oracle,
+		canonical,
+		deadline,
+		trusted,
+		nodeOracle,
+		nodeCanonical,
+		nodeDeadline,
+		capacity,
+		anonymous,
+	] = await Promise.all([
 		startStack({ ...base, order: STACK_ORDERS.oracle }),
 		startStack({ ...base, order: STACK_ORDERS.canonical }),
 		startStack({ ...base, order: STACK_ORDERS.deadline }),
 		startStack({ ...base, order: STACK_ORDERS.oracle, forwarded: { trusted: [STACK_PEER] } }),
 		startStack({ ...base, order: STACK_ORDERS.oracle, engine: 'node' }),
+		startStack({ ...base, order: STACK_ORDERS.canonical, engine: 'node' }),
+		startStack({ ...base, order: STACK_ORDERS.deadline, engine: 'node' }),
 		startStack({ ...base, order: STACK_ORDERS.oracle, capacity: STACK_CAPACITY }),
 		startStack({ ...base, order: STACK_ORDERS.oracle, anonymous: true }),
 	])
-	const all = [oracle, canonical, deadline, trusted, node, capacity, anonymous]
+	const all = [
+		oracle,
+		canonical,
+		deadline,
+		trusted,
+		nodeOracle,
+		nodeCanonical,
+		nodeDeadline,
+		capacity,
+		anonymous,
+	]
 	return {
 		orders: { oracle, canonical, deadline },
 		trusted,
-		node,
+		nodes: { oracle: nodeOracle, canonical: nodeCanonical, deadline: nodeDeadline },
 		capacity,
 		anonymous,
 		alias,
@@ -2841,9 +2879,43 @@ export async function readRangeCell(
 	stacks: StackSetInterface,
 	cell: StackRangeCell,
 ): Promise<{ readonly status: number; readonly coding: string | null }> {
-	const stack = cell.engine === 'node' ? stacks.node : stacks.orders.oracle
+	const stack = cell.engine === 'node' ? stacks.nodes.oracle : stacks.orders.oracle
 	const reply = await sendStack(stack.url, cell.build(undefined))
 	return { status: reply.status, coding: reply.headers.get('content-encoding') }
+}
+
+/**
+ * Drives one invariant 11 cell: the `GET` its cell builds, then the same request carrying the
+ * 200's `ETag` in `If-None-Match`.
+ *
+ * @param stack - The stack
+ * @param cell - The cell
+ * @returns The 304's status, `ETag`, and `Vary`, and the 200's as the expected reading
+ *
+ * @example
+ * ```ts
+ * const { observed, expected } = await readRevalidation(stack, REVALIDATION_CELLS[0])
+ * ```
+ */
+export async function readRevalidation(
+	stack: StackFixtureInterface,
+	cell: StackCell,
+): Promise<{ readonly observed: unknown; readonly expected: unknown }> {
+	const request = cell.build(undefined)
+	const full = await sendStack(stack.url, request)
+	const etag = full.headers.get('etag') ?? ''
+	const reply = await sendStack(stack.url, {
+		...request,
+		headers: { ...request.headers, 'if-none-match': etag },
+	})
+	return {
+		observed: {
+			status: reply.status,
+			etag: reply.headers.get('etag'),
+			vary: listVary(reply.headers),
+		},
+		expected: { status: 304, etag, vary: listVary(full.headers) },
+	}
 }
 
 /**

@@ -1312,6 +1312,87 @@ describe('createNodeCompression (node face)', () => {
 		expect(revalidated.status).toBe(304)
 	})
 
+	for (const [name, engine] of [
+		['createNodeCompression', createNodeCompression<Record<string, never>>({ threshold: 100 })],
+		['createCompression', createCompression<Record<string, never>>({ threshold: 100 })],
+	] as const)
+		it(`${name}: a 304 from createETag({ weak: false }) inside it carries the ETag and Vary of the 200 to the same request`, async () => {
+			const cases = [
+				{ coding: 'gzip', body: 'x'.repeat(5000), headers: { 'content-type': 'text/plain' } },
+				{ coding: 'gzip', body: 'short', headers: { 'content-type': 'text/plain' } },
+				{ coding: 'identity', body: 'x'.repeat(5000), headers: { 'content-type': 'text/plain' } },
+				{
+					coding: 'gzip',
+					body: 'x'.repeat(5000),
+					headers: { 'content-type': 'text/plain', 'cache-control': 'no-transform' },
+				},
+			]
+			const readings = await Promise.all(
+				cases.map(async (item) => {
+					const first = buildTestRequest('/', { headers: { 'accept-encoding': item.coding } })
+					const full = await runChain(
+						[engine, createETag<Record<string, never>>({ weak: false })],
+						async () => new Response(item.body, { headers: item.headers }),
+						first,
+						createTestContext(first, {}),
+					)
+					await full.arrayBuffer()
+					const again = buildTestRequest('/', {
+						headers: {
+							'accept-encoding': item.coding,
+							'if-none-match': full.headers.get('etag') ?? '',
+						},
+					})
+					const revalidated = await runChain(
+						[engine, createETag<Record<string, never>>({ weak: false })],
+						async () => new Response(item.body, { headers: item.headers }),
+						again,
+						createTestContext(again, {}),
+					)
+					return {
+						observed: {
+							status: revalidated.status,
+							etag: revalidated.headers.get('etag'),
+							vary: revalidated.headers.get('vary'),
+						},
+						expected: {
+							status: 304,
+							etag: full.headers.get('etag'),
+							vary: full.headers.get('vary'),
+						},
+					}
+				}),
+			)
+			expect(readings.map((reading) => reading.observed)).toEqual(
+				readings.map((reading) => reading.expected),
+			)
+		})
+
+	it('weakens a strong tag a handler answers with its own 304, in both compression batteries', async () => {
+		const request = buildTestRequest('/', { headers: { 'accept-encoding': 'gzip' } })
+		const responses = await Promise.all(
+			[
+				createNodeCompression<Record<string, never>>({ threshold: 100 }),
+				createCompression<Record<string, never>>({ threshold: 100 }),
+			].map((engine) =>
+				runChain(
+					[engine],
+					async () =>
+						new Response(null, {
+							status: 304,
+							headers: { etag: '"lamp-9"', 'content-type': 'text/plain' },
+						}),
+					request,
+					createTestContext(request, {}),
+				),
+			),
+		)
+		expect(responses.map((response) => response.headers.get('etag'))).toEqual([
+			'W/"lamp-9"',
+			'W/"lamp-9"',
+		])
+	})
+
 	it('refuses a threshold that is not a finite number', () => {
 		expect(() => createNodeCompression({ threshold: Number.NaN })).toThrow(
 			'createNodeCompression: threshold',
@@ -2404,6 +2485,33 @@ describe('createETag', () => {
 		expect(response.headers.get('etag')?.startsWith('W/')).toBe(false)
 	})
 
+	it('states the buffered body length on its 304 when the downstream declares a stale one', async () => {
+		const etag = createETag<Record<string, never>>({ weak: false })
+		const first = buildTestRequest('/')
+		const known = await runChain(
+			[etag],
+			async () =>
+				new Response('x'.repeat(5000), {
+					headers: { 'content-type': 'text/plain', 'content-length': '12' },
+				}),
+			first,
+			createTestContext(first, {}),
+		)
+		const again = buildTestRequest('/', {
+			headers: { 'if-none-match': known.headers.get('etag') ?? '' },
+		})
+		const revalidated = await runChain(
+			[etag],
+			async () =>
+				new Response('x'.repeat(5000), {
+					headers: { 'content-type': 'text/plain', 'content-length': '12' },
+				}),
+			again,
+			createTestContext(again, {}),
+		)
+		expect([revalidated.status, revalidated.headers.get('content-length')]).toEqual([304, '5000'])
+	})
+
 	it('If-None-Match matching a single value returns 304 without a body', async () => {
 		const etag = createETag<Record<string, never>>()
 		const first = await runChain(
@@ -2426,7 +2534,7 @@ describe('createETag', () => {
 		expect(await response.text()).toBe('')
 	})
 
-	it('the 304 response carries the ETag and never a stale Content-Length', async () => {
+	it('the 304 response carries the ETag and the buffered body Content-Length', async () => {
 		const etag = createETag<Record<string, never>>()
 		const first = await runChain(
 			[etag],
@@ -2446,7 +2554,7 @@ describe('createETag', () => {
 		)
 		expect(response.status).toBe(304)
 		expect(response.headers.get('etag')).toBe(known)
-		expect(response.headers.has('content-length')).toBe(false)
+		expect(response.headers.get('content-length')).toBe('12')
 	})
 
 	it('If-None-Match with a list or * short-circuits with 304', async () => {
@@ -3982,7 +4090,7 @@ describe('composition', () => {
 		expect(response.headers.get('content-encoding')).toBe('gzip')
 	})
 
-	it('304 passes through compression untouched (no double body work)', async () => {
+	it('304 passes through compression with no body and no coding (no double body work)', async () => {
 		const etag = createETag<Record<string, never>>()
 		const compression = createCompression<Record<string, never>>({ threshold: 16 })
 		const first = await runChain(
