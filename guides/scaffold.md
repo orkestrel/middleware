@@ -2397,8 +2397,8 @@ The dependency tables select these floors:
 | TypeScript                   | `^6.0.3`   | A selected `src/vue` or `app/vue` face                         |
 | Vitest                       | `^5.1.0`   | Every workspace                                                |
 | `@vitest/browser-playwright` | `^5.1.0`   | Browser tooling                                                |
-| `oxlint`                     | `^1.93.0`  | Every workspace                                                |
-| `oxfmt`                      | `^0.78.0`  | Every workspace                                                |
+| `oxlint`                     | `^1.94.0`  | Every workspace                                                |
+| `oxfmt`                      | `^0.79.0`  | Every workspace                                                |
 | `@microsoft/api-extractor`   | `^7.60.1`  | Declaration builds; uses its bundled TypeScript 6.0.3 engine   |
 | `playwright`                 | `^1.64.1`  | Browser tooling                                                |
 | Vite                         | `^8.3.8`   | Every workspace                                                |
