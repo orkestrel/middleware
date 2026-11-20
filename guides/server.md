@@ -733,7 +733,7 @@ const server = createServer<State>({
 })
 ```
 
-The dispatcher of the `@orkestrel/router` release that 0.0.30 depends on
+The dispatcher of the `@orkestrel/router` release that 0.0.31 depends on
 answers a path that matches with no route for the method with `405` and an
 `Allow` header that lists `OPTIONS`. It answers a `HEAD` with no `HEAD` route
 by running the `GET` handler, cancelling that response's body, and sending its
